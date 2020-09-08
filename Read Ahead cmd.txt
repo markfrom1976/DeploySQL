@@ -1,0 +1,5 @@
+run it from the C:\Windows\syswow64\inetsrv folder. 
+
+appcmd.exe set config -section:system.webServer/serverRuntime /uploadReadAheadSize:"2147483647" /commit:apphost
+
+CD Windows\syswow64\inetsrv
