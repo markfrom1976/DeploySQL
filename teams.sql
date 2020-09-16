@@ -33705,318 +33705,6 @@ GROUP BY
 
 GO
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'TEAMS_LegionellaWorkInProgressGrid') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[TEAMS_LegionellaWorkInProgressGrid] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-ALTER PROCEDURE [dbo].[TEAMS_LegionellaWorkInProgressGrid]
-	-- Paging
-    @PerPage INT = 30,
-    @CurrentPage INT = 1,
-
-	-- Standard filters
-    @ClientID INT = 0,
-    @SiteID INT = 0,
-    @ProjectID INT = 0,
-	@Filter VARCHAR(MAX) = '', -- Text entered in search box (part of address, postcode etc.)
-	@JobID INT = 0,
-	@JobNo VARCHAR(MAX) = '',
-	@LoggedInEmployeeID INT = 0,
-
-	-- User selected filters
-    @FilterFromDate DATETIME = NULL,
-    @FilterToDate DATETIME = NULL,
-    @EmployeeId INT = 0,
-	@WorkTypeId INT = 0,
-	@BranchId INT = 0, -- (0 = all)
-	@Accessibility INT = 0,-- (0=all, 1=accessible, 2=not accessible)
-	@OrgStateId INT = NULL, -- (NULL=all), 0 = Queued
-	@ExcludeClientId INT = 0 -- (0=don't exclude any)
-AS
-BEGIN
-	SET NOCOUNT ON;
-	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
-	Set @FilterFromDate = ISNULL(@FilterFromDate, DATEADD(year, -1, GETDATE())) -- 1 year ago
-    Set @FilterToDate = ISNULL(@FilterToDate, DATEADD(month, 3, GETDATE())) -- 3 months time
-
-	DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
-	INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
-	SELECT
-		c.ClientID,
-		Access.EmployeeRestrictedClientAccessID
-	FROM
-		Client c
-		OUTER APPLY
-		(
-			SELECT
-				*
-			FROM
-				EmployeeRestrictedClientAccess erca
-			WHERE
-				erca.EmployeeID = @LoggedInEmployeeID
-					AND
-				erca.ClientID = c.ClientID
-		) Access
-	WHERE
-		c.Restricted = 1
-
-	-- Get all of the required data from dgLegionellaNew and dgLegionellaWip in to one table so that we can apply our filters later on in one go instead of seperately on each view
-	DECLARE @LegionellaWIPView TABLE (IndexID INT IDENTITY(1,1), RowNo INT, JobID INT, TypeID INT, Type VARCHAR(MAX), JobNo VARCHAR(10), Start DATETIME, Finish DATETIME, MonitoringSchedule DATETIME, Due DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, Site VARCHAR(MAX), Report BIT, Photos BIT, Plans BIT, Documents BIT, DateApproved DATETIME, HasNotes INT, NotesInLastHour INT, NewGrid INT, Status VARCHAR(MAX), OrgState VARCHAR(MAX), PDF BIT, EmployeeID INT, FullName VARCHAR(MAX), ProjectID INT, LegionellaID INT, NoAccessID INT, naCreated DATETIME, NoAccess BIT)
-
-	INSERT INTO @LegionellaWIPView
-	Select
-		ROW_NUMBER() OVER (PARTITION BY j.JobID ORDER BY MAX(l.LegionellaFinish) DESC) [RowNo],
-		j.JobID,
-		lt.LegionellaTypeID [TypeID],
-		lt.Description [Type],
-		'J' + RIGHT('000000' + CONVERT(VARCHAR(MAX),j.jobno),6) [JobNo],
-		MIN(l.LegionellaStart) [Start],
-		MAX(l.LegionellaFinish) [Finish],
-		MAX(l.MonitoringSchedule) [MonitoringSchedule],
-		MAX(al.DueDate) [Due],
-		c.ClientID,
-		c.Client + IsNull(' (' + NULLIF(c.BranchName,'') + ')','') [Client],
-		s.SiteID,
-		s.Address [Site],
-		CAST(CASE WHEN leginfo.ReportInformationID IS NULL THEN 0 ELSE 1 END as bit) [Report],
-		CAST(CASE WHEN p.PhotoID IS NOT NULL THEN 1 ELSE 0 END as BIT) [Photos],
-		CAST(CASE WHEN fp.FloorplanID IS NOT NULL THEN 1 ELSE 0 END as BIT) [Plans],
-		CAST(CASE WHEN MIN(lsd.LegionellaSupportingDocumentId) IS NOT NULL THEN 1 ELSE 0 END as BIT) [Documents],
-		l.DateApproved,
-		0 [HasNotes],
-		0 [NotesInLastHour],
-		1 [NewGrid],
-		j.Status [Status],
-		org.State [OrgState],
-		CAST(CASE WHEN pf.PDFId IS NOT NULL THEN 1 ELSE 0 END as BIT) [PDF],
-		je.EmployeeID [EmployeeID],
-		e.FullName [FullName],
-		j.ProjectID,		
-		l.legionellaID,
-		na.NoAccessID,
-		na.Created [naCreated],
-		CAST(CASE WHEN na.NoAccessID IS NOT NULL AND na.Created >= ISNULL(CASE WHEN lt.LegionellaTypeID IS NOT NULL AND l.LegionellaID IS NOT NULL THEN l.LegionellaFinish END,na.Created) THEN 1 ELSE 0 END as BIT) [NoAccess]
-	FROM
-		Job j WITH (NOLOCK)
-		INNER JOIN Client c WITH (NOLOCK) ON j.ClientID=c.ClientID
-		INNER JOIN Site s WITH (NOLOCK) ON j.SiteID=s.SiteID
-		INNER JOIN Quote q WITH (NOLOCK) ON j.JobID = q.JobID
-		INNER JOIN Appointment a WITH (NOLOCK) ON a.QuoteID=q.QuoteID
-		INNER JOIN AppointmentLegionella al WITH (NOLOCK) ON al.AppointmentID = a.AppointmentID
-		INNER JOIN LegionellaType lt WITH (NOLOCK) ON lt.LegionellaTypeID = al.LegionellaTypeID
-		LEFT JOIN JobEmployee je WITH (NOLOCK) ON j.JobID=je.JobID
-		LEFT JOIN Employee e WITH (NOLOCK) ON je.EmployeeID = e.EmployeeID
-		LEFT JOIN Legionella l WITH (NOLOCK) ON l.JobEmployeeID=je.JobEmployeeID AND l.DateApproved IS NULL
-		LEFT JOIN NoAccess na WITH (NOLOCK) ON na.JobID = j.JobID
-		OUTER APPLY
-		(
-			SELECT TOP 1
-				l.ReportInformationID
-			FROM
-				Job _j
-				INNER JOIN JobEmployee je ON j.JobID = je.JobID
-				INNER JOIN Legionella l ON je.JobEmployeeID = l.JobEmployeeID
-			WHERE
-				_j.JobID = j.JobId
-			ORDER BY
-				l.ReportInformationID
-		) legInfo
-		LEFT OUTER JOIN Floorplan fp WITH (NOLOCK) ON fp.LegionellaID=l.LegionellaID AND (fp.AutocadDataContentType IS NOT NULL OR fp.FloorplanDataContentType IS NOT NULL)
-		LEFT OUTER JOIN LegionellaSupportingDocument lsd WITH (NOLOCK) ON lsd.LegionellaID=l.LegionellaID
-		LEFT OUTER JOIN Photo p WITH (NOLOCK) ON p.PhotoID=l.PhotoID
-		LEFT OUTER JOIN PDF pf WITH (NOLOCK) ON pf.JobId=j.JobID AND pf.DateDeleted IS NULL
-		LEFT JOIN OfflineReportGeneration org WITH (NOLOCK) ON org.JobID = j.JobID AND org.Completed IS NULL
-	Where
-		a.DateDeclined IS NULL
-			AND
-		j.Approved IS NULL
-			AND
-		(CASE WHEN @FilterFromDate IS NULL OR @FilterToDate IS NULL THEN 1 ELSE CASE WHEN al.DueDate BETWEEN @FilterFromDate AND @FilterToDate THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @JobID = 0 THEN 1 ELSE CASE WHEN j.JobID = @JobID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @ClientID = 0 THEN 1 ELSE CASE WHEN c.ClientID = @ClientID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @SiteID = 0 THEN 1 ELSE CASE WHEN s.SiteID = @SiteID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @ProjectID = 0 THEN 1 ELSE CASE WHEN j.ProjectID = @ProjectID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @JobNo IS NULL OR LTRIM(RTRIM(@JobNo)) = '' THEN 1 ELSE CASE WHEN j.JobNo = @JobNo THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @EmployeeID = 0 THEN 1 ELSE CASE WHEN je.EmployeeID = @EmployeeID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @WorkTypeID = 0 THEN 1 ELSE CASE WHEN lt.LegionellaTypeID = @WorkTypeID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @BranchId = 0 THEN 1 ELSE CASE WHEN j.BranchOfficeID = @BranchId THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @ExcludeClientId = 0 THEN 1 ELSE CASE WHEN j.ClientID != @ExcludeClientId THEN 1 ELSE 0 END END = 1)
-	GROUP BY
-		j.JobID,
-		lt.LegionellaTypeID,
-		lt.Description,
-		j.JobNo,
-		c.ClientID,
-		c.Client,
-		c.BranchName,
-		s.SiteID,
-		s.Address,
-		l.DateApproved,
-		j.Status,
-		je.EmployeeID,
-		e.FullName,
-		org.State,
-		CAST(CASE WHEN pf.PDFId IS NOT NULL THEN 1 ELSE 0 END as BIT),
-		fp.FloorplanID,
-		p.PhotoID,
-		leginfo.ReportInformationID,
-		j.ProjectID,
-		l.LegionellaID,
-		na.NoAccessID,
-		na.Created,
-		CAST(CASE WHEN na.NoAccessID IS NOT NULL AND na.Created >= ISNULL(CASE WHEN lt.LegionellaTypeID IS NOT NULL AND l.LegionellaID IS NOT NULL THEN l.LegionellaFinish END,na.Created) THEN 1 ELSE 0 END as BIT)
-
-	--Apply our filters
-	DECLARE @LegionellaWIPTopLevel TABLE (IndexID INT IDENTITY(1,1), JobID INT, TypeID INT, ReportType VARCHAR(MAX), JobNo VARCHAR(10), Start DATETIME, Finish DATETIME, MonitoringSchedule DATETIME, Due DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, Site VARCHAR(MAX), Report BIT, Photos BIT, Plans BIT, Documents BIT, DateApproved DATETIME, HasNotes INT, NotesInLastHour INT, NewGrid INT, Status VARCHAR(MAX), OrgState VARCHAR(MAX), PDF BIT, EmployeeID INT, FullName VARCHAR(MAX), ProjectID INT, BranchOfficeID INT, UPRN VARCHAR(MAX), LegionellaID INT, NoAccessID INT, naCreated DATETIME, NoAccess BIT)
-	INSERT INTO @LegionellaWIPTopLevel (JobID, TypeID, ReportType, JobNo, Start, Finish, MonitoringSchedule, Due, ClientID, Client, SiteID, Site, Report, Photos, Plans, Documents, DateApproved, HasNotes, NotesInLastHour, NewGrid, Status, OrgState, PDF, EmployeeID, FullName, ProjectID, BranchOfficeID, UPRN, LegionellaID, NoAccessID, naCreated, NoAccess)
-	SELECT
-		lwipv.JobID,
-		lwipv.TypeID,
-		lwipv.Type,
-		lwipv.JobNo,
-		lwipv.Start,
-		lwipv.Finish,
-		lwipv.MonitoringSchedule,
-		lwipv.Due,
-		lwipv.ClientID,
-		lwipv.Client,
-		lwipv.SiteID,
-		--lwipv.Site,
-		si.Address + ', ' + si.Postcode [Site],
-		lwipv.Report,
-		lwipv.Photos,
-		lwipv.Plans,
-		lwipv.Documents,
-		lwipv.DateApproved,
-		lwipv.HasNotes,
-		lwipv.NotesInLastHour,
-		lwipv.NewGrid,
-		lwipv.Status,
-		lwipv.OrgState,
-		lwipv.PDF,
-		lwipv.EmployeeID,
-		lwipv.FullName,
-		lwipv.ProjectID,
-		j.BranchOfficeID,
-		si.UPRN,
-		lwipv.LegionellaID,
-		lwipv.NoAccessID,
-		lwipv.naCreated,
-		lwipv.NoAccess
-	FROM
-		@LegionellaWIPView lwipv
-		INNER JOIN Job j ON lwipv.JobID = j.JobID
-		INNER JOIN Site si ON lwipv.SiteID = si.SiteID
-		LEFT JOIN orgInstruction o ON lwipv.JobID = o.JobID
-	WHERE
-		lwipv.RowNo = 1
-			AND		
-		(
-			CASE
-				WHEN LEN(@Filter ) = 0 
-				THEN 1 
-				ELSE 
-					CASE 
-						WHEN
-						(
-							lwipv.Site Like '%' + @Filter + '%'
-						) 
-						THEN 1 
-						ELSE 0 
-					END
-			END = 1
-		)
-			AND
-		(
-			CASE WHEN @Accessibility = 0 THEN
-				CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN 
-					CASE WHEN lwipv.DateApproved  IS NULL OR j.Approved IS NULL THEN 
-						1 
-					ELSE 
-						0 
-					END 
-				ELSE 
-					CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) AND j.Approved IS NULL THEN 
-						1
-					ELSE 
-						0
-					END 
-				END
-			ELSE
-				CASE WHEN @Accessibility = 1 THEN
-					CASE WHEN lwipv.DateApproved IS NULL OR j.Approved IS NULL THEN 
-						CASE WHEN lwipv.LegionellaID IS NOT NULL AND CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) THEN 0 ELSE 1 END = 1 THEN 
-							1 
-						ELSE 
-							0 
-						END
-					ELSE 
-						0
-					END
-				ELSE
-					CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) THEN 1 ELSE 0 END
-				END
-			End = 1
-		)
-			AND
-		(
-			CASE WHEN @OrgStateId IS NULL THEN 
-				1 
-			ELSE 
-				CASE @OrgStateId
-					WHEN 100 THEN
-						Case When j.RejectedBySurveyor = 1 Then 1 ELSE 0 END
-					WHEN 101 THEN
-						CASE When j.RejectedByQC = 1 Then 1 ELSE 0 END
-					WHEN 201 THEN
-						Case When
-						   lwipv.DateApproved IS NOT NULL -- Office Approved
-								  And 
-						   o.orgStateID = 6 -- Preview Generation Succeeded
-						Then 1 Else 0
-						End
-					WHEN 202 THEN
-						CASE When o.orgInstructionID IS NULL Then 1 ELSE 0 END
-					ELSE
-						CASE WHEN o.orgStateID=@OrgStateId THEN 
-							CASE WHEN @OrgStateId = 6 THEN
-								CASE WHEN
-									j.RejectedBySurveyor = 0 
-										AND 
-									j.RejectedByQC = 0
-								THEN 1 ELSE 0 END
-							ELSE 1 END
-						ELSE 0 END
-				END
-			END = 1
-		)
-			AND
-		j.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
-		GROUP BY
-			lwipv.JobID, lwipv.TypeID, lwipv.Type, lwipv.JobNo, lwipv.Start, lwipv.Finish, lwipv.MonitoringSchedule, lwipv.Due, lwipv.ClientID,
-			lwipv.Client, lwipv.SiteID, si.Address, si.Postcode, lwipv.Report, lwipv.Photos,lwipv.Plans, lwipv.Documents, lwipv.DateApproved, lwipv.HasNotes,
-			lwipv.NotesInLastHour, lwipv.NewGrid, lwipv.Status, lwipv.OrgState, lwipv.PDF, lwipv.EmployeeID, lwipv.FullName, lwipv.ProjectID, j.BranchOfficeID,
-			si.UPRN, lwipv.LegionellaID, lwipv.NoAccessId, lwipv.naCreated, lwipv.NoAccess
-
-	SELECT
-		*
-	FROM
-		@LegionellaWIPTopLevel l
-
-	SET NOCOUNT OFF;
-END
-GO
 
 IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='ConfigTeamsSetup') AND name='HostedByUs') >= 1
 BEGIN
@@ -34617,6 +34305,16 @@ FROM
                 SELECT la.LegionellaID, la.PhotoID
                 FROM
                     LegionellaAsset la WITH (NOLOCK)
+				WHERE
+					la.DateRemoved IS NULL
+
+				-- 2.a Question Photos
+				SELECT la.LegionellaID, p.PhotoID
+                FROM
+                    LegionellaAsset la WITH (NOLOCK)
+					INNER JOIN LegionellaAssetOutletDataCollection laodc WITH (NOLOCK) ON la.LegionellaAssetID = laodc.LegionellaAssetID
+					INNER JOIN PhotoCollection pc WITH (NOLOCK) ON laodc.LegionellaAssetOutletDataCollectionID = pc.LegionellaAssetOutletDataCollectionID
+					INNER JOIN Photo p WITH (NOLOCK) ON pc.PhotoID = p.PhotoID
 				WHERE
 					la.DateRemoved IS NULL
                 
@@ -50207,14 +49905,519 @@ BEGIN
 END
 GO
 
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'ClientContactsActive') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[ClientContactsActive] AS BEGIN SET NOCOUNT ON; END')
+End
+
+go
+
+alter procedure ClientContactsActive(@ClientId as int)
+as
+/* Lists active client contacts joins back to AdditionalContacts to eliminate deleted additional contacts 
+which appear in the ClientContacts view 
+Also eliminates the 0 default contact from list
+*/
+
+select 	
+	cc.ContactID,
+	cc.Contact	
+from 
+	ClientContacts cc 
+	inner join AdditionalContactInfo aci on aci.AdditionalContactInfoId = cc.ContactId 
+											and aci.Linkid = @ClientId
+											and cc.MainContact = 0 
+											and aci.Deleted is null
+											and cc.ContactId != 0 
+											and cc.ClientId = @ClientId 		
+order by 	
+	Contact
+
+go
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'LegionellaJobTasks') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[LegionellaJobTasks] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+ALTER PROCEDURE [dbo].[LegionellaJobTasks]
+	@LegionellaId INT
+AS
+SET NOCOUNT ON
+SET ANSI_WARNINGS OFF
+BEGIN
+	DECLARE @Tasks TABLE (LegionellaTaskID INT)
+
+	INSERT INTO @Tasks
+	SELECT 
+		lt.LegionellaTaskID
+	FROM 
+		LegionellaTask lt
+	WHERE
+		lt.LegionellaID = @LegionellaId
+			AND
+		lt.Deleted IS NULL
+
+	INSERT INTO @Tasks
+	SELECT 
+		lt.LegionellaTaskID
+	FROM 
+		LegionellaAsset la
+		JOIN LegionellaTask lt ON lt.LegionellaAssetID = la.LegionellaAssetID
+	WHERE
+		la.LegionellaID = @LegionellaId
+			AND
+		la.Deleted IS NULL
+			AND
+		la.DateRemoved IS NULL
+			AND
+		lt.Deleted IS NULL
+
+	DECLARE @Locations TABLE (LegionellaLocationID INT)
+
+	INSERT INTO @Locations
+	SELECT 
+		ll.LegionellaLocationID
+	FROM 
+		LegionellaLocation ll 
+	WHERE
+		ll.LegionellaID = @LegionellaId
+			AND
+		ll.Deleted IS NULL
+			AND
+		ll.DateRemoved IS NULL
+	ORDER BY
+		ll.Location
+
+	INSERT INTO @Tasks
+	SELECT 
+		lt.LegionellaTaskID
+	FROM
+		@Locations ll
+		JOIN LegionellaOutlet lo ON ll.LegionellaLocationID = lo.LegionellaLocationID
+		JOIN LegionellaTask lt ON lo.LegionellaOutletID = lt.LegionellaOutletID
+	WHERE
+		lo.Deleted IS NULL
+			AND 
+		lo.DateRemoved IS NULL
+
+	INSERT INTO @Tasks
+	SELECT
+		lt.LegionellaTaskID
+	FROM
+		@Locations ll
+		JOIN LegionellaTask lt ON ll.LegionellaLocationID = lt.LegionellaLocationID
+	WHERE
+		lt.Deleted IS NULL
+
+	SELECT 
+		* 
+	FROM
+		LegionellaTask lt
+		JOIN @Tasks t ON lt.LegionellaTaskID = t.LegionellaTaskID
+END
+GO
+
+-- Legionella paging alterations begin
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'TEAMS_LegionellaWorkInProgressGrid') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[TEAMS_LegionellaWorkInProgressGrid] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+
+
+ALTER PROCEDURE [dbo].[TEAMS_LegionellaWorkInProgressGrid]
+	-- Paging
+    @PerPage INT = 30,
+    @CurrentPage INT = 1,
+
+	-- Standard filters
+    @ClientID INT = 0,
+    @SiteID INT = 0,
+    @ProjectID INT = 0,
+	@Filter VARCHAR(MAX) = '', -- Text entered in search box (part of address, postcode etc.)
+	@JobID INT = 0,
+	@JobNo VARCHAR(MAX) = '',
+	@LoggedInEmployeeID INT = 0,
+
+	-- User selected filters
+    @FilterFromDate DATETIME = NULL,
+    @FilterToDate DATETIME = NULL,
+    @EmployeeId INT = 0,
+	@WorkTypeId INT = 0,
+	@BranchId INT = 0, -- (0 = all)
+	@Accessibility INT = 0,-- (0=all, 1=accessible, 2=not accessible)
+	@OrgStateId INT = NULL, -- (NULL=all), 0 = Queued
+	@ExcludeClientId INT = 0 -- (0=don't exclude any)
+AS
+BEGIN
+	SET NOCOUNT ON;
+	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+	Set @FilterFromDate = ISNULL(@FilterFromDate, DATEADD(year, -1, GETDATE())) -- 1 year ago
+    Set @FilterToDate = ISNULL(@FilterToDate, DATEADD(month, 3, GETDATE())) -- 3 months time
+
+	DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
+	INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
+	SELECT
+		c.ClientID,
+		Access.EmployeeRestrictedClientAccessID
+	FROM
+		Client c
+		OUTER APPLY
+		(
+			SELECT
+				*
+			FROM
+				EmployeeRestrictedClientAccess erca
+			WHERE
+				erca.EmployeeID = @LoggedInEmployeeID
+					AND
+				erca.ClientID = c.ClientID
+		) Access
+	WHERE
+		c.Restricted = 1
+
+	-- Get all of the required data from dgLegionellaNew and dgLegionellaWip in to one table so that we can apply our filters later on in one go instead of seperately on each view
+	--DECLARE @LegionellaWIPView TABLE (IndexID INT IDENTITY(1,1), RowNo INT, JobID INT, TypeID INT, Type VARCHAR(MAX), JobNo VARCHAR(10), Start DATETIME, Finish DATETIME, MonitoringSchedule DATETIME, Due DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, Site VARCHAR(MAX), Report BIT, Photos BIT, Plans BIT, Documents BIT, DateApproved DATETIME, HasNotes INT, NotesInLastHour INT, NewGrid INT, Status VARCHAR(MAX), OrgState VARCHAR(MAX), PDF BIT, EmployeeID INT, FullName VARCHAR(MAX), ProjectID INT, LegionellaID INT, NoAccessID INT, naCreated DATETIME, NoAccess BIT)
+
+	--INSERT INTO @LegionellaWIPView
+	Select
+		ROW_NUMBER() OVER (PARTITION BY j.JobID ORDER BY MAX(l.LegionellaFinish) DESC) [RowNo],
+		j.JobID,
+		lt.LegionellaTypeID [TypeID],
+		lt.Description [Type],
+		'J' + RIGHT('000000' + CONVERT(VARCHAR(MAX),j.jobno),6) [JobNo],
+		MIN(l.LegionellaStart) [Start],
+		MAX(l.LegionellaFinish) [Finish],
+		MAX(l.MonitoringSchedule) [MonitoringSchedule],
+		MAX(al.DueDate) [Due],
+		c.ClientID,
+		c.Client + IsNull(' (' + NULLIF(c.BranchName,'') + ')','') [Client],
+		s.SiteID,
+		s.Address [Site],
+		CAST(CASE WHEN leginfo.ReportInformationID IS NULL THEN 0 ELSE 1 END as bit) [Report],
+		CAST(CASE WHEN p.PhotoID IS NOT NULL THEN 1 ELSE 0 END as BIT) [Photos],
+		CAST(CASE WHEN fp.FloorplanID IS NOT NULL THEN 1 ELSE 0 END as BIT) [Plans],
+		CAST(CASE WHEN MIN(lsd.LegionellaSupportingDocumentId) IS NOT NULL THEN 1 ELSE 0 END as BIT) [Documents],
+		l.DateApproved,
+		0 [HasNotes],
+		0 [NotesInLastHour],
+		1 [NewGrid],
+		j.Status [Status],
+		org.State [OrgState],
+		CAST(CASE WHEN pf.PDFId IS NOT NULL THEN 1 ELSE 0 END as BIT) [PDF],
+		je.EmployeeID [EmployeeID],
+		e.FullName [FullName],
+		j.ProjectID,		
+		l.legionellaID,
+		na.NoAccessID,
+		na.Created [naCreated],
+		CAST(CASE WHEN na.NoAccessID IS NOT NULL AND na.Created >= ISNULL(CASE WHEN lt.LegionellaTypeID IS NOT NULL AND l.LegionellaID IS NOT NULL THEN l.LegionellaFinish END,na.Created) THEN 1 ELSE 0 END as BIT) [NoAccess]
+	into 
+		#LegionellaWIPView
+	FROM
+		Job j WITH (NOLOCK)
+		INNER JOIN Client c WITH (NOLOCK) ON j.ClientID=c.ClientID
+		INNER JOIN Site s WITH (NOLOCK) ON j.SiteID=s.SiteID
+		INNER JOIN Quote q WITH (NOLOCK) ON j.JobID = q.JobID
+		INNER JOIN Appointment a WITH (NOLOCK) ON a.QuoteID=q.QuoteID
+		INNER JOIN AppointmentLegionella al WITH (NOLOCK) ON al.AppointmentID = a.AppointmentID
+		INNER JOIN LegionellaType lt WITH (NOLOCK) ON lt.LegionellaTypeID = al.LegionellaTypeID
+		LEFT JOIN JobEmployee je WITH (NOLOCK) ON j.JobID=je.JobID
+		LEFT JOIN Employee e WITH (NOLOCK) ON je.EmployeeID = e.EmployeeID
+		LEFT JOIN Legionella l WITH (NOLOCK) ON l.JobEmployeeID=je.JobEmployeeID AND l.DateApproved IS NULL
+		LEFT JOIN NoAccess na WITH (NOLOCK) ON na.JobID = j.JobID
+		OUTER APPLY
+		(
+			SELECT TOP 1
+				l.ReportInformationID
+			FROM
+				Job _j
+				INNER JOIN JobEmployee je ON j.JobID = je.JobID
+				INNER JOIN Legionella l ON je.JobEmployeeID = l.JobEmployeeID
+			WHERE
+				_j.JobID = j.JobId
+			ORDER BY
+				l.ReportInformationID
+		) legInfo
+		LEFT OUTER JOIN Floorplan fp WITH (NOLOCK) ON fp.LegionellaID=l.LegionellaID AND (fp.AutocadDataContentType IS NOT NULL OR fp.FloorplanDataContentType IS NOT NULL)
+		LEFT OUTER JOIN LegionellaSupportingDocument lsd WITH (NOLOCK) ON lsd.LegionellaID=l.LegionellaID
+		LEFT OUTER JOIN Photo p WITH (NOLOCK) ON p.PhotoID=l.PhotoID
+		LEFT OUTER JOIN PDF pf WITH (NOLOCK) ON pf.JobId=j.JobID AND pf.DateDeleted IS NULL
+		LEFT JOIN OfflineReportGeneration org WITH (NOLOCK) ON org.JobID = j.JobID AND org.Completed IS NULL
+	Where
+		a.DateDeclined IS NULL
+			AND
+		j.Approved IS NULL
+			AND
+		(CASE WHEN @FilterFromDate IS NULL OR @FilterToDate IS NULL THEN 1 ELSE CASE WHEN al.DueDate BETWEEN @FilterFromDate AND @FilterToDate THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @JobID = 0 THEN 1 ELSE CASE WHEN j.JobID = @JobID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ClientID = 0 THEN 1 ELSE CASE WHEN c.ClientID = @ClientID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @SiteID = 0 THEN 1 ELSE CASE WHEN s.SiteID = @SiteID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ProjectID = 0 THEN 1 ELSE CASE WHEN j.ProjectID = @ProjectID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @JobNo IS NULL OR LTRIM(RTRIM(@JobNo)) = '' THEN 1 ELSE CASE WHEN j.JobNo = @JobNo THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @EmployeeID = 0 THEN 1 ELSE CASE WHEN je.EmployeeID = @EmployeeID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @WorkTypeID = 0 THEN 1 ELSE CASE WHEN lt.LegionellaTypeID = @WorkTypeID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @BranchId = 0 THEN 1 ELSE CASE WHEN j.BranchOfficeID = @BranchId THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ExcludeClientId = 0 THEN 1 ELSE CASE WHEN j.ClientID != @ExcludeClientId THEN 1 ELSE 0 END END = 1)
+	GROUP BY
+		j.JobID,
+		lt.LegionellaTypeID,
+		lt.Description,
+		j.JobNo,
+		c.ClientID,
+		c.Client,
+		c.BranchName,
+		s.SiteID,
+		s.Address,
+		l.DateApproved,
+		j.Status,
+		je.EmployeeID,
+		e.FullName,
+		org.State,
+		CAST(CASE WHEN pf.PDFId IS NOT NULL THEN 1 ELSE 0 END as BIT),
+		fp.FloorplanID,
+		p.PhotoID,
+		leginfo.ReportInformationID,
+		j.ProjectID,
+		l.LegionellaID,
+		na.NoAccessID,
+		na.Created,
+		CAST(CASE WHEN na.NoAccessID IS NOT NULL AND na.Created >= ISNULL(CASE WHEN lt.LegionellaTypeID IS NOT NULL AND l.LegionellaID IS NOT NULL THEN l.LegionellaFinish END,na.Created) THEN 1 ELSE 0 END as BIT)
+
+	--Apply our filters
+	--DECLARE @LegionellaWIPTopLevel TABLE (IndexID INT IDENTITY(1,1), JobID INT, TypeID INT, ReportType VARCHAR(MAX), JobNo VARCHAR(10), Start DATETIME, Finish DATETIME, MonitoringSchedule DATETIME, Due DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, Site VARCHAR(MAX), Report BIT, Photos BIT, Plans BIT, Documents BIT, DateApproved DATETIME, HasNotes INT, NotesInLastHour INT, NewGrid INT, Status VARCHAR(MAX), OrgState VARCHAR(MAX), PDF BIT, EmployeeID INT, FullName VARCHAR(MAX), ProjectID INT, BranchOfficeID INT, UPRN VARCHAR(MAX), LegionellaID INT, NoAccessID INT, naCreated DATETIME, NoAccess BIT)
+	--select * into #LegionellaWIPTopLevel from @LegionellaWIPTopLevel
+	--INSERT INTO #LegionellaWIPTopLevel (JobID, TypeID, ReportType, JobNo, Start, Finish, MonitoringSchedule, Due, ClientID, Client, SiteID, Site, Report, Photos, Plans, Documents, DateApproved, HasNotes, NotesInLastHour, NewGrid, Status, OrgState, PDF, EmployeeID, FullName, ProjectID, BranchOfficeID, UPRN, LegionellaID, NoAccessID, naCreated, NoAccess)	
+	SELECT		
+		cast(row_number() OVER (PARTITION BY (select null) order by Due desc,Finish desc) as Int) as IndexId,
+		lwipv.JobID as JobId,
+		lwipv.TypeID,
+		lwipv.Type ReportType,
+		lwipv.JobNo,
+		lwipv.Start,
+		lwipv.Finish,
+		lwipv.MonitoringSchedule,
+		lwipv.Due,
+		lwipv.ClientID,
+		lwipv.Client,
+		lwipv.SiteID,
+		--lwipv.Site,
+		si.Address + ', ' + si.Postcode [Site],
+		lwipv.Report,
+		lwipv.Photos,
+		lwipv.Plans,
+		lwipv.Documents,
+		lwipv.DateApproved,
+		lwipv.HasNotes,
+		lwipv.NotesInLastHour,
+		lwipv.NewGrid,
+		lwipv.Status,
+		lwipv.OrgState,
+		lwipv.PDF,
+		lwipv.EmployeeID,
+		lwipv.FullName,
+		lwipv.ProjectID,
+		j.BranchOfficeID,
+		si.UPRN,
+		lwipv.LegionellaID,
+		lwipv.NoAccessID,
+		lwipv.naCreated,
+		lwipv.NoAccess		
+	into 
+		#LegionellaWIPTopLevel
+	FROM
+		#LegionellaWIPView lwipv
+		INNER JOIN Job j ON lwipv.JobID = j.JobID
+		INNER JOIN Site si ON lwipv.SiteID = si.SiteID
+		LEFT JOIN orgInstruction o ON lwipv.JobID = o.JobID
+	WHERE
+		lwipv.RowNo = 1
+			AND		
+		(
+			CASE
+				WHEN LEN(@Filter ) = 0 
+				THEN 1 
+				ELSE 
+					CASE 
+						WHEN
+						(
+							lwipv.Site Like '%' + @Filter + '%'
+						) 
+						THEN 1 
+						ELSE 0 
+					END
+			END = 1
+		)
+			AND
+		(
+			CASE WHEN @Accessibility = 0 THEN
+				CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN 
+					CASE WHEN lwipv.DateApproved  IS NULL OR j.Approved IS NULL THEN 
+						1 
+					ELSE 
+						0 
+					END 
+				ELSE 
+					CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) AND j.Approved IS NULL THEN 
+						1
+					ELSE 
+						0
+					END 
+				END
+			ELSE
+				CASE WHEN @Accessibility = 1 THEN
+					CASE WHEN lwipv.DateApproved IS NULL OR j.Approved IS NULL THEN 
+						CASE WHEN lwipv.LegionellaID IS NOT NULL AND CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) THEN 0 ELSE 1 END = 1 THEN 
+							1 
+						ELSE 
+							0 
+						END
+					ELSE 
+						0
+					END
+				ELSE
+					CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) THEN 1 ELSE 0 END
+				END
+			End = 1
+		)
+			AND
+		(
+			CASE WHEN @OrgStateId IS NULL THEN 
+				1 
+			ELSE 
+				CASE @OrgStateId
+					WHEN 100 THEN
+						Case When j.RejectedBySurveyor = 1 Then 1 ELSE 0 END
+					WHEN 101 THEN
+						CASE When j.RejectedByQC = 1 Then 1 ELSE 0 END
+					WHEN 201 THEN
+						Case When
+						   lwipv.DateApproved IS NOT NULL -- Office Approved
+								  And 
+						   o.orgStateID = 6 -- Preview Generation Succeeded
+						Then 1 Else 0
+						End
+					WHEN 202 THEN
+						CASE When o.orgInstructionID IS NULL Then 1 ELSE 0 END
+					ELSE
+						CASE WHEN o.orgStateID=@OrgStateId THEN 
+							CASE WHEN @OrgStateId = 6 THEN
+								CASE WHEN
+									j.RejectedBySurveyor = 0 
+										AND 
+									j.RejectedByQC = 0
+								THEN 1 ELSE 0 END
+							ELSE 1 END
+						ELSE 0 END
+				END
+			END = 1
+		)
+			AND
+		j.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+		GROUP BY
+			lwipv.JobID, lwipv.TypeID, lwipv.Type, lwipv.JobNo, lwipv.Start, lwipv.Finish, lwipv.MonitoringSchedule, lwipv.Due, lwipv.ClientID,
+			lwipv.Client, lwipv.SiteID, si.Address, si.Postcode, lwipv.Report, lwipv.Photos,lwipv.Plans, lwipv.Documents, lwipv.DateApproved, lwipv.HasNotes,
+			lwipv.NotesInLastHour, lwipv.NewGrid, lwipv.Status, lwipv.OrgState, lwipv.PDF, lwipv.EmployeeID, lwipv.FullName, lwipv.ProjectID, j.BranchOfficeID,
+			si.UPRN, lwipv.LegionellaID, lwipv.NoAccessId, lwipv.naCreated, lwipv.NoAccess
+			
+			declare @RowTotal as int
+			select @RowTotal = count(*) from #LegionellaWIPTopLevel
+
+	;With Paging As 
+    ( 
+        Select 
+            CASE WHEN @PerPage = 0 THEN
+                1
+            ELSE
+                Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
+            END As Pages, 
+
+            CASE WHEN @PerPage = 0 THEN
+                1
+            ELSE
+                Cast(((Row_Number() Over(Order By a.DateApproved DESC)-1) / @PerPage)+1 as int)
+            END As Page, 
+
+            Row_Number() Over(Order By a.DateApproved DESC) as Row_Num, 
+			
+			@RowTotal as RowTotal,
+            *
+        From 
+			(
+				Select * FROM #LegionellaWIPTopLevel 
+			) a
+	)
+
+SELECT 
+		IndexId,
+		JobID,
+		TypeID,
+		ReportType,
+		JobNo,
+		Start,
+		Finish,
+		MonitoringSchedule,
+		Due,
+		ClientID,
+		Client,
+		SiteID,
+		Site,
+		Report,
+		Photos,
+		Plans,
+		Documents,
+		DateApproved,
+		HasNotes,
+		NotesInLastHour,
+		NewGrid,
+		STATUS,
+		OrgState,
+		PDF,
+		EmployeeID,
+		FullName,
+		ProjectID,
+		BranchOfficeID,
+		UPRN,
+		LegionellaID,
+		NoAccessID,
+		naCreated,
+		NoAccess,
+		[Pages],
+		[Page]
+FROM 
+	Paging 
+where
+	[Page] = @CurrentPage
+
+
+
+
+	SET NOCOUNT OFF;
+END
+
+GO
+
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'TEAMS_LegionellaCompletedJobsGrid') < 1 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[TEAMS_LegionellaCompletedJobsGrid] AS BEGIN SET NOCOUNT ON; END')
 END
 GO
 
-ALTER PROCEDURE [dbo].[TEAMS_LegionellaCompletedJobsGrid]
+
+
+alter PROCEDURE [dbo].[TEAMS_LegionellaCompletedJobsGrid]
 	-- Paging
-    @PerPage INT = 30,
+    @PerPage INT = 15,
     @CurrentPage INT = 1,
 
 	-- Standard filters
@@ -50331,6 +50534,26 @@ BEGIN
 		a.DateDeclined IS NULL
 			AND
 		j.Approved IS NOT NULL
+			AND		
+		(CASE WHEN @FilterFromDate IS NULL OR @FilterToDate IS NULL THEN 1 ELSE CASE WHEN al.DueDate BETWEEN @FilterFromDate AND @FilterToDate THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @JobID = 0 THEN 1 ELSE CASE WHEN j.JobID = @JobID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ClientID = 0 THEN 1 ELSE CASE WHEN c.ClientID = @ClientID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @SiteID = 0 THEN 1 ELSE CASE WHEN s.SiteID = @SiteID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ProjectID = 0 THEN 1 ELSE CASE WHEN j.ProjectID = @ProjectID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @JobNo IS NULL OR LTRIM(RTRIM(@JobNo)) = '' THEN 1 ELSE CASE WHEN j.JobNo = @JobNo THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @EmployeeID = 0 THEN 1 ELSE CASE WHEN je.EmployeeID = @EmployeeID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @WorkTypeID = 0 THEN 1 ELSE CASE WHEN lt.LegionellaTypeID = @WorkTypeID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @BranchId = 0 THEN 1 ELSE CASE WHEN j.BranchOfficeID = @BranchId THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ExcludeClientId = 0 THEN 1 ELSE CASE WHEN j.ClientID != @ExcludeClientId THEN 1 ELSE 0 END END = 1)
 	GROUP BY
 		j.JobID,
 		lt.LegionellaTypeID,
@@ -50352,40 +50575,106 @@ BEGIN
 		leginfo.ReportInformationID,
 		j.ProjectID
 
-	-- Only get jobs from the dgLegionellaCompleted view if they have not selected a work type.
+
+
+
+
+
+	 --Only get jobs from the dgLegionellaCompleted view if they have not selected a work type.
 	IF @WorkTypeId = 0
 	BEGIN
-		INSERT INTO @LegionellaCompletedView (RowNo, JobID, TypeID, Type, JobNo, Start, Finish, MonitoringSchedule, Due, ClientID, Client, SiteID, Site, Report, Photos, Plans, Documents, DateApproved, HasNotes, NotesInLastHour, NewGrid, Status, OrgState, PDF, EmployeeID, FullName, ProjectID)
-		SELECT
-			ROW_NUMBER() OVER (PARTITION BY dglc.JobID ORDER BY dglc.DateApproved DESC) [RowNo],
-			dglc.JobID,
-			dglc.TypeID,
-			dglc.Type,
-			dglc.JobNo,
-			dglc.Start,
-			dglc.Finish,
-			dglc.MonitoringSchedule,
-			dglc.Due,
-			dglc.ClientID,
-			dglc.Client,
-			dglc.SiteID,
-			dglc.Site,
-			dglc.Report,
-			dglc.Photos,
-			dglc.Plans,
-			dglc.Documents,
-			dglc.DateApproved,
-			dglc.HasNotes,
-			dglc.NotesInLastHour,
-			dglc.NewGrid,
-			dglc.Status,
-			dglc.OrgState,
-			dglc.PDF,
-			dglc.EmployeeID,
-			dglc.FullName,
-			dglc.ProjectID
-		FROM
-			dgLegionellaCompleted dglc
+	  INSERT INTO @LegionellaCompletedView (RowNo, JobID, TypeID, Type, JobNo, Start, Finish, MonitoringSchedule, Due, ClientID, Client, SiteID, Site, Report, Photos, Plans, Documents, DateApproved, HasNotes, NotesInLastHour, NewGrid, Status, OrgState, PDF, EmployeeID, FullName, ProjectID)		
+	  Select
+		ROW_NUMBER() OVER (PARTITION BY j.JobID ORDER BY j.Approved DESC) [RowNo],
+		j.JobId,
+		qvt.QuoteVisitTypeId [TypeID], 
+		qvt.Description [Type], 
+		'J' + RIGHT('000000' + CONVERT(VARCHAR(MAX),j.jobno),6) [JobNo],
+		Cast(MIN(a.StartTime) as date) [Start],
+		Cast(MIN(a.EndTime) as date) [Finish],
+		Cast(MIN(a.EndTime) as date) [MonitoringSchedule],
+		Cast(MAX(agt.DueDate) as date) [Due], 
+		c.ClientId,
+		c.Client + IsNull(' (' + NULLIF(c.BranchName,'') + ')','') [Client],
+		s.SiteId,
+		s.Address [Site],
+		0 As [Report],
+		0 As [Photos],
+		0 As [Plans],
+		0 As [Documents],
+		j.Approved [DateApproved],
+		0 [HasNotes],
+		0 [NotesInLastHour],
+		0 [NewGrid],
+		j.Status [Status],
+		'' [OrgState],
+		0 As [PDF],
+		qe.EmployeeID [EmployeeID],
+		e.FullName [FullName],
+		j.ProjectID [ProjectID]
+	From 
+		Quote q WITH (NOLOCK)
+		INNER JOIN QuoteEmployee qe WITH (NOLOCK) ON q.QuoteID=qe.QuoteID
+		INNER JOIN Employee e WITH (NOLOCK) ON qe.EmployeeID = e.EmployeeID
+		INNER JOIN QuoteVisit qv WITH (NOLOCK) ON qv.QuoteEmployeeID=qe.QuoteEmployeeID
+		INNER JOIN QuoteVisitType qvt WITH (NOLOCK) ON qvt.QuoteVisitTypeID=qv.QuoteVisitTypeID
+		Inner Join Appointment a WITH (NOLOCK) On a.QuoteID = q.QuoteID AND a.AppointmentTypeID IN (5,4)			
+		INNER JOIN
+		(
+			Select ag.DueDate, ag.AppointmentID FROM AppointmentGeneral ag WITH (NOLOCK)
+				UNION
+			Select null [DueDate], at.AppointmentID FROM AppointmentTraining at WITH (NOLOCK)
+		) agt ON agt.AppointmentID=a.AppointmentID
+		INNER JOIN Job j WITH (NOLOCK) ON j.JobID=q.JobID
+		Left Outer Join Client c WITH (NOLOCK) On a.ClientId = c.ClientId
+		Left Outer Join Site s WITH (NOLOCK) On a.SiteId = s.SiteId
+		Outer Apply 
+		(
+			Select Top 1 [FileName] From PDF p WITH (NOLOCK) Where p.JobId = j.JobID AND p.FileName Like '%ra%' AND p.DateDeleted Is Null Order by p.DateCreated DESC
+		) oa_pdf
+	where		
+		a.ManuallyMarkWorkDone = 1
+			And
+		a.DateConfirmed IS NOT Null
+			And
+		a.DateDeclined Is Null
+			And
+		qvt.QuoteVisitTypeId=4
+		and
+		(CASE WHEN @FilterFromDate IS NULL OR @FilterToDate IS NULL THEN 1 ELSE CASE WHEN agt.DueDate BETWEEN @FilterFromDate AND @FilterToDate THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @JobID = 0 THEN 1 ELSE CASE WHEN j.JobID = @JobID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ClientID = 0 THEN 1 ELSE CASE WHEN c.ClientID = @ClientID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @SiteID = 0 THEN 1 ELSE CASE WHEN s.SiteID = @SiteID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ProjectID = 0 THEN 1 ELSE CASE WHEN j.ProjectID = @ProjectID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @JobNo IS NULL OR LTRIM(RTRIM(@JobNo)) = '' THEN 1 ELSE CASE WHEN JobNo = @JobNo THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @EmployeeID = 0 THEN 1 ELSE CASE WHEN qe.EmployeeID = @EmployeeID THEN 1 ELSE 0 END END = 1)			
+			AND
+		(CASE WHEN @ExcludeClientId = 0 THEN 1 ELSE CASE WHEN c.ClientID != @ExcludeClientId THEN 1 ELSE 0 END END = 1)
+			AND		
+		(CASE WHEN @BranchId = 0 THEN 1 ELSE CASE WHEN j.BranchOfficeID = @BranchId THEN 1 ELSE 0 END END = 1)
+	GROUP BY
+		j.JobId,
+		qvt.QuoteVisitTypeId,
+		qvt.Description,
+		j.JobNo,
+		c.ClientId,
+		c.Client,
+		c.BranchName,
+		s.SiteId,
+		s.Address,
+		j.Approved,
+		j.Status,
+		qe.EmployeeID,
+		e.FullName,
+		j.ProjectID
+
+
 	END
 
 	--Apply our filters
@@ -50425,29 +50714,7 @@ BEGIN
 		@LegionellaCompletedView lcompv
 		INNER JOIN Job j ON lcompv.JobID = j.JobID
 		INNER JOIN Site si ON lcompv.SiteID = si.SiteID
-	WHERE
-		lcompv.RowNo = 1
-			AND
-		(CASE WHEN @FilterFromDate IS NULL OR @FilterToDate IS NULL THEN 1 ELSE CASE WHEN lcompv.Due BETWEEN @FilterFromDate AND @FilterToDate THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @JobID = 0 THEN 1 ELSE CASE WHEN j.JobID = @JobID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @ClientID = 0 THEN 1 ELSE CASE WHEN j.ClientID = @ClientID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @SiteID = 0 THEN 1 ELSE CASE WHEN j.SiteID = @SiteID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @ProjectID = 0 THEN 1 ELSE CASE WHEN j.ProjectID = @ProjectID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @JobNo IS NULL OR LTRIM(RTRIM(@JobNo)) = '' THEN 1 ELSE CASE WHEN j.JobNo = @JobNo THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @EmployeeID = 0 THEN 1 ELSE CASE WHEN lcompv.EmployeeID = @EmployeeID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @WorkTypeID = 0 THEN 1 ELSE CASE WHEN lcompv.TypeID = @WorkTypeID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @BranchId = 0 THEN 1 ELSE CASE WHEN j.BranchOfficeID = @BranchId THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @ExcludeClientId = 0 THEN 1 ELSE CASE WHEN j.ClientID != @ExcludeClientId THEN 1 ELSE 0 END END = 1)
-			AND
+	WHERE	
 		(
 			CASE
 				WHEN LEN(@Filter ) = 0 
@@ -50464,127 +50731,111 @@ BEGIN
 			END = 1
 		)
 			AND
-		j.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+		j.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)	
 
-	SELECT
-		*
-	FROM
-		@LegionellaCompletedTopLevel
+		declare @RowTotal as int
+		declare @Pages as int
+		select 
+			@RowTotal = count(IndexId) 			
+		from
+			 @LegionellaCompletedTopLevel
+		
+	select 
+		*	
+	from
+	(
+		Select 
+            CASE WHEN @PerPage = 0 THEN
+                1
+            ELSE
+                cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
+            END As Pages, 			
+
+            CASE WHEN @PerPage = 0 THEN
+                1
+            ELSE
+                cast((Row_Number() Over(Order By a.DateApproved DESC)-1) / @PerPage+1  as int)
+            END As Page, 
+
+            cast(Row_Number() Over(Order By a.Due) as int) as Row_Num, 
+			@RowTotal as RowTotal,
+
+            *
+        From 
+			(
+				Select * FROM @LegionellaCompletedTopLevel
+			) a		
+	) as x where
+	[Page] = @CurrentPage
+	order by
+		Finish desc
+
 
 	SET NOCOUNT OFF;
 END
 GO
 
-
-go
-If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'ClientContactsActive') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[ClientContactsActive] AS BEGIN SET NOCOUNT ON; END')
-End
-
-go
-
-alter procedure ClientContactsActive(@ClientId as int)
-as
-/* Lists active client contacts joins back to AdditionalContacts to eliminate deleted additional contacts 
-which appear in the ClientContacts view 
-Also eliminates the 0 default contact from list
-*/
-
-select 	
-	cc.ContactID,
-	cc.Contact	
-from 
-	ClientContacts cc 
-	inner join AdditionalContactInfo aci on aci.AdditionalContactInfoId = cc.ContactId 
-											and aci.Linkid = @ClientId
-											and cc.MainContact = 0 
-											and aci.Deleted is null
-											and cc.ContactId != 0 
-											and cc.ClientId = @ClientId 		
-order by 	
-	Contact
-
-go
-
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'LegionellaJobTasks') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[LegionellaJobTasks] AS BEGIN SET NOCOUNT ON; END')
-END
 GO
 
-ALTER PROCEDURE [dbo].[LegionellaJobTasks]
-	@LegionellaId INT
-AS
-SET NOCOUNT ON
-SET ANSI_WARNINGS OFF
-BEGIN
-	DECLARE @Tasks TABLE (LegionellaTaskID INT)
 
-	INSERT INTO @Tasks
-	SELECT 
-		lt.LegionellaTaskID
-	FROM 
-		LegionellaTask lt
-	WHERE
-		lt.LegionellaID = @LegionellaId
-			AND
-		lt.Deleted IS NULL
 
-	INSERT INTO @Tasks
-	SELECT 
-		lt.LegionellaTaskID
-	FROM 
-		LegionellaAsset la
-		JOIN LegionellaTask lt ON lt.LegionellaAssetID = la.LegionellaAssetID
-	WHERE
-		la.LegionellaID = @LegionellaId
-			AND
-		la.Deleted IS NULL
-			AND
-		la.DateRemoved IS NULL
-			AND
-		lt.Deleted IS NULL
-
-	DECLARE @Locations TABLE (LegionellaLocationID INT)
-
-	INSERT INTO @Locations
-	SELECT 
-		ll.LegionellaLocationID
-	FROM 
-		LegionellaLocation ll 
-	WHERE
-		ll.LegionellaID = @LegionellaId
-			AND
-		ll.Deleted IS NULL
-			AND
-		ll.DateRemoved IS NULL
-	ORDER BY
-		ll.Location
-
-	INSERT INTO @Tasks
-	SELECT 
-		lt.LegionellaTaskID
-	FROM
-		@Locations ll
-		JOIN LegionellaOutlet lo ON ll.LegionellaLocationID = lo.LegionellaLocationID
-		JOIN LegionellaTask lt ON lo.LegionellaOutletID = lt.LegionellaOutletID
-	WHERE
-		lo.Deleted IS NULL
-			AND 
-		lo.DateRemoved IS NULL
-
-	INSERT INTO @Tasks
-	SELECT
-		lt.LegionellaTaskID
-	FROM
-		@Locations ll
-		JOIN LegionellaTask lt ON ll.LegionellaLocationID = lt.LegionellaLocationID
-	WHERE
-		lt.Deleted IS NULL
-
-	SELECT 
-		* 
-	FROM
-		LegionellaTask lt
-		JOIN @Tasks t ON lt.LegionellaTaskID = t.LegionellaTaskID
-END
+if exists(SELECT * FROM sys.indexes WHERE name='idx_SurveyApproval_orgInstructionDateDeleted' AND object_id = OBJECT_ID('dbo.SurveyApproval'))
+begin
+DROP INDEX [idx_SurveyApproval_orgInstructionDateDeleted] ON [dbo].[SurveyApproval]
+end
 GO
+
+CREATE NONCLUSTERED INDEX [idx_SurveyApproval_orgInstructionDateDeleted] ON [dbo].[SurveyApproval]
+(
+	[orgInstructionID] ASC,
+	[DateDeleted] ASC
+)
+INCLUDE ([SurveyApprovalId],
+	[EmployeeId]) WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+GO
+
+
+if exists(SELECT * FROM sys.indexes WHERE name='idx_Floorplan_LegionellaId' AND object_id = OBJECT_ID('dbo.Floorplan'))
+begin
+DROP INDEX [idx_Floorplan_LegionellaId] ON [dbo].[Floorplan]
+end
+GO
+
+CREATE NONCLUSTERED INDEX [idx_Floorplan_LegionellaId] ON [dbo].[Floorplan]
+(
+	[LegionellaID] ASC
+)
+INCLUDE ([FloorplanID],
+	[FloorplanDataContentType],
+	[AutocadDataContentType]) WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+GO
+
+
+if exists(SELECT * FROM sys.indexes WHERE name='idx_PDF_DateDeleted' AND object_id = OBJECT_ID('dbo.PDF'))
+begin
+	DROP INDEX [idx_PDF_DateDeleted] ON [dbo].[PDF]
+end
+
+
+CREATE NONCLUSTERED INDEX [idx_PDF_DateDeleted] ON [dbo].[PDF]
+(
+	[DateDeleted] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+GO
+
+if exists(SELECT * FROM sys.indexes WHERE name='idx_Appointment_LegionellaBrowse' AND object_id = OBJECT_ID('dbo.Appointment'))
+begin
+	DROP INDEX [idx_Appointment_LegionellaBrowse] ON [dbo].[Appointment]
+end
+GO
+
+CREATE NONCLUSTERED INDEX [idx_Appointment_LegionellaBrowse] ON [dbo].[Appointment]
+(
+	[DateDeclined] ASC,
+	[ManuallyMarkWorkDone] ASC,
+	[AppointmentTypeID] ASC,
+	[DateConfirmed] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+GO
+
+-- Legionella paging alterations end
