@@ -7800,680 +7800,6 @@ GO
 
 
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_OutstandingQuotes') < 1
-BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[Paged_OutstandingQuotes] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-/*    ==Scripting Parameters==
-
-    Source Server Version : SQL Server 2008 (10.0.1600)
-    Source Database Engine Edition : Microsoft SQL Server Standard Edition
-    Source Database Engine Type : Standalone SQL Server
-
-    Target Server Version : SQL Server 2008
-    Target Database Engine Edition : Microsoft SQL Server Standard Edition
-    Target Database Engine Type : Standalone SQL Server
-*/
-
-USE [TEAMS]
-GO
-
-/****** Object:  StoredProcedure [dbo].[Paged_OutstandingQuotes]    Script Date: 31/10/2018 08:59:40 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-
--- =============================================
--- Author:        Joe
--- Create date: 03/09/2015
--- Description:   Clone of Paged_QuoteHistory changed to Outstanding to repalce view
--- =============================================
-
-/* NOTE STODD 16/10/2015 - Please ensure this proc and Export_QuoteHistory are synced at all times */
-
-ALTER PROCEDURE [dbo].[Paged_OutstandingQuotes] 
-      @PerPage INT = 15,
-      @CurrentPage INT = 1,
-      @ClientID INT = 0,
-      @SiteID INT = 0,
-      @ProjectID INT = 0,
-      @OutstandingQuotesFilterAssignedTo INT = 0,
-      @OutstandingQuotesFilterQuoteType INT = 0,
-      @OutstandingQuotesHideInstaquote INT = 0,
-      @QuoteID INT = 0,
-      @EnquiryID INT = 0,
-      @FilterStartDate DATETIME = NULL,
-      @FilterEndDate DATETIME = NULL,
-      @Filter VARCHAR(MAX) = ''
-AS
-BEGIN
-      SET NOCOUNT ON;
-
-      Set @FilterStartDate = ISNULL(@FilterStartDate,DATEADD(year,-1,GETDATE()))
-      Set @FilterEndDate = ISNULL(@FilterEndDate,DATEADD(month,3,GETDATE()))
-      
-      DECLARE @FilterSites TABLE (SiteID INT)
-      
-      DECLARE @OutstandingQuotesViewID TABLE (ItemID INT, ItemType VARCHAR(3), Created DATETIME)
-
-      DECLARE @OutstandingQuotesView TABLE (ItemId INT,Itemtype VARCHAR(3),ItemNo INT, QuoteTypeID INT,QuoteType VARCHAR(MAX),Value MONEY,Created DATETIME, [Status] VARCHAR(MAX),LastNoteCreated VARCHAR(MAX),ClientId INT,ProjectID INT,SiteID INT, [Site] VARCHAR(MAX), [Address] VARCHAR(MAX), Postcode VARCHAR(MAX),Accepted DATETIME, Rejected DATETIME,IsInstaQuote BIT,AssignedEmployeeID INT, StatusText VARCHAR(MAX), isNew INT, DateActioned DATETIME, HasPDF INT, [File] varchar(MAX))
-      
-  	  Insert into @OutstandingQuotesViewID (ItemID,ItemType,Created)
-	  Select  q.QuoteID as ItemId, 'Q' as ItemType, q.Created
-	  From
-			Quote q 
-			Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-			Left Outer Join Job j On q.JobId = j.JobId
-			Left Outer Join Client c On c.ClientID = q.ClientID 
-			Left Outer Join Project p On p.ProjectID = q.ProjectID 
-			Left Outer Join Site s On s.SiteID = q.SiteID
-			LEFT OUTER JOIN @FilterSites fs ON s.SiteID=fs.SiteID
-			OUTER APPLY
-			(
-				SELECT CASE when
-				EXISTS 
-				( 
-		        
-					SELECT 
-						'x'
-					FROM
-						[dbo].[Appointment] [a]
-						INNER JOIN [dbo].[AppointmentType] [at] ON [at].[AppointmentTypeId] = [a].[AppointmentTypeID]
-					WHERE
-						[a].[QuoteID] = [q].[QuoteID]     
-							AND
-						[a].[AppointmentTypeID] = 8
-				)
-				THEN 
-					1
-				ELSE 
-					0
-				END 
-			)isQuoteVisitApointment(val)
-	  Where 
-			(
-				  LEN(@Filter ) = 0
-						OR
-				  (
-						s.Address Like '%' + @Filter + '%'
-							  Or 
-						s.Postcode Like '%' + @Filter + '%'
-							  Or 
-						s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
-						Or s.UPRN = @Filter
-				)
-			)
-				  AND
-			(
-				CASE WHEN qt.QuoteVisitTypeID IS NOT NULL AND [isQuoteVisitApointment].[val] = 1 THEN
-					(Select COUNT(*) FROM QuoteVisit qv INNER JOIN QuoteEmployee qe ON qv.QuoteEmployeeID=qe.QuoteEmployeeID Where qe.QuoteID=q.QuoteID AND qe.EmployeeID>0)
-				ELSE
-					1
-				END = 1
-			)
-				And
-			(Accepted Is Null) 
-				AND
-			(Rejected IS NULL)
-				AND					  
-			(@ProjectID=0 OR q.ProjectID=@ProjectID)
-				  AND
-			(@SiteID=0 OR q.SiteID=@SiteID)
-				  AND
-			(@ClientID=0 OR q.ClientID=@ClientID)
-				  AND
-			(
-				  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-						CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
-				  ELSE
-						CASE WHEN
-							  (
-									q.Created BETWEEN @FilterStartDate AND @FilterEndDate
-							  )
-									AND
-							  (
-									CASE WHEN @OutstandingQuotesFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @OutstandingQuotesFilterAssignedTo THEN 1 ELSE 0 END END = 1
-							  )
-									AND
-							  (
-									CASE WHEN @OutstandingQuotesFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @OutstandingQuotesFilterQuoteType THEN 1 ELSE 0 END END = 1
-							  )
-									AND
-							  (
-									CASE WHEN @OutstandingQuotesHideInstaquote = 0 THEN 0 ELSE 
-										Cast(
-											Case When q.ReallyQuickQuote = 1 Then 
-												1
-											Else 
-												0 
-											End as bit) 
-									END = 0
-							  )
-						THEN 1 ELSE 0 END
-				  END = 1
-			)
-      
-	  DECLARE @TotalRowNumber INT = (Select COUNT(*) [Number] FROM @OutstandingQuotesViewID)
-		            
-      ;With Paging As 
-		( 
-			Select 
-
-				CASE WHEN @PerPage = 0 THEN
-					1
-				ELSE
-				   Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
-				END As Pages, 
-
-				CASE WHEN @PerPage = 0 THEN
-					1
-				ELSE
-				   ((Row_Number() Over(Order By a.Created DESC)-1) / @PerPage)+1
-				END As Page, 
-
-				   Row_Number() Over(Order By a.Created DESC) as Row_Num, 
-				   *
-				   From 
-				   (
-						Select * FROM @OutstandingQuotesViewID
-				   ) a
-		)
-	
-    Select  
-			@TotalRowNumber [Row_Total],
-            main.Pages,
-            main.Page,
-            main.Row_Num,
-            main.ItemId,
-            main.Itemtype,
-            ISNULL(e.EnquiryNo,q.QuoteNo) [ItemNo], 
-            ISNULL(e.QuoteTypeID,q.QuoteTypeID) [QuoteTypeID],
-            ISNULL(e.QuoteType,qt.QuoteType) [QuoteType], 
-            q.Value [Value], 
-            main.Created [Created], 
-            ISNULL('Q' + Right('00000'+ Cast(e.QuoteNo as varchar), Case When Len(e.QuoteNo)<=6 Then 6 Else Len(e.QuoteNo) End),q.Status) [Status], 
-            ISNULL(e.LastNoteCreated,q.LastNoteCreated) [LastNoteCreated], 
-            ISNULL(e.ClientId,q.ClientID) [ClientId], 
-            IsNull(e.Client + Case When Len(e.ClientBranchName) > 0 Then ' (' + e.ClientBranchName + ')' Else '' End,c.Client + Case When Len(c.BranchName) > 0 Then ' (' + c.BranchName + ')' Else '' End) [Client],
-            q.ProjectID [ProjectID], 
-            p.Project + ' / ' + ISNULL([p].[GroupName],'') [Project], 
-            ISNULL(e.SiteId,q.SiteID) [SiteID], 
-            ISNULL(e.SiteAddress,s.Address) [Site], 
-            ISNULL(e.SiteAddress,s.Address) [Address], 
-            ISNULL(e.SitePostcode,s.Postcode) [Postcode], 
-            ISNULL(e.SiteUPRN,s.UPRN) [UPRN], 
-            ISNULL(e.Accepted,q.Accepted) [Accepted], 
-            ISNULL(e.Rejected,q.Rejected) [Rejected], 
-            Cast(Case When ABS(DateDiff(day, j.Created, q.Created)) = 0 Then Case When ABS(DateDiff(s, j.Created, q.Created)) <= 10 Then 1 Else 0 End ELSE 0 END as bit) [IsInstaQuote], --the deault is 0 i.e. for enquiries
-            ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID) [AssignedEmployeeID], 
-            CASE main.ItemType WHEN 'RTQ' Then 'Discarded' ELSE CASE WHEN IsNull(e.Rejected,q.Rejected) IS NOT NULL THEN 'Rejected' ELSE 'Accepted' END END [StatusText], 
-            ISNULL(CASE WHEN IsNull(e.Created,q.Created) > DATEADD(hh,-1,GetDate()) THEN 1 END,0) [isNew], 
-            ISNULL(q.Rejected,CASE WHEN IsNull(e.Accepted,q.Accepted) IS NOT NULL THEN IsNull(e.Accepted,q.Accepted) ELSE IsNull(e.Rejected,q.Rejected) END) [DateActioned], 
-            CAST(CASE WHEN main.ItemType = 'Q' THEN CASE WHEN PDFId is not null then 1 ELSE 0 END END as BIT) [HasPDF], 
-            CASE WHEN main.ItemType = 'Q' THEN pdf.FileName END [File],
-            q.JobID,
-            q.ReminderDate [ReminderDate],
-            CONVERT(BIT, CASE WHEN qt.MethodStatement_TemplateTypeID IS NOT NULL THEN 1 ELSE 0 END) [UseMethodStatement],
-            CAST(ISNULL(s.SiteID,bQuoteHasSite.[Count]) as BIT) [bQuoteHasSite],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN 1 ELSE 0 END as BIT) [HasNotes],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) > DATEADD(hh,-1,GetDate()) THEN 1 ELSE 0 END ELSE 0 END as BIT) [NotesInLastHour],
-			ISNULL(emp.FullName, '') [AssignedTo],
-			q.CurrencyId [CurrencyID]
-    From 
-            Paging main
-
-            LEFT OUTER JOIN Enquiries e ON main.ItemID=e.EnquiryID AND main.ItemType='E'
-            
-            LEFT OUTER JOIN Quote q ON main.ItemID=q.QuoteID AND (main.ItemType='Q' OR main.ItemType='RQV')
-            LEFT OUTER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-            LEFT OUTER JOIN Job j On q.JobId = j.JobId
-            LEFT OUTER JOIN Client c On c.ClientID = q.ClientID 
-            LEFT OUTER JOIN Project p On p.ProjectID = q.ProjectID 
-            LEFT OUTER JOIN Site s On s.SiteID = q.SiteID
-            LEFT OUTER JOIN Employee emp ON emp.EmployeeID=ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID)
-            
-            OUTER APPLY
-            (
-                  Select IsNull((Select top 1 Value FROM QuoteValueHistory qvh Where qvh.QuoteID=q.QuoteID AND ((Accepted IS NOT NULL AND q.Accepted IS NOT NULL) OR (Rejected IS NOT NULL AND q.Rejected IS NOT NULL)) Order by CASE WHEN Accepted IS NOT NULL THEN Accepted ELSE Rejected END DESC),q.VALUE) [QuoteHistoryValue]
-            ) qHistory
-            OUTER APPLY
-            (
-                  SELECT TOP 1 [Pdf].[PDFId],[Pdf].[FileName] from Pdf where Pdf.QuoteID = q.QuoteID  and pdf.DateDeleted IS null AND [FileName] Not  Like '%ra%'  order BY [Pdf].[DateCreated] DESC    
-            )pdf(PDFId,filename)
-            OUTER APPLY
-            (
-				Select COUNT(*) [Count] FROM ProjectSite Where ProjectID=p.ProjectID
-            ) bQuoteHasSite
-	Where 
-            (main.Row_Num Between (@CurrentPage - 1) * @PerPage + 1 And @CurrentPage * @PerPage) OR (@PerPage=0 AND @CurrentPage=0)
-    Order by
-            main.Row_Num
-      
-    SET NOCOUNT OFF;
-END
-
-
-
-GO
-
-
-
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_QuoteHistory') < 1
-BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[Paged_QuoteHistory] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-/*    ==Scripting Parameters==
-
-    Source Server Version : SQL Server 2008 (10.0.1600)
-    Source Database Engine Edition : Microsoft SQL Server Standard Edition
-    Source Database Engine Type : Standalone SQL Server
-
-    Target Server Version : SQL Server 2008
-    Target Database Engine Edition : Microsoft SQL Server Standard Edition
-    Target Database Engine Type : Standalone SQL Server
-*/
-
-USE [TEAMS]
-GO
-
-/****** Object:  StoredProcedure [dbo].[Paged_QuoteHistory]    Script Date: 31/10/2018 09:22:10 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-
--- =============================================
--- Author:        Joe
--- Create date: 03/09/2015
--- Description:   Moving 'QuoteHistory' from a view to a stored procedure to increase speed.
--- In addition the the normal re-factoring, this requires a page number and number of items per page
--- =============================================
-
-/* NOTE STODD 16/10/2015 - Please ensure this proc and Export_QuoteHistory are synced at all times */
-
-ALTER PROCEDURE [dbo].[Paged_QuoteHistory] 
-      @PerPage INT = 15,
-      @CurrentPage INT = 1,
-      @ClientID INT = 0,
-      @SiteID INT = 0,
-      @ProjectID INT = 0,
-      @QuoteHistoryFilterAssignedTo INT = 0,
-      @QuoteHistoryFilterQuoteType INT = 0,
-      @QuoteHistoryFilterHideInstaquote INT = 0,
-	  @QuoteHistoryFilterQuoteEnquiry VARCHAR(10) = '',
-      @QuoteID INT = 0,
-      @EnquiryID INT = 0,
-      @FilterStartDate DATETIME = NULL,
-      @FilterEndDate DATETIME = NULL,
-      @Filter VARCHAR(MAX) = ''
-AS
-BEGIN
-      SET NOCOUNT ON;
-
-      Set @FilterStartDate = ISNULL(@FilterStartDate,DATEADD(year,-1,GETDATE()))
-      Set @FilterEndDate = ISNULL(@FilterEndDate,DATEADD(month,3,GETDATE()))
-      
-      DECLARE @FilterSites TABLE (SiteID INT)
-      
-      DECLARE @QuoteHistoryViewID TABLE (ItemID INT, ItemType VARCHAR(3), Created DATETIME)
-
-      DECLARE @QuoteHistoryView TABLE (ItemId INT,Itemtype VARCHAR(3),ItemNo INT, QuoteTypeID INT,QuoteType VARCHAR(MAX),Value MONEY,Created DATETIME, [Status] VARCHAR(MAX),LastNoteCreated VARCHAR(MAX),ClientId INT,ProjectID INT,SiteID INT, [Site] VARCHAR(MAX), [Address] VARCHAR(MAX), Postcode VARCHAR(MAX),Accepted DATETIME, Rejected DATETIME,IsInstaQuote BIT,AssignedEmployeeID INT, StatusText VARCHAR(MAX), isNew INT, DateActioned DATETIME, HasPDF INT, [File] varchar(MAX))
-      
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
-		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select  q.QuoteID as ItemId, 'Q' as ItemType, q.Created
-		  From
-				Quote q 
-				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-				Left Outer Join Job j On q.JobId = j.JobId
-				Left Outer Join Client c On c.ClientID = q.ClientID 
-				Left Outer Join Project p On p.ProjectID = q.ProjectID 
-				Left Outer Join Site s On s.SiteID = q.SiteID
-				LEFT OUTER JOIN @FilterSites fs ON s.SiteID=fs.SiteID
-		  Where 
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							s.Address Like '%' + @Filter + '%'
-								  Or 
-							s.Postcode Like '%' + @Filter + '%'
-								  Or 
-							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
-							Or s.UPRN = @Filter
-					)
-				)
-					  And
-				(Not Accepted Is Null Or Not Rejected Is Null) 
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
-								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
-								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND					  
-				(@ProjectID=0 OR q.ProjectID=@ProjectID)
-					  AND
-				(@SiteID=0 OR q.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR q.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
-											Cast(
-												Case When q.ReallyQuickQuote = 1 Then 
-													1
-												Else 
-													0 
-												End as bit) 
-										END = 0
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-      END
-
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='E'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select enq.EnquiryId,'E' as ItemType, enq.Created    
-		  From
-				Enquiries enq
-		  Where
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							enq.SiteAddress Like '%' + @Filter + '%'
-								  Or 
-							enq.SitePostcode Like '%' + @Filter + '%'
-								  Or 
-							enq.SiteAddress + ', ' + enq.SitePostcode Like '%' + @Filter + '%'
-							Or enq.SiteUPRN = @Filter
-				)
-				)
-					  And
-				(Not enq.Accepted Is Null Or Not enq.Rejected Is Null) 
-					  And
-				(
-					  Not enq.QuoteId Is Null
-							Or
-					  (
-							enq.QuoteId Is Null
-								  And
-							Not enq.Rejected Is Null
-					  )
-				)
-					  AND
-				(@ProjectID=0)
-					  AND
-				(@SiteID=0 OR enq.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR enq.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN @QuoteID = 0 AND @EnquiryID = enq.EnquiryID THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										enq.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN enq.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN enq.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-      END
-
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
-		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select DISTINCT q.QuoteID as ItemId, 'RQV' as ItemType, q.Created
-		  FROM
-				Quote q 
-				INNER JOIN [dbo].[QuoteEmployee] qe ON qe.[QuoteID] = [q].[QuoteID]
-				INNER JOIN [dbo].[QuoteVisit] qv ON qe.[QuoteEmployeeID] = [qv].[QuoteEmployeeID]   
-				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-				INNER JOIN Appointment a ON a.QuoteID=q.QuoteID AND a.DateDeclined IS NOT NULL
-				OUTER APPLY 
-				(
-					  /*count declined appointments and non declineds, if they have */
-					  SELECT
-							COUNT(*) [ValidAppointments]
-					  FROM
-							[dbo].[Appointment] _app 
-					  WHERE
-							_app.[QuoteID] = [q].[QuoteID]
-								  AND
-							_app.DateDeclined IS NULL
-				) currentCount
-				Left Outer Join Job j On q.JobId = j.JobId
-				Left Outer Join Client c On c.ClientID = q.ClientID 
-				Left Outer Join Project p On p.ProjectID = q.ProjectID 
-				Left Outer Join Site s On s.SiteID = q.SiteID 
-		  Where 
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							s.Address Like '%' + @Filter + '%'
-								  Or 
-							s.Postcode Like '%' + @Filter + '%'
-								  Or 
-							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
-							Or s.UPRN = @Filter
-					  )
-				)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
-								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
-								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND					
-				currentCount.ValidAppointments=0
-					  AND
-				(@ProjectID=0 OR q.ProjectID=@ProjectID)
-					  AND
-				(@SiteID=0 OR q.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR q.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
-											Cast(
-												Case When q.ReallyQuickQuote = 1 Then 
-													1
-												Else 
-													0 
-												End as bit) 
-										END = 0
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-      END
-		         
-			DECLARE @TotalRowNumber INT = (Select COUNT(*) [Number] FROM @QuoteHistoryViewID)				 
-				    
-      ;With Paging As 
-    ( 
-        Select 
-
-			CASE WHEN @PerPage = 0 THEN
-				1
-			ELSE
-               Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
-			END As Pages, 
-
-			CASE WHEN @PerPage = 0 THEN
-				1
-			ELSE
-               ((Row_Number() Over(Order By a.Created DESC)-1) / @PerPage)+1
-			END As Page, 
-
-               Row_Number() Over(Order By a.Created DESC) as Row_Num, 
-               *
-               From 
-               (
-                              Select * FROM @QuoteHistoryViewID
-                     ) a
-    )
-    Select  
-			@TotalRowNumber [Row_Total],
-            main.Pages,
-            main.Page,
-            main.Row_Num,
-            main.ItemId,
-            main.Itemtype,
-            ISNULL(e.EnquiryNo,q.QuoteNo) [ItemNo], 
-            ISNULL(e.QuoteTypeID,q.QuoteTypeID) [QuoteTypeID],
-            ISNULL(e.QuoteType,qt.QuoteType) [QuoteType], 
-            q.Value [Value], 
-            main.Created [Created], 
-			CASE
-				WHEN e.QuoteNo IS NOT NULL
-				THEN dbo.FormatTeamsReference('Q', e.QuoteNo)
-			ELSE
-				q.Status
-			END [Status], 
-            ISNULL(e.LastNoteCreated,q.LastNoteCreated) [LastNoteCreated], 
-            ISNULL(e.ClientId,q.ClientID) [ClientId], 
-            IsNull(e.Client + Case When Len(e.ClientBranchName) > 0 Then ' (' + e.ClientBranchName + ')' Else '' End,c.Client + Case When Len(c.BranchName) > 0 Then ' (' + c.BranchName + ')' Else '' End) [Client],
-            q.ProjectID [ProjectID], 
-            p.Project + ' / ' + ISNULL([p].[GroupName],'') [Project], 
-            ISNULL(e.SiteId,q.SiteID) [SiteID], 
-            ISNULL(e.SiteAddress,s.Address) [Site], 
-            ISNULL(e.SiteAddress,s.Address) [Address], 
-            ISNULL(e.SitePostcode,s.Postcode) [Postcode], 
-            ISNULL(e.Accepted,q.Accepted) [Accepted], 
-            ISNULL(e.Rejected,q.Rejected) [Rejected], 
-            Cast(Case When ABS(DateDiff(day, j.Created, q.Created)) = 0 Then Case When ABS(DateDiff(s, j.Created, q.Created)) <= 10 Then 1 Else 0 End ELSE 0 END as bit) [IsInstaQuote], --the deault is 0 i.e. for enquiries
-            ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID) [AssignedEmployeeID], 
-            CASE main.ItemType WHEN 'RTQ' Then 'Discarded' ELSE CASE WHEN IsNull(e.Rejected,q.Rejected) IS NOT NULL THEN COALESCE(e.DiscardReason, q.RejectReason, 'Rejected') ELSE 'Accepted' END END [StatusText], 
-            ISNULL(CASE WHEN IsNull(e.Created,q.Created) > DATEADD(hh,-1,GetDate()) THEN 1 END,0) [isNew], 
-            ISNULL(q.Rejected,CASE WHEN IsNull(e.Accepted,q.Accepted) IS NOT NULL THEN IsNull(e.Accepted,q.Accepted) ELSE IsNull(e.Rejected,q.Rejected) END) [DateActioned], 
-            CASE WHEN main.ItemType = 'Q' THEN CASE WHEN PDFId is not null then 1 ELSE 0 END END [HasPDF], 
-            CASE WHEN main.ItemType = 'Q' THEN pdf.FileName END [File],
-            q.JobID,
-			ISNULL(e.EnquirySource,es.Description) [Source],
-			ISNULL(e.LeadEmployee, qemp.FullName)	[SourceOrigin],
-			CONVERT(BIT, CASE WHEN qt.MethodStatement_TemplateTypeID IS NOT NULL THEN 1 ELSE 0 END) [UseMethodStatement],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN 1 ELSE 0 END as BIT) [HasNotes],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) > DATEADD(hh,-1,GetDate()) THEN 1 ELSE 0 END ELSE 0 END as BIT) [NotesInLastHour],
-			ISNULL(emp.FullName, '') [AssignedTo],
-			q.CurrencyId [CurrencyID]
-	From 
-            Paging main
-            LEFT OUTER JOIN Enquiries e ON main.ItemID=e.EnquiryID AND main.ItemType='E'
-			LEFT OUTER JOIN Quote q ON main.ItemID=q.QuoteID AND (main.ItemType='Q' OR main.ItemType='RQV')
-			LEFT OUTER JOIN EnquirySource es ON q.EnquirySourceID = es.EnquirySourceID
-			LEFT OUTER JOIN Employee qemp ON q.EnquiryEmployeeID = qemp.EmployeeID
-            LEFT OUTER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-            LEFT OUTER JOIN Job j On q.JobId = j.JobId
-            LEFT OUTER JOIN Client c On c.ClientID = q.ClientID 
-            LEFT OUTER JOIN Project p On p.ProjectID = q.ProjectID 
-            LEFT OUTER JOIN Site s On s.SiteID = q.SiteID
-            LEFT OUTER JOIN Employee emp ON emp.EmployeeID=ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID)
-			
-            OUTER APPLY
-            (
-                  Select IsNull((Select top 1 Value FROM QuoteValueHistory qvh Where qvh.QuoteID=q.QuoteID AND ((Accepted IS NOT NULL AND q.Accepted IS NOT NULL) OR (Rejected IS NOT NULL AND q.Rejected IS NOT NULL)) Order by CASE WHEN Accepted IS NOT NULL THEN Accepted ELSE Rejected END DESC),q.VALUE) [QuoteHistoryValue]
-            ) qHistory
-            OUTER APPLY
-            (
-                  SELECT TOP 1 [Pdf].[PDFId],[Pdf].[FileName] from Pdf where Pdf.QuoteID = q.QuoteID  and pdf.DateDeleted IS null order BY [Pdf].[DateCreated] DESC    
-            )pdf(PDFId,filename)
-            
-	Where 
-            (main.Row_Num Between (@CurrentPage - 1) * @PerPage + 1 And @CurrentPage * @PerPage) OR (@PerPage=0 AND @CurrentPage=0)
-    Order by
-            main.Row_Num
-      
-    SET NOCOUNT OFF;
-END
-
-GO
-
-
 
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Export_QuoteHistory') < 1
 BEGIN
@@ -13796,6 +13122,7 @@ IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo'
 	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
 	) ON [PRIMARY]
 END
+GO
 
 IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='MobileAuditTrail') AND name='App') < 1
 BEGIN
@@ -15167,426 +14494,6 @@ BEGIN
             (
 				Select COUNT(*) [Count] FROM ProjectSite Where ProjectID=p.ProjectID
             ) bQuoteHasSite
-	Where 
-            (main.Row_Num Between (@CurrentPage - 1) * @PerPage + 1 And @CurrentPage * @PerPage) OR (@PerPage=0 AND @CurrentPage=0)
-    Order by
-            main.Row_Num
-      
-    SET NOCOUNT OFF;
-END
-
-
-
-GO
-
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_QuoteHistory') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[Paged_QuoteHistory] AS BEGIN SET NOCOUNT ON; END')
-END
-
-GO
-
-/*    ==Scripting Parameters==
-
-    Source Server Version : SQL Server 2008 (10.0.1600)
-    Source Database Engine Edition : Microsoft SQL Server Standard Edition
-    Source Database Engine Type : Standalone SQL Server
-
-    Target Server Version : SQL Server 2008
-    Target Database Engine Edition : Microsoft SQL Server Standard Edition
-    Target Database Engine Type : Standalone SQL Server
-*/
-
-USE [TEAMS]
-GO
-
-/****** Object:  StoredProcedure [dbo].[Paged_QuoteHistory]    Script Date: 12/02/2019 14:34:10 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-
-
-
--- =============================================
--- Author:        Joe
--- Create date: 03/09/2015
--- Description:   Moving 'QuoteHistory' from a view to a stored procedure to increase speed.
--- In addition the the normal re-factoring, this requires a page number and number of items per page
--- =============================================
-
-/* NOTE STODD 16/10/2015 - Please ensure this proc and Export_QuoteHistory are synced at all times */
-
-ALTER PROCEDURE [dbo].[Paged_QuoteHistory]
-	-- Paging
-	@PerPage INT = 15,
-	@CurrentPage INT = 1,
-
-	-- Standard filters
-	@ClientID INT = 0,
-	@SiteID INT = 0,
-	@ProjectID INT = 0,
-	@QuoteID INT = 0,
-	@EnquiryID INT = 0,
-	@Filter VARCHAR(MAX) = '',
-	@LoggedInEmployeeID INT = 0,
-
-	-- User selected filters
-	@QuoteHistoryFilterAssignedTo INT = 0,
-	@QuoteHistoryFilterQuoteType INT = 0,
-	@QuoteHistoryFilterHideInstaquote INT = 0,
-	@QuoteHistoryFilterQuoteEnquiry VARCHAR(10) = '',
-	@FilterStartDate DATETIME = NULL,
-	@FilterEndDate DATETIME = NULL
-AS
-BEGIN
-      SET NOCOUNT ON;
-
-      Set @FilterStartDate = ISNULL(@FilterStartDate,DATEADD(year,-1,GETDATE()))
-      Set @FilterEndDate = ISNULL(@FilterEndDate,DATEADD(month,3,GETDATE()))
-      
-      DECLARE @FilterSites TABLE (SiteID INT)
-      
-      DECLARE @QuoteHistoryViewID TABLE (ItemID INT, ItemType VARCHAR(3), Created DATETIME)
-
-      DECLARE @QuoteHistoryView TABLE (ItemId INT,Itemtype VARCHAR(3),ItemNo INT, QuoteTypeID INT,QuoteType VARCHAR(MAX),Value MONEY,Created DATETIME, [Status] VARCHAR(MAX),LastNoteCreated VARCHAR(MAX),ClientId INT,ProjectID INT,SiteID INT, [Site] VARCHAR(MAX), [Address] VARCHAR(MAX), Postcode VARCHAR(MAX),Accepted DATETIME, Rejected DATETIME,IsInstaQuote BIT,AssignedEmployeeID INT, StatusText VARCHAR(MAX), isNew INT, DateActioned DATETIME, HasPDF INT, [File] varchar(MAX))
-      
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
-		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select  q.QuoteID as ItemId, 'Q' as ItemType, q.Created
-		  From
-				Quote q 
-				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-				Left Outer Join Job j On q.JobId = j.JobId
-				Left Outer Join Client c On c.ClientID = q.ClientID 
-				Left Outer Join Project p On p.ProjectID = q.ProjectID 
-				Left Outer Join Site s On s.SiteID = q.SiteID
-				LEFT OUTER JOIN @FilterSites fs ON s.SiteID=fs.SiteID
-		  Where 
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							s.Address Like '%' + @Filter + '%'
-								  Or 
-							s.Postcode Like '%' + @Filter + '%'
-								  Or 
-							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
-							Or s.UPRN = @Filter
-					)
-				)
-					  And
-				(Not Accepted Is Null Or Not Rejected Is Null) 
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
-								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
-								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND					  
-				(@ProjectID=0 OR q.ProjectID=@ProjectID)
-					  AND
-				(@SiteID=0 OR q.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR q.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
-											Cast(
-												Case When q.ReallyQuickQuote = 1 Then 
-													1
-												Else 
-													0 
-												End as bit) 
-										END = 0
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-      END
-
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='E'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select enq.EnquiryId,'E' as ItemType, enq.Created    
-		  From
-				Enquiries enq
-		  Where
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							enq.SiteAddress Like '%' + @Filter + '%'
-								  Or 
-							enq.SitePostcode Like '%' + @Filter + '%'
-								  Or 
-							enq.SiteAddress + ', ' + enq.SitePostcode Like '%' + @Filter + '%'
-							Or enq.SiteUPRN = @Filter
-				)
-				)
-					  And
-				(Not enq.Accepted Is Null Or Not enq.Rejected Is Null) 
-					  And
-				(
-					  Not enq.QuoteId Is Null
-							Or
-					  (
-							enq.QuoteId Is Null
-								  And
-							Not enq.Rejected Is Null
-					  )
-				)
-					  AND
-				(@ProjectID=0)
-					  AND
-				(@SiteID=0 OR enq.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR enq.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN @QuoteID = 0 AND @EnquiryID = enq.EnquiryID THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										enq.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN enq.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN enq.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-      END
-
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
-		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select DISTINCT q.QuoteID as ItemId, 'RQV' as ItemType, q.Created
-		  FROM
-				Quote q 
-				INNER JOIN [dbo].[QuoteEmployee] qe ON qe.[QuoteID] = [q].[QuoteID]
-				INNER JOIN [dbo].[QuoteVisit] qv ON qe.[QuoteEmployeeID] = [qv].[QuoteEmployeeID]   
-				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-				INNER JOIN Appointment a ON a.QuoteID=q.QuoteID AND a.DateDeclined IS NOT NULL
-				OUTER APPLY 
-				(
-					  /*count declined appointments and non declineds, if they have */
-					  SELECT
-							COUNT(*) [ValidAppointments]
-					  FROM
-							[dbo].[Appointment] _app 
-					  WHERE
-							_app.[QuoteID] = [q].[QuoteID]
-								  AND
-							_app.DateDeclined IS NULL
-				) currentCount
-				Left Outer Join Job j On q.JobId = j.JobId
-				Left Outer Join Client c On c.ClientID = q.ClientID 
-				Left Outer Join Project p On p.ProjectID = q.ProjectID 
-				Left Outer Join Site s On s.SiteID = q.SiteID 
-		  Where 
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							s.Address Like '%' + @Filter + '%'
-								  Or 
-							s.Postcode Like '%' + @Filter + '%'
-								  Or 
-							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
-							Or s.UPRN = @Filter
-					  )
-				)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
-								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
-								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND					
-				currentCount.ValidAppointments=0
-					  AND
-				(@ProjectID=0 OR q.ProjectID=@ProjectID)
-					  AND
-				(@SiteID=0 OR q.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR q.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
-											Cast(
-												Case When q.ReallyQuickQuote = 1 Then 
-													1
-												Else 
-													0 
-												End as bit) 
-										END = 0
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-      END
-		         
-			DECLARE @TotalRowNumber INT = (Select COUNT(*) [Number] FROM @QuoteHistoryViewID)				 
-				    
-      ;With Paging As 
-    ( 
-        Select 
-
-			CASE WHEN @PerPage = 0 THEN
-				1
-			ELSE
-               Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
-			END As Pages, 
-
-			CASE WHEN @PerPage = 0 THEN
-				1
-			ELSE
-               ((Row_Number() Over(Order By a.Created DESC)-1) / @PerPage)+1
-			END As Page, 
-
-               Row_Number() Over(Order By a.Created DESC) as Row_Num, 
-               *
-               From 
-               (
-                              Select * FROM @QuoteHistoryViewID
-                     ) a
-    )
-    Select  
-			@TotalRowNumber [Row_Total],
-            main.Pages,
-            main.Page,
-            main.Row_Num,
-            main.ItemId,
-            main.Itemtype,
-            ISNULL(e.EnquiryNo,q.QuoteNo) [ItemNo], 
-            ISNULL(e.QuoteTypeID,q.QuoteTypeID) [QuoteTypeID],
-            ISNULL(e.QuoteType,qt.QuoteType) [QuoteType], 
-            q.Value [Value], 
-            main.Created [Created], 
-			CASE
-				WHEN e.QuoteNo IS NOT NULL
-				THEN dbo.FormatTeamsReference('Q', e.QuoteNo)
-			ELSE
-				q.Status
-			END [Status], 
-            ISNULL(e.LastNoteCreated,q.LastNoteCreated) [LastNoteCreated], 
-            ISNULL(e.ClientId,q.ClientID) [ClientId], 
-            IsNull(e.Client + Case When Len(e.ClientBranchName) > 0 Then ' (' + e.ClientBranchName + ')' Else '' End,c.Client + Case When Len(c.BranchName) > 0 Then ' (' + c.BranchName + ')' Else '' End) [Client],
-            q.ProjectID [ProjectID], 
-            p.Project + ' / ' + ISNULL([p].[GroupName],'') [Project], 
-            ISNULL(e.SiteId,q.SiteID) [SiteID], 
-            ISNULL(e.SiteAddress,s.Address) [Site], 
-            ISNULL(e.SiteAddress,s.Address) [Address], 
-            ISNULL(e.SitePostcode,s.Postcode) [Postcode], 
-            ISNULL(e.Accepted,q.Accepted) [Accepted], 
-            ISNULL(e.Rejected,q.Rejected) [Rejected], 
-            Cast(Case When ABS(DateDiff(day, j.Created, q.Created)) = 0 Then Case When ABS(DateDiff(s, j.Created, q.Created)) <= 10 Then 1 Else 0 End ELSE 0 END as bit) [IsInstaQuote], --the deault is 0 i.e. for enquiries
-            ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID) [AssignedEmployeeID], 
-            CASE main.ItemType WHEN 'RTQ' Then 'Discarded' ELSE CASE WHEN IsNull(e.Rejected,q.Rejected) IS NOT NULL THEN COALESCE(e.DiscardReason, q.RejectReason, 'Rejected') ELSE 'Accepted' END END [StatusText], 
-            ISNULL(CASE WHEN IsNull(e.Created,q.Created) > DATEADD(hh,-1,GetDate()) THEN 1 END,0) [isNew], 
-            ISNULL(q.Rejected,CASE WHEN IsNull(e.Accepted,q.Accepted) IS NOT NULL THEN IsNull(e.Accepted,q.Accepted) ELSE IsNull(e.Rejected,q.Rejected) END) [DateActioned], 
-            CASE WHEN main.ItemType = 'Q' THEN CASE WHEN PDFId is not null then 1 ELSE 0 END END [HasPDF], 
-            CASE WHEN main.ItemType = 'Q' THEN pdf.FileName END [File],
-            q.JobID,
-			ISNULL(e.EnquirySource,es.Description) [Source],
-			ISNULL(e.LeadEmployee, qemp.FullName)	[SourceOrigin],
-			CONVERT(BIT, CASE WHEN qt.MethodStatement_TemplateTypeID IS NOT NULL THEN 1 ELSE 0 END) [UseMethodStatement],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN 1 ELSE 0 END as BIT) [HasNotes],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) > DATEADD(hh,-1,GetDate()) THEN 1 ELSE 0 END ELSE 0 END as BIT) [NotesInLastHour],
-			ISNULL(emp.FullName, '') [AssignedTo],
-			q.CurrencyId [CurrencyID]
-	From 
-            Paging main
-            LEFT OUTER JOIN Enquiries e ON main.ItemID=e.EnquiryID AND main.ItemType='E'
-			LEFT OUTER JOIN Quote q ON main.ItemID=q.QuoteID AND (main.ItemType='Q' OR main.ItemType='RQV')
-			LEFT OUTER JOIN EnquirySource es ON q.EnquirySourceID = es.EnquirySourceID
-			LEFT OUTER JOIN Employee qemp ON q.EnquiryEmployeeID = qemp.EmployeeID
-            LEFT OUTER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-            LEFT OUTER JOIN Job j On q.JobId = j.JobId
-            LEFT OUTER JOIN Client c On c.ClientID = q.ClientID 
-            LEFT OUTER JOIN Project p On p.ProjectID = q.ProjectID 
-            LEFT OUTER JOIN Site s On s.SiteID = q.SiteID
-            LEFT OUTER JOIN Employee emp ON emp.EmployeeID=ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID)
-			
-            OUTER APPLY
-            (
-                  Select IsNull((Select top 1 Value FROM QuoteValueHistory qvh Where qvh.QuoteID=q.QuoteID AND ((Accepted IS NOT NULL AND q.Accepted IS NOT NULL) OR (Rejected IS NOT NULL AND q.Rejected IS NOT NULL)) Order by CASE WHEN Accepted IS NOT NULL THEN Accepted ELSE Rejected END DESC),q.VALUE) [QuoteHistoryValue]
-            ) qHistory
-            OUTER APPLY
-            (
-                  SELECT TOP 1 [Pdf].[PDFId],[Pdf].[FileName] from Pdf where Pdf.QuoteID = q.QuoteID  and pdf.DateDeleted IS null order BY [Pdf].[DateCreated] DESC    
-            )pdf(PDFId,filename)
-            
 	Where 
             (main.Row_Num Between (@CurrentPage - 1) * @PerPage + 1 And @CurrentPage * @PerPage) OR (@PerPage=0 AND @CurrentPage=0)
     Order by
@@ -19404,451 +18311,6 @@ BEGIN
     SET NOCOUNT OFF;
 END
 GO
-
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_QuoteHistory') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[Paged_QuoteHistory] AS BEGIN SET NOCOUNT ON; END')
-END
-
-GO
-
-/*    ==Scripting Parameters==
-
-    Source Server Version : SQL Server 2008 (10.0.1600)
-    Source Database Engine Edition : Microsoft SQL Server Standard Edition
-    Source Database Engine Type : Standalone SQL Server
-
-    Target Server Version : SQL Server 2008
-    Target Database Engine Edition : Microsoft SQL Server Standard Edition
-    Target Database Engine Type : Standalone SQL Server
-*/
-
-USE [TEAMS]
-GO
-
-/****** Object:  StoredProcedure [dbo].[Paged_QuoteHistory]    Script Date: 13/02/2019 14:54:41 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-
-
-
--- =============================================
--- Author:        Joe
--- Create date: 03/09/2015
--- Description:   Moving 'QuoteHistory' from a view to a stored procedure to increase speed.
--- In addition the the normal re-factoring, this requires a page number and number of items per page
--- =============================================
-
-/* NOTE STODD 16/10/2015 - Please ensure this proc and Export_QuoteHistory are synced at all times */
-
-ALTER PROCEDURE [dbo].[Paged_QuoteHistory]
-	-- Paging
-	@PerPage INT = 15,
-	@CurrentPage INT = 1,
-
-	-- Standard filters
-	@ClientID INT = 0,
-	@SiteID INT = 0,
-	@ProjectID INT = 0,
-	@QuoteID INT = 0,
-	@EnquiryID INT = 0,
-	@Filter VARCHAR(MAX) = '',
-	@LoggedInEmployeeID INT = 0,
-
-	-- User selected filters
-	@QuoteHistoryFilterAssignedTo INT = 0,
-	@QuoteHistoryFilterQuoteType INT = 0,
-	@QuoteHistoryFilterHideInstaquote INT = 0,
-	@QuoteHistoryFilterQuoteEnquiry VARCHAR(10) = '',
-	@FilterStartDate DATETIME = NULL,
-	@FilterEndDate DATETIME = NULL
-AS
-BEGIN
-      SET NOCOUNT ON;
-
-      Set @FilterStartDate = ISNULL(@FilterStartDate,DATEADD(year,-1,GETDATE()))
-      Set @FilterEndDate = ISNULL(@FilterEndDate,DATEADD(month,3,GETDATE()))
-
-	  DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
-	  INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
-	  SELECT
-			c.ClientID,
-			Access.EmployeeRestrictedClientAccessID
-	  FROM
-			Client c
-			OUTER APPLY
-			(
-				SELECT
-					erca.EmployeeRestrictedClientAccessID
-				FROM
-					EmployeeRestrictedClientAccess erca
-				WHERE
-					erca.EmployeeID = @LoggedInEmployeeID
-						AND
-					erca.ClientID = c.ClientID
-			) Access
-	  WHERE
-			c.Restricted = 1
-      
-      DECLARE @FilterSites TABLE (SiteID INT)
-      
-      DECLARE @QuoteHistoryViewID TABLE (ItemID INT, ItemType VARCHAR(3), Created DATETIME)
-
-      DECLARE @QuoteHistoryView TABLE (ItemId INT,Itemtype VARCHAR(3),ItemNo INT, QuoteTypeID INT,QuoteType VARCHAR(MAX),Value MONEY,Created DATETIME, [Status] VARCHAR(MAX),LastNoteCreated VARCHAR(MAX),ClientId INT,ProjectID INT,SiteID INT, [Site] VARCHAR(MAX), [Address] VARCHAR(MAX), Postcode VARCHAR(MAX),Accepted DATETIME, Rejected DATETIME,IsInstaQuote BIT,AssignedEmployeeID INT, StatusText VARCHAR(MAX), isNew INT, DateActioned DATETIME, HasPDF INT, [File] varchar(MAX))
-      
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
-		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select  q.QuoteID as ItemId, 'Q' as ItemType, q.Created
-		  From
-				Quote q 
-				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-				Left Outer Join Job j On q.JobId = j.JobId
-				Left Outer Join Client c On c.ClientID = q.ClientID 
-				Left Outer Join Project p On p.ProjectID = q.ProjectID 
-				Left Outer Join Site s On s.SiteID = q.SiteID
-				LEFT OUTER JOIN @FilterSites fs ON s.SiteID=fs.SiteID
-		  Where 
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							s.Address Like '%' + @Filter + '%'
-								  Or 
-							s.Postcode Like '%' + @Filter + '%'
-								  Or 
-							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
-							Or s.UPRN = @Filter
-					)
-				)
-					  And
-				(Not Accepted Is Null Or Not Rejected Is Null) 
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
-								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
-								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND					  
-				(@ProjectID=0 OR q.ProjectID=@ProjectID)
-					  AND
-				(@SiteID=0 OR q.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR q.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
-											Cast(
-												Case When q.ReallyQuickQuote = 1 Then 
-													1
-												Else 
-													0 
-												End as bit) 
-										END = 0
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-					AND
-				q.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
-      END
-
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='E'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select enq.EnquiryId,'E' as ItemType, enq.Created    
-		  From
-				Enquiries enq
-		  Where
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							enq.SiteAddress Like '%' + @Filter + '%'
-								  Or 
-							enq.SitePostcode Like '%' + @Filter + '%'
-								  Or 
-							enq.SiteAddress + ', ' + enq.SitePostcode Like '%' + @Filter + '%'
-							Or enq.SiteUPRN = @Filter
-				)
-				)
-					  And
-				(Not enq.Accepted Is Null Or Not enq.Rejected Is Null) 
-					  And
-				(
-					  Not enq.QuoteId Is Null
-							Or
-					  (
-							enq.QuoteId Is Null
-								  And
-							Not enq.Rejected Is Null
-					  )
-				)
-					  AND
-				(@ProjectID=0)
-					  AND
-				(@SiteID=0 OR enq.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR enq.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN @QuoteID = 0 AND @EnquiryID = enq.EnquiryID THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										enq.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN enq.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN enq.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-					AND
-				enq.ClientId NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
-      END
-
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
-		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select DISTINCT q.QuoteID as ItemId, 'RQV' as ItemType, q.Created
-		  FROM
-				Quote q 
-				INNER JOIN [dbo].[QuoteEmployee] qe ON qe.[QuoteID] = [q].[QuoteID]
-				INNER JOIN [dbo].[QuoteVisit] qv ON qe.[QuoteEmployeeID] = [qv].[QuoteEmployeeID]   
-				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-				INNER JOIN Appointment a ON a.QuoteID=q.QuoteID AND a.DateDeclined IS NOT NULL
-				OUTER APPLY 
-				(
-					  /*count declined appointments and non declineds, if they have */
-					  SELECT
-							COUNT(*) [ValidAppointments]
-					  FROM
-							[dbo].[Appointment] _app 
-					  WHERE
-							_app.[QuoteID] = [q].[QuoteID]
-								  AND
-							_app.DateDeclined IS NULL
-				) currentCount
-				Left Outer Join Job j On q.JobId = j.JobId
-				Left Outer Join Client c On c.ClientID = q.ClientID 
-				Left Outer Join Project p On p.ProjectID = q.ProjectID 
-				Left Outer Join Site s On s.SiteID = q.SiteID 
-		  Where 
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							s.Address Like '%' + @Filter + '%'
-								  Or 
-							s.Postcode Like '%' + @Filter + '%'
-								  Or 
-							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
-							Or s.UPRN = @Filter
-					  )
-				)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
-								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
-								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND					
-				currentCount.ValidAppointments=0
-					  AND
-				(@ProjectID=0 OR q.ProjectID=@ProjectID)
-					  AND
-				(@SiteID=0 OR q.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR q.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
-											Cast(
-												Case When q.ReallyQuickQuote = 1 Then 
-													1
-												Else 
-													0 
-												End as bit) 
-										END = 0
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-					AND
-				q.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
-      END
-		         
-			DECLARE @TotalRowNumber INT = (Select COUNT(*) [Number] FROM @QuoteHistoryViewID)				 
-				    
-      ;With Paging As 
-    ( 
-        Select 
-
-			CASE WHEN @PerPage = 0 THEN
-				1
-			ELSE
-               Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
-			END As Pages, 
-
-			CASE WHEN @PerPage = 0 THEN
-				1
-			ELSE
-               ((Row_Number() Over(Order By a.Created DESC)-1) / @PerPage)+1
-			END As Page, 
-
-               Row_Number() Over(Order By a.Created DESC) as Row_Num, 
-               *
-               From 
-               (
-                              Select * FROM @QuoteHistoryViewID
-                     ) a
-    )
-    Select  
-			@TotalRowNumber [Row_Total],
-            main.Pages,
-            main.Page,
-            main.Row_Num,
-            main.ItemId,
-            main.Itemtype,
-            ISNULL(e.EnquiryNo,q.QuoteNo) [ItemNo], 
-            ISNULL(e.QuoteTypeID,q.QuoteTypeID) [QuoteTypeID],
-            ISNULL(e.QuoteType,qt.QuoteType) [QuoteType], 
-            q.Value [Value], 
-            main.Created [Created], 
-			CASE
-				WHEN e.QuoteNo IS NOT NULL
-				THEN dbo.FormatTeamsReference('Q', e.QuoteNo)
-			ELSE
-				q.Status
-			END [Status], 
-            ISNULL(e.LastNoteCreated,q.LastNoteCreated) [LastNoteCreated], 
-            ISNULL(e.ClientId,q.ClientID) [ClientId], 
-            IsNull(e.Client + Case When Len(e.ClientBranchName) > 0 Then ' (' + e.ClientBranchName + ')' Else '' End,c.Client + Case When Len(c.BranchName) > 0 Then ' (' + c.BranchName + ')' Else '' End) [Client],
-            q.ProjectID [ProjectID], 
-            p.Project + ' / ' + ISNULL([p].[GroupName],'') [Project], 
-            ISNULL(e.SiteId,q.SiteID) [SiteID], 
-            ISNULL(e.SiteAddress,s.Address) [Site], 
-            ISNULL(e.SiteAddress,s.Address) [Address], 
-            ISNULL(e.SitePostcode,s.Postcode) [Postcode], 
-            ISNULL(e.Accepted,q.Accepted) [Accepted], 
-            ISNULL(e.Rejected,q.Rejected) [Rejected], 
-            Cast(Case When ABS(DateDiff(day, j.Created, q.Created)) = 0 Then Case When ABS(DateDiff(s, j.Created, q.Created)) <= 10 Then 1 Else 0 End ELSE 0 END as bit) [IsInstaQuote], --the deault is 0 i.e. for enquiries
-            ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID) [AssignedEmployeeID], 
-            CASE main.ItemType WHEN 'RTQ' Then 'Discarded' ELSE CASE WHEN IsNull(e.Rejected,q.Rejected) IS NOT NULL THEN COALESCE(e.DiscardReason, q.RejectReason, 'Rejected') ELSE 'Accepted' END END [StatusText], 
-            ISNULL(CASE WHEN IsNull(e.Created,q.Created) > DATEADD(hh,-1,GetDate()) THEN 1 END,0) [isNew], 
-            ISNULL(q.Rejected,CASE WHEN IsNull(e.Accepted,q.Accepted) IS NOT NULL THEN IsNull(e.Accepted,q.Accepted) ELSE IsNull(e.Rejected,q.Rejected) END) [DateActioned], 
-            CASE WHEN main.ItemType = 'Q' THEN CASE WHEN PDFId is not null then 1 ELSE 0 END END [HasPDF], 
-            CASE WHEN main.ItemType = 'Q' THEN pdf.FileName END [File],
-            q.JobID,
-			ISNULL(e.EnquirySource,es.Description) [Source],
-			ISNULL(e.LeadEmployee, qemp.FullName)	[SourceOrigin],
-			CONVERT(BIT, CASE WHEN qt.MethodStatement_TemplateTypeID IS NOT NULL THEN 1 ELSE 0 END) [UseMethodStatement],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN 1 ELSE 0 END as BIT) [HasNotes],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) > DATEADD(hh,-1,GetDate()) THEN 1 ELSE 0 END ELSE 0 END as BIT) [NotesInLastHour],
-			ISNULL(emp.FullName, '') [AssignedTo],
-			q.CurrencyId [CurrencyID]
-	From 
-            Paging main
-            LEFT OUTER JOIN Enquiries e ON main.ItemID=e.EnquiryID AND main.ItemType='E'
-			LEFT OUTER JOIN Quote q ON main.ItemID=q.QuoteID AND (main.ItemType='Q' OR main.ItemType='RQV')
-			LEFT OUTER JOIN EnquirySource es ON q.EnquirySourceID = es.EnquirySourceID
-			LEFT OUTER JOIN Employee qemp ON q.EnquiryEmployeeID = qemp.EmployeeID
-            LEFT OUTER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-            LEFT OUTER JOIN Job j On q.JobId = j.JobId
-            LEFT OUTER JOIN Client c On c.ClientID = q.ClientID 
-            LEFT OUTER JOIN Project p On p.ProjectID = q.ProjectID 
-            LEFT OUTER JOIN Site s On s.SiteID = q.SiteID
-            LEFT OUTER JOIN Employee emp ON emp.EmployeeID=ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID)
-			
-            OUTER APPLY
-            (
-                  Select IsNull((Select top 1 Value FROM QuoteValueHistory qvh Where qvh.QuoteID=q.QuoteID AND ((Accepted IS NOT NULL AND q.Accepted IS NOT NULL) OR (Rejected IS NOT NULL AND q.Rejected IS NOT NULL)) Order by CASE WHEN Accepted IS NOT NULL THEN Accepted ELSE Rejected END DESC),q.VALUE) [QuoteHistoryValue]
-            ) qHistory
-            OUTER APPLY
-            (
-                  SELECT TOP 1 [Pdf].[PDFId],[Pdf].[FileName] from Pdf where Pdf.QuoteID = q.QuoteID  and pdf.DateDeleted IS null order BY [Pdf].[DateCreated] DESC    
-            )pdf(PDFId,filename)
-            
-	Where 
-            (main.Row_Num Between (@CurrentPage - 1) * @PerPage + 1 And @CurrentPage * @PerPage) OR (@PerPage=0 AND @CurrentPage=0)
-    Order by
-            main.Row_Num
-      
-    SET NOCOUNT OFF;
-END
-GO
-
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_Projects') < 1 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[Paged_Projects] AS BEGIN SET NOCOUNT ON; END')
 END
@@ -24403,6 +22865,7 @@ BEGIN
     INSERT INTO [dbo].[TeamsV2Section] ([SectionName], [DateDeleted], [WebPage])
     SELECT 'Portfolio', NULL, 'about:blank'
 END
+GO
 
 IF NOT EXISTS(SELECT * FROM [dbo].[TeamsV2Tab] WITH (NOLOCK) WHERE [TeamsV2SectionID] = (SELECT [TeamsV2SectionID] FROM [dbo].[TeamsV2Section] WITH (NOLOCK) WHERE [SectionName] = 'Portfolio'))
 BEGIN    
@@ -25152,6 +23615,7 @@ BEGIN
 		[Description] [varchar](max) NULL
 	)
 END
+GO
 
 IF (SELECT COUNT(*) FROM ExportSectionType WHERE ExportSectionTypeID = 1) < 1
 BEGIN
@@ -29613,47 +28077,6 @@ IF (Select COUNT(*) FROM TEAMS_IVF.sys.[all_columns] Where object_id IN (Select 
 END
 GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'V' AND name = 'ResultModifications')
-BEGIN
-    EXEC('CREATE VIEW[dbo].[ResultModifications] AS SELECT 1 GO')
-END
-GO
-
-ALTER View [dbo].[ResultModifications]
-As
-Select
-    s.RegisterItemNo,
-    j.JobID,
-    su.SurveyTypeID,
-    reg.RegisterID,
-    reg.SystemName,
-    reg.BuildingDesignation,
-    reg.Management,
-    reg.PriorityAssessment,
-    f.FloorNumber,
-    r.Number,
-    r.[Description],
-    p.PhotoNo,
-    s.AsSample,
-    s.SampleRef,
-    s.SampleID,
-    s.SampleClassificationID,
-    s.SampleResultID,
-    FullSampleResult as LabResult,
-    sce.SampleClassification as LabClassification
-From
-    Job j WITH (NOLOCK)
-    INNER JOIN JobEmployee je WITH (NOLOCK) On j.JobID = je.JobID
-    INNER JOIN Floorplan f WITH (NOLOCK)
-    INNER JOIN Register reg WITH (NOLOCK) On f.RegisterID = reg.RegisterID
-    INNER JOIN Room r WITH (NOLOCK) On f.FloorplanID = r.FloorplanID
-    INNER JOIN [Sample] s WITH (NOLOCK) On r.RoomID = s.RoomID
-    INNER JOIN Survey su WITH (NOLOCK) On reg.SurveyID = su.SurveyID On je.JobEmployeeID = reg.JobEmployeeID
-	LEFT JOIN Photo p WITH (NOLOCK)  On s.PhotoID = p.PhotoID
-    LEFT JOIN SampleResult sr WITH (NOLOCK) On sr.SampleResultID = s.SampleResultID    
-	LEFT JOIN SampleClassificationExtended sce WITH (NOLOCK) ON s.SampleClassificationExtendedID = sce.SampleClassificationExtendedID
-GO
-
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'TEAMS_Report_MobileUnitSummary') < 1
 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[TEAMS_Report_MobileUnitSummary] AS BEGIN SET NOCOUNT ON; END')
@@ -30201,526 +28624,6 @@ BEGIN
        [l].contact
        
     SET NOCOUNT OFF
-END
-GO
-
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'PopulateSampleComputedData') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[PopulateSampleComputedData] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-USE [TEAMS]
-GO
-
-/****** Object:  StoredProcedure [dbo].[PopulateSampleComputedData]    Script Date: 13/01/2020 15:00:04 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-/*
-    NEW VERSION OF POPULATE SAMPLECOMPUTEDDATA AND GUIDSAMPLES SPROCS
-    These now join to the Floorplan table as well to prevent data issues on Ensafe, in particular to do with Import data.
-    As well as this, PopulateSampleComputedData now uses less CTE's and more table variables, which has sped it up a lot. Seems to be working well on Ensafe, but we might need to keep an eye out.
-*/
-ALTER PROCEDURE [dbo].[PopulateSampleComputedData]
-    @JobID INT
-AS
-BEGIN
-    SET NOCOUNT ON;
-
-
-    -- Delete existing data for the Job.
-    DELETE FROM SampleComputedData
-    WHERE JobID = @JobID
-
-    -- Set variables for logic.
-    DECLARE @CompanyName NVARCHAR(50), @BranchName NVARCHAR(50), @RecommendedActionsAllowed INT
-    SELECT
-        @CompanyName = cfg.s__CompanyName,
-        @BranchName = cfg.s__BranchName,
-        @RecommendedActionsAllowed = (SELECT mc.MobileConfigInt FROM MobileConfig mc WITH (NOLOCK) INNER JOIN MobileConfigType mct WITH (NOLOCK) ON mc.MobileConfigTypeID = mct.MobileConfigTypeID WHERE mct.ConfigType = 'RecommendedActionAllowed')
-    FROM
-        Config cfg WITH (NOLOCK)
-
-    -- Get all sample result data up front to reduce table scans on the sample table
-    DECLARE @SampleData TABLE (RegisterID INT, RegisterFinish DATETIME, PriorityAssessment BIT, RoomID INT, SampleRef VARCHAR(50), AsSample BIT, RegisterItemNo INT, SampleID INT, PhotoID INT, SampleResultID INT, SampleResult VARCHAR(500), FullSampleResult VARCHAR(500), SampleResultValue INT, SampleClassificationID INT, SampleClassification VARCHAR(500), SampleClassificationValue INT, SampleClassificationScore INT, Notes VARCHAR(MAX))
-
-    INSERT INTO @SampleData (RegisterID, RegisterFinish, PriorityAssessment, RoomID, SampleRef, AsSample, RegisterItemNo, SampleID, PhotoID, SampleResultID, SampleResult, FullSampleResult, SampleResultValue, SampleClassificationID, SampleClassification, SampleClassificationValue, SampleClassificationScore, Notes)
-    SELECT
-        r.RegisterID,
-        r.RegisterFinish,
-        r.PriorityAssessment,
-        rm.RoomID,
-        s.SampleRef,
-        s.AsSample,
-        s.RegisterItemNo,
-        s.SampleID,
-        s.PhotoID,
-        sr.SampleResultID,
-        COALESCE(sr.SampleResult, eim8.ShortDescription, eim8.Description),
-        COALESCE(sr.FullSampleResult, sr.SampleResult, eim8.ShortDescription, eim8.Description),
-        COALESCE(sr.Value, e8.ElementIntID, -1),
-        sc.SampleClassificationID,
-        COALESCE(sce.SampleClassification, sc.SampleClassification, eime6.Description, eimso6.Description, eim6.ShortDescription, eim6.Description),
-        COALESCE(sc.Value, e6sc.Value, -1),
-        COALESCE(sc.Score, e6sc.Score, 0),
-        s.Notes
-    FROM
-        JobEmployee je WITH (NOLOCK)
-        INNER JOIN Register r WITH (NOLOCK) ON r.JobEmployeeID = je.JobEmployeeID
-        INNER JOIN Survey su WITH (NOLOCK) ON su.SurveyID = r.SurveyID
-        INNER JOIN Floorplan f WITH (NOLOCK) ON r.RegisterID = f.RegisterID
-        INNER JOIN Room rm WITH (NOLOCK) ON rm.FloorplanID = f.FloorplanID
-        INNER JOIN Sample s WITH (NOLOCK) ON s.RoomID = rm.RoomID
-        LEFT JOIN SampleResult sr WITH (NOLOCK) ON s.SampleResultID = sr.SampleResultID
-        LEFT JOIN Element e8 WITH (NOLOCK) ON s.SampleID = e8.SampleID AND e8.ElementTypeID = 8
-        LEFT JOIN ElementIntMeaning eim8 WITH (NOLOCK) ON e8.ElementIntMeaningID = eim8.ElementIntMeaningID
-        LEFT JOIN SampleClassification sc WITH (NOLOCK) ON s.SampleClassificationID = sc.SampleClassificationID
-        LEFT JOIN SampleClassificationExtended sce WITH (NOLOCK) ON s.SampleClassificationExtendedID = sce.SampleClassificationExtendedID
-        LEFT JOIN Element e6 WITH (NOLOCK) ON s.SampleID = e6.SampleID AND e6.ElementTypeID = 6
-        LEFT JOIN ElementIntMeaning eim6 WITH (NOLOCK) ON e6.ElementIntMeaningID = eim6.ElementIntMeaningID
-        LEFT JOIN ElementIntMeaningExtended eime6 WITH (NOLOCK) ON e6.ElementIntMeaningExtendedID = eime6.ElementIntMeaningExtendedID
-        LEFT JOIN ElementIntMeaningSubOption eimso6 WITH (NOLOCK) ON e6.ElementIntMeaningSubOptionID = eimso6.ElementIntMeaningSubOptionID
-        LEFT JOIN SampleClassification e6sc WITH (NOLOCK) ON e6.ElementIntID = e6sc.SampleClassificationID
-    WHERE
-        je.JobID = @JobID
-            AND
-        s.Archived = 0
-
-    -- Get all element data up front to reduce table scans on the element table
-    DECLARE @ElementData TABLE (ElementID INT, SampleID INT, ElementTypeID INT, ElementText VARCHAR(MAX), ElementIntID INT, ElementIntMeaningID INT, ElementIntMeaningExtendedID INT, ElementIntMeaningSubOptionID INT, ElementIntMeaningDescription VARCHAR(MAX), ElementIntMeaningShortDescription VARCHAR(MAX), ElementIntMeaningLongDescription VARCHAR(MAX), ElementDescriptionOrText VARCHAR(MAX))
-
-    INSERT INTO @ElementData (ElementID, SampleID, ElementTypeID, ElementText, ElementIntID, ElementIntMeaningID, ElementIntMeaningExtendedID, ElementIntMeaningSubOptionID, ElementIntMeaningDescription, ElementIntMeaningShortDescription, ElementIntMeaningLongDescription, ElementDescriptionOrText)
-    SELECT
-        e.ElementID,
-        e.SampleID,
-        e.ElementTypeID,
-        e.ElementText,
-        e.ElementIntID,
-        e.ElementIntMeaningID,
-        e.ElementIntMeaningExtendedID,
-        e.ElementIntMeaningSubOptionID,
-        COALESCE(eimso.Description, eime.Description, eim.ShortDescription, eim.Description),
-        eim.ShortDescription,
-        eim.Description,
-        COALESCE(eimso.Description, eime.Description, eim.ShortDescription, eim.Description, e.ElementText)
-    FROM
-        @SampleData s
-        INNER JOIN Element e WITH (NOLOCK) ON e.SampleID = s.SampleID
-        LEFT JOIN ElementIntMeaning eim WITH (NOLOCK) ON eim.ElementIntMeaningID = e.ElementIntMeaningID
-        LEFT JOIN ElementIntMeaningExtended eime WITH (NOLOCK) ON eime.ElementIntMeaningExtendedID = e.ElementIntMeaningExtendedID
-        LEFT JOIN ElementIntMeaningSubOption eimso WITH (NOLOCK) ON eimso.ElementIntMeaningSubOptionID = e.ElementIntMeaningSubOptionID
-
-    -- Update table variable so that As Samples get the same Sample Data of the physical Samples
-    UPDATE @SampleData
-    SET
-        SampleResultID = (SELECT subSD.SampleResultID FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0),
-        SampleResult = ISNULL((SELECT subSD.SampleResult FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), (SELECT ShortDescription FROM ElementIntMeaning WHERE ElementTypeID=8 AND ElementIntValue=e8.ElementIntID)),
-        FullSampleResult = ISNULL((SELECT subSD.FullSampleResult FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), (SELECT ShortDescription FROM ElementIntMeaning WHERE ElementTypeID=8 AND ElementIntValue=e8.ElementIntID)),
-        SampleResultValue = ISNULL((SELECT subSD.SampleResultValue FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), e8.ElementIntID),
-        SampleClassificationID = (SELECT subSD.SampleClassificationID FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0),
-        SampleClassification = ISNULL((SELECT subSD.SampleClassification FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), e6.ElementIntMeaningDescription),
-        SampleClassificationValue = ISNULL((SELECT subSD.SampleClassificationValue FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), ISNULL((SELECT Value FROM SampleClassification WHERE e6.ElementIntID=SampleClassificationID), 0)),
-        SampleClassificationScore = ISNULL((SELECT subSD.SampleClassificationScore FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), ISNULL((SELECT Score FROM SampleClassification WHERE e6.ElementIntID=SampleClassificationID), 0)),
-        Notes = (SELECT subSD.Notes FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0)
-    FROM
-        @SampleData updateSD
-        LEFT JOIN @ElementData e8 ON updateSD.SampleID=e8.SampleID AND e8.ElementTypeID = 8
-        LEFT JOIN @ElementData e6 ON updateSD.SampleID=e6.SampleID AND e6.ElementTypeID = 6
-    WHERE
-        updateSD.AsSample = 1
-
-    -- Setup the CTEs.
-      ;With SamplesComputed As
-      (
-            Select
-                  s.SampleId,
-                  s.SampleRef,
-                  e2.ElementText [SourceDescription], 
-                  e20.ElementIntMeaningShortDescription [RecommendedAction],
-                  rac.RecommendedActionColour,
-                  CASE WHEN e20.ElementIntMeaningShortDescription = 'No further action required'
-                    THEN 0
-                    Else @RecommendedActionsAllowed + 1 - e20.ElementIntID
-                  END [RecommendedActionSortOrder],
-                  s.SampleResultValue [SampleResult],
-
-                  Case
-                        When Not s.SampleResultValue = -1 Then
-                              '(' + Cast(s.SampleResultValue as varchar(10)) + ') ' +
-                              ISNULL(s.FullSampleResult, '')
-                  End [AsbestosType],
-
-                  Coalesce(sc.Value, sc2.Value, 0) [ClassificationValue],
-                  Coalesce(sc.SampleClassification, e6.ElementIntMeaningShortDescription, e6.ElementIntMeaningLongDescription, '') [Classification],
-                  Case
-                        When sr.Value < 1 Then
-                              0
-                        When Not sc.SampleClassificationID Is Null Then
-                              sc.Score
-                        When Not e6.ElementIntID Is Null Then
-                              e6.ElementIntID
-                        Else
-                              0
-                  End [ClassificationScore],
-
-                  e9.ElementIntID + e10.ElementIntID [MaterialAssessmentScore],
-
-                  IsNull(e11.ElementIntID,0) [OccupantActivity],
-                  IsNull(e12.ElementIntID,0) [LocationScore],
-                  IsNull(e13.ElementIntID,0) [VulnerabilityScore],
-                  IsNull(e14.ElementIntID,0) [QuantityScore],
-                  IsNull(e15.ElementIntID,0) [NoOfOccupants],
-                  IsNull(e16.ElementIntID,0) [FrequencyOfUse],
-                  IsNull(e17.ElementIntID,0) [AverageTimeAreaIsInUse],
-                  IsNull(e18.ElementIntID,0) [TypeOfMaintenance],
-                  IsNull(e19.ElementIntID,0) [FrequencyOfMaintenance],
-                  
-                  s.SampleResultID,
-                  s.SampleClassificationID,
-
-                  Case
-                        When (s.SampleResultValue > 0 Or e5.ElementIntId = 0)  AND (IsNull(e48.ElementIntMeaningID,0)<>121 AND IsNull(e48.ElementIntMeaningID,0)<>126) Then
-                              Case
-                                    When e27.ElementID IS NULL Then
-                                          Case Coalesce(sc.Value,sc2.Value,0)
-                                                      When 0 Then
-                                                            Case e5.ElementIntID
-                                                                  When 0 Then 
-                                                                        -- INACCESSIBLE
-                                                                        Case e22.ElementIntMeaningID
-                                                                              When 113 Then ReviewDates.TwelveMonths
-                                                                        End
-                                                            End
-                                                      When 10 Then ReviewDates.SixMonths
-                                                      When  8 Then ReviewDates.SixMonths
-                                                      When  7 Then ReviewDates.SixMonths
-                                                      When  6 Then ReviewDates.SixMonths
-                                                      Else 
-                                                            ReviewDates.TwelveMonths
-                                          End
-                                    When ISNUMERIC(e27.ElementIntMeaningShortDescription) = 1 Then
-                                          DATEADD(MONTH, CONVERT(int, e27.ElementIntMeaningShortDescription), ReviewDates.RegisterFinish)
-                              End
-                  End [ReviewDate],
-                  
-                  Case
-                        When (s.SampleResultValue > 0 Or e5.ElementIntId = 0) And (IsNull(e48.ElementIntMeaningID,0)<>121 AND IsNull(e48.ElementIntMeaningID,0)<>126) Then
-                              Case IsNull(e24.ElementText, e24.ElementIntMeaningLongDescription)
-                                      When '2 Months' Then ReviewDates.TwoMonths
-                                      When '3 Months' Then ReviewDates.ThreeMonths
-                                      When '6 Months' Then ReviewDates.SixMonths
-                                      Else
-                                          Case
-                                                When IsDate(IsNull(e24.ElementText, e24.ElementIntMeaningLongDescription)) = 1 Then
-                                                      IsNull(e24.ElementText, e24.ElementIntMeaningLongDescription)
-                                          End
-                                    End
-                  End [TimescaleForCompletion],
-
-                  CASE WHEN s.PriorityAssessment = 1 THEN 0 ELSE 1 END [IsMAOnly],
-
-                  LTrim(
-                        Cast(IsNull(e26.ElementText, '') as varchar(Max)) + ' ' +
-                        Cast(IsNull(e3.ElementText, '') as varchar(Max)) + ' ' +
-                        Cast(IsNull(e4.ElementText, '') as varchar(Max))
-                  ) [Quantity],
-                  e31.ElementText [Comments],
-                  Cast(Case When IsNull(e48.ElementIntMeaningId,0) = 121 Then 1 Else 0 End as bit) [Removed]
-            From
-                  @SampleData s
-                  Outer Apply
-                  (
-                        Select
-							CAST(MAX(RegisterFinish) as date) RegisterFinish,							
-                            DateAdd(m,  2, Cast(Max(RegisterFinish) as date)) as TwoMonths,
-                            DateAdd(m,  3, Cast(Max(RegisterFinish) as date)) as ThreeMonths,
-                            DateAdd(m,  6, Cast(Max(RegisterFinish) as date)) as SixMonths,
-                            DateAdd(m, 12, Cast(Max(RegisterFinish) as date)) as TwelveMonths
-                        From @SampleData
-                  ) as ReviewDates
-                  LEFT JOIN SampleResult sr WITH (NOLOCK) On s.SampleResultId = sr.SampleResultId 
-                  LEFT JOIN SampleClassification sc WITH (NOLOCK) On s.SampleClassificationId = sc.SampleClassificationID
-
-                  -- Source Description
-                  LEFT JOIN @ElementData e2 On s.SampleID = e2.SampleID AND e2.ElementTypeID = 2
-
-                  -- Level of Identification
-                  LEFT JOIN @ElementData e5 On s.SampleID = e5.SampleID AND e5.ElementTypeID = 5
-
-                  -- Reinspection State
-                  LEFT JOIN @ElementData e48 On s.SampleID = e48.SampleID AND e48.ElementTypeID = 48
-
-                  -- Date of Next Review Override
-                  LEFT JOIN @ElementData e27 On s.SampleID = e27.SampleID AND e27.ElementTypeID = 27
-
-                  -- Management Option
-                  LEFT JOIN @ElementData e22 On s.SampleID = e22.SampleID AND e22.ElementTypeID = 22
-
-                  -- Timescale for Completion
-                  LEFT JOIN @ElementData e24 On s.SampleID = e24.SampleID AND e24.ElementTypeID = 24
-
-                  -- Asbestos Type
-                  LEFT JOIN @ElementData e8 On s.SampleID = e8.SampleID AND e8.ElementTypeID = 8
-
-                  -- Recommended Action
-                  LEFT JOIN @ElementData e20 On s.SampleID = e20.SampleID AND e20.ElementTypeID = 20
-                  LEFT JOIN RecommendedActionColour rac WITH (NOLOCK) On e20.ElementIntID = rac.ElementIntValue
-
-                  -- Classification Score
-                  LEFT JOIN @ElementData e6 On s.SampleID = e6.SampleID AND e6.ElementTypeID = 6
-                  LEFT JOIN SampleClassification sc2 WITH (NOLOCK) On sc2.Score = e6.ElementIntID And sc2.SampleClassificationId Between 1 And 7
-
-                  -- Quantity
-                  LEFT JOIN @ElementData e26 On s.SampleId = e26.SampleId AND e26.ElementTypeId = 26
-                  LEFT JOIN @ElementData e3 On s.SampleId = e3.SampleId AND  e3.ElementTypeId = 3
-                  LEFT JOIN @ElementData e4 On s.SampleId = e4.SampleId AND  e4.ElementTypeId = 4
-
-                  -- Comments
-                  LEFT JOIN @ElementData e31 On s.SampleId = e31.SampleId AND e31.ElementTypeId = 31
-
-                  LEFT JOIN @ElementData e7 On e7.SampleID = s.SampleID And e7.ElementTypeID = 7
-
-                  -- Material Assessment Score
-                        -- Damage/Detoriation
-                        LEFT JOIN @ElementData e9 On s.SampleID = e9.SampleID AND e9.ElementTypeID = 9
-                        -- Surface Treatment
-                        LEFT JOIN @ElementData e10 On s.SampleID = e10.SampleID AND e10.ElementTypeID = 10
-
-                  -- Priority Assessment Score
-                        -- Occupant Activity
-                        LEFT JOIN @ElementData e11 On s.SampleID = e11.SampleID AND e11.ElementTypeID = 11
-
-                  -- Disturbance Score
-                        -- Location Score
-                        LEFT JOIN @ElementData e12 On s.SampleID = e12.SampleID AND e12.ElementTypeID = 12
-                        -- Vulnerability Score
-                        LEFT JOIN @ElementData e13 On s.SampleID = e13.SampleID AND e13.ElementTypeID = 13
-                        -- Quantity Score
-                        LEFT JOIN @ElementData e14 On s.SampleID = e14.SampleID AND e14.ElementTypeID = 14
-
-                  -- ExposureScore
-                        -- No. of Occupants
-                        LEFT JOIN @ElementData e15 On s.SampleID = e15.SampleID AND e15.ElementTypeID = 15
-                        -- Frequency of Use
-                        LEFT JOIN @ElementData e16 On s.SampleID = e16.SampleID AND e16.ElementTypeID = 16
-                        -- Average Time Area is in Use
-                        LEFT JOIN @ElementData e17 On s.SampleID = e17.SampleID AND e17.ElementTypeID = 17
-
-                  -- MaintenanceScore
-                        -- Type of Maintenance
-                        LEFT JOIN @ElementData e18 On s.SampleID = e18.SampleID AND e18.ElementTypeID = 18
-                        -- Frequency of Maintenance
-                        LEFT JOIN @ElementData e19 On s.SampleID = e19.SampleID AND e19.ElementTypeID = 19
-      ),
-      SamplesComputed2 as
-      (
-            Select
-                  j.JobId,
-                  j.SiteId,
-                  j.ClientId,
-                  SampleId,
-                  SampleRef,
-                  SourceDescription,
-                  Case
-                        When SampleResult = 0 Or Removed = 1 Then
-                              'No further action required'
-                        Else
-                              RecommendedAction
-                  End as RecommendedAction,
-                  Case
-                        When AsbestosType = '(0) no asbestos detected' Or Removed = 1 Then
-                              '92A0F4'
-                        Else
-                              RecommendedActionColour
-                  End as RecommendedActionColour,
-                  Case
-                        When SampleResult = 0 Or Removed = 1 Then
-                              0-- Doesn't matter as we're not using the Rec. Action Sort Order is not used on the portal.
-                        Else
-                              RecommendedActionSortOrder
-                  End as RecommendedActionSortOrder,
-                  Case
-                        When SampleResult <> 0 And Not MaterialAssessmentScore Is Null And Not Removed = 1 Then
-                              Case
-                                    When @CompanyName = 'Environtec' And c.RegisterRowTemplate Is Null Then
-                                          -- MA Score
-                                          MaterialAssessmentScore + 
-                                          SampleResult + 
-                                          ClassificationValue
-                                    Else
-                                          -- MA Score
-                                          MaterialAssessmentScore +
-                                          SampleResult +  
-                                          ClassificationValue
-                              End
-                  End as MaterialAssessmentScore,
-                  Case
-                        When SampleResult <> 0 And Not MaterialAssessmentScore Is Null And Not Removed = 1 AND IsMAOnly = 0 Then
-                              Case
-                                    When @CompanyName = 'Environtec' And c.RegisterRowTemplate Is Null Then                                                  
-                                          -- PA Score
-                                          LocationScore + 
-                                          VulnerabilityScore + 
-                                          QuantityScore +
-                                          NoOfOccupants
-
-                                    When @CompanyName = 'G & L Consultancy Ltd' And @BranchName = 'Northern Ireland' Then
-                                          -- PA Score
-                                          OccupantActivity +
-                                                -- Disturbance Score
-                                                Round(Cast(LocationScore + VulnerabilityScore + QuantityScore as float)/3, 0) +
-                                                -- ExposureScore
-                                                Round(Cast(NoOfOccupants + FrequencyOfUse + AverageTimeAreaIsInUse as float)/3, 0) +
-                                                -- MaintenanceScore
-                                                Round(Cast(TypeOfMaintenance + FrequencyOfMaintenance as float)/2, 0)
-                                    Else
-                                          -- PA Score
-                                          OccupantActivity +
-                                                -- Disturbance Score
-                                                Ceiling(Cast(LocationScore + VulnerabilityScore + QuantityScore as float)/3) +
-                                                -- ExposureScore
-                                                Ceiling(Cast(NoOfOccupants + FrequencyOfUse + AverageTimeAreaIsInUse as float)/3) +
-                                                -- MaintenanceScore
-                                                Ceiling(Cast(TypeOfMaintenance + FrequencyOfMaintenance as float)/2)
-                              End
-                  End as PriorityAssessmentScore,
-                  Case
-                        When SampleResult <> 0 And Not MaterialAssessmentScore Is Null And Not Removed = 1 Then
-                              Case
-                                    When @CompanyName = 'Environtec' And c.RegisterRowTemplate Is Null Then
-                                          -- MA Score
-                                          MaterialAssessmentScore + 
-                                          SampleResult + 
-                                          ClassificationValue +
-
-                                          -- PA Score
-                                          CASE WHEN IsMAOnly = 0
-                                              THEN
-                                                  LocationScore + 
-                                                  VulnerabilityScore + 
-                                                  QuantityScore +
-                                                  NoOfOccupants
-                                              ELSE 0
-                                          END
-
-                                    When @CompanyName = 'G & L Consultancy Ltd' And @BranchName = 'Northern Ireland' Then
-                                          -- MA Score
-                                          MaterialAssessmentScore +
-                                          SampleResult +  
-                                          ClassificationValue +
-
-                                          CASE WHEN IsMAOnly = 0
-                                              THEN
-                                                  -- PA Score
-                                                  OccupantActivity +
-                                                  -- Disturbance Score
-                                                  Round(Cast(LocationScore + VulnerabilityScore + QuantityScore as float)/3, 0) +
-                                                  -- ExposureScore
-                                                  Round(Cast(NoOfOccupants + FrequencyOfUse + AverageTimeAreaIsInUse as float)/3, 0) +
-                                                  -- MaintenanceScore
-                                                  Round(Cast(TypeOfMaintenance + FrequencyOfMaintenance as float)/2, 0)
-                                              ELSE 0
-                                          END
-                                    Else        
-                                          -- MA Score
-                                          MaterialAssessmentScore +
-                                          SampleResult +  
-                                          ClassificationValue +
-
-                                          -- PA Score
-                                          CASE WHEN IsMAOnly = 0
-                                              THEN
-                                                  OccupantActivity +
-                                                  -- Disturbance Score
-                                                  Ceiling(Cast(LocationScore + VulnerabilityScore + QuantityScore as float)/3) +
-                                                  -- ExposureScore
-                                                  Ceiling(Cast(NoOfOccupants + FrequencyOfUse + AverageTimeAreaIsInUse as float)/3) +
-                                                  -- MaintenanceScore
-                                                  Ceiling(Cast(TypeOfMaintenance + FrequencyOfMaintenance as float)/2)
-                                              ELSE 0
-                                          END
-                              End
-                  End as RiskScore,
-                  SampleResult,
-                  AsbestosType,
-                  Classification,
-                  ClassificationScore,
-                  ClassificationValue,
-                  ReviewDate,
-                  TimescaleForCompletion,
-                  IsMAOnly,
-                  Quantity,
-                  Comments,
-                  Removed
-            From
-                  SamplesComputed s WITH (NOLOCK)
-                  Inner Join Job j WITH (NOLOCK) On @JobID = j.JobId
-                  Inner Join Client c WITH (NOLOCK) On j.ClientId = c.ClientId
-      )
-
-      -- Run the main SQL to INSERT the data.
-      INSERT INTO SampleComputedData (ClientId, SiteId, JobId, SampleId, SourceDescription, PriorityAssessmentScore, MaterialAssessmentScore, SampleResult, AsbestosType, Classification, ClassificationScore, ClassificationScoreValue, ReviewDate, TimescaleForCompletion, RecommendedAction, RecommendedActionColour, RecommendedActionSortOrder, RiskScore, RiskScoreGroupId, RiskScoreGroup, RiskScoreGroupColour, RiskScoreSortOrder, IsMAOnly, Quantity, Comments, Removed, DateCreated)
-      Select
-            s.ClientId,
-            s.SiteId,
-            s.JobID,
-            s.SampleID,
-            s.SourceDescription,
-
-            s.PriorityAssessmentScore,
-            s.MaterialAssessmentScore,
-
-            s.SampleResult,
-            s.AsbestosType,
-
-            s.Classification,
-            s.ClassificationScore,
-            s.ClassificationValue,
-            s.ReviewDate,
-            s.TimescaleForCompletion,
-            RecommendedAction,
-            RecommendedActionColour,
-            RecommendedActionSortOrder,
-            s.RiskScore,
-
-            Coalesce(rsbc.RiskScoreGroupId, rsb.RiskScoreGroupId, rsbcMA.RiskScoreGroupId, rsbMA.RiskScoreGroupId) [RiskScoreGroupId],
-            Coalesce(rsbc.ScoreGroup, rsb.ScoreGroup, rsbcMA.ScoreGroup, rsbMA.ScoreGroup) [RiskScoreGroup],
-            Coalesce(rsbc.Colour, rsb.Colour, rsbcMA.Colour, rsbMA.Colour) [RiskScoreGroupColour],
-            Coalesce(rsbc.SortOrder, rsb.SortOrder, rsbcMA.SortOrder, rsbMa.SortOrder) [SortOrder],
-
-            s.IsMAOnly,
-            s.Quantity,
-            s.Comments,
-            s.Removed,
-            GETDATE() [DateCreated]
-      From
-            SamplesComputed2 s
-
-            -- MA & PA with client specific risk.
-            LEFT JOIN RiskScore rsc WITH (NOLOCK) On Cast(s.RiskScore as int) = rsc.RiskScore And rsc.ClientId = s.ClientId And s.IsMAOnly = 0
-            LEFT JOIN RiskScoreGroup rsbc WITH (NOLOCK) On rsc.RiskScoreGroupId = rsbc.RiskScoreGroupId
-
-            -- MA & PA with default specific risk.
-            LEFT JOIN RiskScore rs WITH (NOLOCK) On Cast(s.RiskScore as int) = rs.RiskScore And rs.ClientId Is Null And s.IsMAOnly = 0
-            LEFT JOIN RiskScoreGroup rsb WITH (NOLOCK) On rs.RiskScoreGroupId = rsb.RiskScoreGroupId
-
-            -- MA Only with client specific risk.
-            LEFT JOIN RiskScoreMAOnly rscMA WITH (NOLOCK) On s.MaterialAssessmentScore = rscMA.MaterialAssessmentScore And rscMA.ClientId = s.ClientId And s.IsMAOnly = 1
-            LEFT JOIN RiskScoreGroup rsbcMA WITH (NOLOCK) On rscMA.RiskScoreGroupId = rsbcMA.RiskScoreGroupId
-
-            -- MA Only with default specific risk.
-            LEFT JOIN RiskScoreMAOnly rsMA WITH (NOLOCK) On s.MaterialAssessmentScore = rsMA.MaterialAssessmentScore And rsMA.ClientId Is Null And s.IsMAOnly = 1
-            LEFT JOIN RiskScoreGroup rsbMA WITH (NOLOCK) On rsMA.RiskScoreGroupId = rsbMA.RiskScoreGroupId
-    ORDER BY
-        s.SampleID
-
-
-    SET NOCOUNT OFF;
 END
 GO
 
@@ -31509,7 +29412,7 @@ BEGIN
 	SET NOCOUNT OFF;
 
 END
-
+GO
 
 IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='GuidedDataState'))
 	BEGIN
@@ -31523,7 +29426,8 @@ IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo'
 			[GuidedDataStateID] ASC
 		)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
 		) ON [PRIMARY]
-	END 
+	END
+
 
 IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='GuidedDataStateEntry'))
 	BEGIN
@@ -33028,8 +30932,8 @@ BEGIN
       RETURN @Return
       
       SET NOCOUNT OFF;
-
 END
+GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'V' AND name = 'ProjectJobSheet')
 BEGIN
@@ -34307,6 +32211,8 @@ FROM
                     LegionellaAsset la WITH (NOLOCK)
 				WHERE
 					la.DateRemoved IS NULL
+
+				UNION ALL
 
 				-- 2.a Question Photos
 				SELECT la.LegionellaID, p.PhotoID
@@ -44165,7 +42071,7 @@ BEGIN
 	
 END
 
-RETURN ISNULL(NULLIF(@WorkingInterval, 0), 1)
+RETURN NULLIF(@WorkingInterval, 0)
 
 END      
 GO
@@ -44518,13 +42424,14 @@ GO
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GetFloorplansForExport') < 1 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[GetFloorplansForExport] AS BEGIN SET NOCOUNT ON; END')
 END
-
-go
+GO
 
 ALTER PROCEDURE [dbo].[GetFloorplansForExport]
     @JobID INT = NULL,
     @SurveyTypeID INT = NULL,
     @JobIDs VARCHAR(MAX) = NULL,
+    @FloorplanID INT = 0,
+    @FloorplanAdditionalID INT = 0,
     @CustomDateFormat SMALLINT = 0,
     @OrderByRegister BIT = 0,
     @DefaultTemplatePageLayout VARCHAR(100) = ''
@@ -44532,6 +42439,7 @@ WITH RECOMPILE
 AS
 BEGIN
     SET NOCOUNT ON;
+    
     
     /*
         NOTE: THIS STORED PROCEDURE IS GENERIC ACROSS ALL SERVERS.
@@ -44638,6 +42546,8 @@ BEGIN
             INNER JOIN SurveyType sut WITH (NOLOCK) ON su.SurveyTypeID = sut.SurveyTypeID
         WHERE
             j.JobID IN (SELECT JobID FROM @Jobs)
+                AND
+            r.DateApproved IS NOT NULL
     END
     
     -- Get all register data up front to reduce table scans on the Register table
@@ -44655,39 +42565,46 @@ BEGIN
         @JobData j
         INNER JOIN JobEmployee je WITH (NOLOCK) ON j.JobID = je.JobID
         INNER JOIN Register r WITH (NOLOCK) ON r.JobEmployeeID = je.JobEmployeeID
+    WHERE
+        r.DateApproved IS NOT NULL
     
     -- Get all floorplan data up front to reduce table scans on the Floorplan table
     DECLARE @FloorplanData TABLE (JobID INT, RegisterID INT, FloorplanID INT, FloorNumber INT, FloorplanData IMAGE, FloorplanDataContentType VARCHAR(200), AutocadData IMAGE, AutocadDataContentType VARCHAR(200), DescriptionOverride VARCHAR(MAX), ShortDescriptionOverride VARCHAR(15), TemplatePageLayout_SearchString VARCHAR(MAX), CanvasSize VARCHAR(MAX), TEAMS_StoreID INT)
     
-    INSERT INTO @FloorplanData (JobID, RegisterID, FloorplanID, FloorNumber, FloorplanData, FloorplanDataContentType, AutocadData, AutocadDataContentType, DescriptionOverride, ShortDescriptionOverride, TemplatePageLayout_SearchString, CanvasSize, TEAMS_StoreID)
-    SELECT
-        r.JobID,
-        r.RegisterID,
-        f.FloorplanID,
-        f.FloorNumber,
-        f.FloorplanData,
-        f.FloorplanDataContentType,
-        f.AutocadData,
-        f.AutocadDataContentType,
-        f.DescriptionOverride,
-        f.ShortDescriptionOverride,
-        f.TemplatePageLayout_SearchString,
-        f.CanvasSize,
-        f.TEAMS_StoreID
-    FROM
-        @RegisterData r
-        INNER JOIN Floorplan f WITH (NOLOCK) ON r.RegisterID = f.RegisterID
-    WHERE
-        (
-            f.FloorplanData IS NOT NULL
-                OR
-            f.AutocadData IS NOT NULL
-        )
-            AND
-        ISNULL(f.ExcludeFromReport, 0) = 0
+    IF @FloorplanAdditionalID = 0
+    BEGIN
+        INSERT INTO @FloorplanData (JobID, RegisterID, FloorplanID, FloorNumber, FloorplanData, FloorplanDataContentType, AutocadData, AutocadDataContentType, DescriptionOverride, ShortDescriptionOverride, TemplatePageLayout_SearchString, CanvasSize, TEAMS_StoreID)
+        SELECT
+            r.JobID,
+            r.RegisterID,
+            f.FloorplanID,
+            f.FloorNumber,
+            f.FloorplanData,
+            f.FloorplanDataContentType,
+            f.AutocadData,
+            f.AutocadDataContentType,
+            f.DescriptionOverride,
+            f.ShortDescriptionOverride,
+            f.TemplatePageLayout_SearchString,
+            f.CanvasSize,
+            f.TEAMS_StoreID
+        FROM
+            @RegisterData r
+            INNER JOIN Floorplan f WITH (NOLOCK) ON r.RegisterID = f.RegisterID
+        WHERE
+            (@FloorplanID = 0 OR f.FloorplanID = @FloorplanID)
+                AND
+            (
+                f.FloorplanData IS NOT NULL
+                    OR
+                f.AutocadData IS NOT NULL
+            )
+                AND
+            ISNULL(f.ExcludeFromReport, 0) = 0
+    END
     
     -- Declare variables for doing dynamic SQL (these might be needed below if Floorplans contain a TEAMS_StoreID).
-    DECLARE @i INT, @FloorplanCount INT, @FloorplanID INT, @AutocadData VARBINARY(MAX), @AutocadDataContentType VARCHAR(200), @PlanData VARBINARY(MAX), @PlanDataContentType VARCHAR(200), @PlanSql NVARCHAR(MAX)
+    DECLARE @i INT, @FloorplanCount INT, @PlanID INT, @AutocadData VARBINARY(MAX), @AutocadDataContentType VARCHAR(200), @PlanData VARBINARY(MAX), @PlanDataContentType VARCHAR(200), @PlanSql NVARCHAR(MAX)
     
     -- If there is at least one Floorplan with a TEAMS_StoreID, then we need to run a loop with dynamic SQL to update the data fields above.
     IF EXISTS(SELECT 1 FROM @FloorplanData WHERE TEAMS_StoreID > 0)
@@ -44710,7 +42627,7 @@ BEGIN
             -- Reset the variables for the current Floorplan.
             SELECT
                 @i = @i + 1,
-                @FloorplanID = NULL,
+                @PlanID = NULL,
                 @AutocadData = NULL,
                 @AutocadDataContentType = NULL,
                 @PlanData = NULL,
@@ -44718,17 +42635,17 @@ BEGIN
                 @PlanSql = NULL
             
             -- Set the variables for the current Floorplan.
-            SELECT @FloorplanID = FloorplanID, @PlanSql = 'SELECT @ad = AutocadData, @adct = AutocadDataContentType, @pd = FloorplanData, @pdct = FloorplanDataContentType FROM TEAMS_Store' + CAST(TEAMS_StoreID AS VARCHAR(50)) + '.dbo.Floorplan WITH (NOLOCK) WHERE FloorplanID = @FloorplanID'
+            SELECT @PlanID = FloorplanID, @PlanSql = 'SELECT @ad = AutocadData, @adct = AutocadDataContentType, @pd = FloorplanData, @pdct = FloorplanDataContentType FROM TEAMS_Store' + CAST(TEAMS_StoreID AS VARCHAR(50)) + '.dbo.Floorplan WITH (NOLOCK) WHERE FloorplanID = @PlanID'
             FROM @FloorplansFromStore
             WHERE IndexID = @i
             
             -- Execute the dynamic SQL, setting the data variables for the current Floorplan.
-            EXECUTE sp_executesql @PlanSql, N'@FloorplanID INT, @ad IMAGE OUTPUT, @adct VARCHAR(200) OUTPUT, @pd IMAGE OUTPUT, @pdct VARCHAR(200) OUTPUT', @FloorplanID = @FloorplanID, @ad = @AutocadData OUTPUT, @adct = @AutocadDataContentType OUTPUT, @pd = @PlanData OUTPUT, @pdct = @PlanDataContentType OUTPUT
+            EXECUTE sp_executesql @PlanSql, N'@PlanID INT, @ad IMAGE OUTPUT, @adct VARCHAR(200) OUTPUT, @pd IMAGE OUTPUT, @pdct VARCHAR(200) OUTPUT', @PlanID = @PlanID, @ad = @AutocadData OUTPUT, @adct = @AutocadDataContentType OUTPUT, @pd = @PlanData OUTPUT, @pdct = @PlanDataContentType OUTPUT
             
             -- Update the main table variable to set the correct data for the current Floorplan.
             UPDATE @FloorplanData
             SET AutocadData = @AutocadData, AutocadDataContentType = @AutocadDataContentType, FloorplanData = @PlanData, FloorplanDataContentType = @PlanDataContentType
-            WHERE FloorplanID = @FloorplanID
+            WHERE FloorplanID = @PlanID
         END
         
         -- Now we have got the correct data, delete everything from the table variable.
@@ -44736,196 +42653,209 @@ BEGIN
     END
     
     -- Get all additional floorplan data up front to reduce table scans on the FloorplanAdditional table
-    DECLARE @FloorplanAdditionalData TABLE (JobID INT, RegisterID INT, FloorplanAdditionalID INT, FloorplanID INT, FloorNumber INT, FloorplanData IMAGE, FloorplanDataContentType VARCHAR(200), AutocadData IMAGE, AutocadDataContentType VARCHAR(200), Description VARCHAR(MAX), DescriptionOverride VARCHAR(MAX), ShortDescriptionOverride VARCHAR(15), TemplatePageLayout_SearchString VARCHAR(MAX), CanvasSize VARCHAR(MAX), UNIQUE CLUSTERED (RegisterID))
+    DECLARE @FloorplanAdditionalData TABLE (JobID INT, RegisterID INT, FloorplanAdditionalID INT, FloorplanID INT, FloorNumber INT, FloorplanData IMAGE, FloorplanDataContentType VARCHAR(200), AutocadData IMAGE, AutocadDataContentType VARCHAR(200), Description VARCHAR(MAX), DescriptionOverride VARCHAR(MAX), ShortDescriptionOverride VARCHAR(15), TemplatePageLayout_SearchString VARCHAR(MAX), CanvasSize VARCHAR(MAX))
     
-    INSERT INTO @FloorplanAdditionalData (JobID, RegisterID, FloorplanAdditionalID, FloorplanID, FloorNumber, FloorplanData, FloorplanDataContentType, AutocadData, AutocadDataContentType, Description, DescriptionOverride, ShortDescriptionOverride, TemplatePageLayout_SearchString, CanvasSize)
-    SELECT
-        r.JobID,
-        r.RegisterID,
-        fa.FloorplanAdditionalID,
-        fa.FloorplanID,
-        f.FloorNumber,
-        fa.FloorplanData,
-        fa.FloorplanDataContentType,
-        fa.AutocadData,
-        fa.AutocadDataContentType,
-        fa.Description,
-        f.DescriptionOverride,
-        f.ShortDescriptionOverride,
-        f.TemplatePageLayout_SearchString,
-        f.CanvasSize
-    FROM
-        @RegisterData r
-        INNER JOIN Floorplan f WITH (NOLOCK) ON r.RegisterID = f.RegisterID
-        INNER JOIN FloorplanAdditional fa WITH (NOLOCK) ON f.FloorplanID = fa.FloorplanID
-    WHERE
-        (
-            fa.FloorplanData IS NOT NULL
-                OR
-            fa.AutocadData IS NOT NULL
-        )
-            AND
-        ISNULL(fa.ExcludeFromReport, 0) = 0
+    IF @FloorplanID = 0
+    BEGIN
+        INSERT INTO @FloorplanAdditionalData (JobID, RegisterID, FloorplanAdditionalID, FloorplanID, FloorNumber, FloorplanData, FloorplanDataContentType, AutocadData, AutocadDataContentType, Description, DescriptionOverride, ShortDescriptionOverride, TemplatePageLayout_SearchString, CanvasSize)
+        SELECT
+            r.JobID,
+            r.RegisterID,
+            fa.FloorplanAdditionalID,
+            fa.FloorplanID,
+            f.FloorNumber,
+            fa.FloorplanData,
+            fa.FloorplanDataContentType,
+            fa.AutocadData,
+            fa.AutocadDataContentType,
+            fa.Description,
+            f.DescriptionOverride,
+            f.ShortDescriptionOverride,
+            f.TemplatePageLayout_SearchString,
+            f.CanvasSize
+        FROM
+            @RegisterData r
+            INNER JOIN Floorplan f WITH (NOLOCK) ON r.RegisterID = f.RegisterID
+            INNER JOIN FloorplanAdditional fa WITH (NOLOCK) ON f.FloorplanID = fa.FloorplanID
+        WHERE
+            (@FloorplanAdditionalID = 0 OR fa.FloorplanAdditionalID = @FloorplanAdditionalID)
+                AND
+            (
+                fa.FloorplanData IS NOT NULL
+                    OR
+                fa.AutocadData IS NOT NULL
+            )
+                AND
+            ISNULL(fa.ExcludeFromReport, 0) = 0
+    END
     
     
     -- Start the main SELECT
     SELECT
         ROW_NUMBER() OVER ( -- This ROW_NUMBER() ORDER BY needs to use the same logic as the ORDER BY.
             PARTITION BY
-                a.JobID
+                f.JobID
             ORDER BY
-                a.JobID,
                 CASE WHEN @OrderByRegister = 1
-                    THEN a.RegisterStartAsDate
+                    THEN f.RegisterStartAsDate
                     ELSE NULL
                 END,
                 CASE WHEN @OrderByRegister = 1
-                    THEN a.Building
+                    THEN f.Building
                     ELSE NULL
                 END,
-                a.FloorNumber,
-                a.Additional
+                f.FloorNumber,
+                f.Additional
         ) [FloorplanNumber],
-        (SELECT COUNT(*) FROM @FloorplanData WHERE JobID = a.JobID) + (SELECT COUNT(*) FROM @FloorplanAdditionalData WHERE JobID = a.JobID) [TotalFloorplans],
+        (SELECT COUNT(*) FROM @FloorplanData WHERE JobID = f.JobID) + (SELECT COUNT(*) FROM @FloorplanAdditionalData WHERE JobID = f.JobID) [TotalFloorplans],
         
         -- Get the main UNION data.
-        a.*
+        f.*,
+        
+        -- Get TemplatePageLayout data (except for the SearchString which is handled by the main UNION).
+        tpl.Body_RectString,
+        tpl.Body_BrowserWidth,
+        tpl.MediaBox,
+        tpl.Landscape
         
     FROM
-    (
-        SELECT
-            0 [Additional],
-            r.RegisterID,
-            ISNULL(r.BuildingDesignation, '') [Building],
-            dbo.FormatDateCustom(r.RegisterStart, @CustomDateFormat) [RegisterStart],
-            dbo.FormatDateCustom(r.RegisterFinish, @CustomDateFormat) [RegisterFinish],
-            CAST(r.RegisterStart AS DATE) [RegisterStartAsDate],
-            CAST(r.RegisterFinish AS DATE) [RegisterFinishAsDate],
-            f.FloorplanID [FloorplanID],
-            f.FloorplanID [FloorplanRecordID],
-            NULL [FloorplanAdditionalRecordID],
-            f.FloorNumber,
-            REPLACE(dbo.FloorName(f.FloorNumber), 'Z-Sub Level', @BasementName) [FloorName],
-            ISNULL(f.DescriptionOverride, REPLACE(dbo.FloorName(f.FloorNumber), 'Z-Sub Level', @BasementName)) [Description],
-            f.AutocadData,
-            f.AutocadDataContentType,
-            f.FloorplanData,
-            f.FloorplanDataContentType,
-            CASE WHEN f.AutocadData IS NOT NULL
-                THEN
-                    CASE WHEN f.AutocadDataContentType != 'application/pdf' -- Use office floorplan image or PDF
-                        THEN 'getautosketch.asp?id=' + CAST(f.FloorplanID AS VARCHAR(50))
-                        ELSE '[FLOORPLANUPLOAD' + CAST(f.FloorplanID AS VARCHAR(50)) + ']'
-                    END
-                ELSE 'getsketch.asp?id=' + CAST(f.FloorplanID AS VARCHAR(50)) -- Use site floorplan image
-            END [ImagePath],
-            CASE WHEN f.AutocadData IS NOT NULL
-                THEN
-                    CASE WHEN f.AutocadDataContentType != 'application/pdf' -- Use office floorplan image or PDF
-                        THEN '<img src="[HOSTNAME]/images/getautosketch.asp?id=' + CAST(f.FloorplanID AS VARCHAR(50)) + '&[RND]" class="' + ISNULL(f.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')) + ' ' + REPLACE(ISNULL(f.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')), 'tpl_', 'ConfigCSS_') + '" />'
-                        ELSE '[FLOORPLANUPLOAD' + CAST(f.FloorplanID AS VARCHAR(50)) + ']'
-                    END
-                ELSE '<img src="[HOSTNAME]/images/getsketch.asp?id=' + CAST(f.FloorplanID AS VARCHAR(50)) + '&[RND]" class="' + ISNULL(f.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')) + ' ' + REPLACE(ISNULL(f.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')), 'tpl_', 'ConfigCSS_') + '" />' -- Use site floorplan image
-            END [ImagePathOrPDF],
+        (
+            SELECT
+                0 [Additional],
+                r.RegisterID,
+                ISNULL(r.BuildingDesignation, '') [Building],
+                dbo.FormatDateCustom(r.RegisterStart, @CustomDateFormat) [RegisterStart],
+                dbo.FormatDateCustom(r.RegisterFinish, @CustomDateFormat) [RegisterFinish],
+                CAST(r.RegisterStart AS DATE) [RegisterStartAsDate],
+                CAST(r.RegisterFinish AS DATE) [RegisterFinishAsDate],
+                f.FloorplanID [FloorplanID],
+                f.FloorplanID [FloorplanRecordID],
+                NULL [FloorplanAdditionalRecordID],
+                f.FloorNumber,
+                REPLACE(dbo.FloorName(f.FloorNumber), 'Z-Sub Level', @BasementName) [FloorName],
+                ISNULL(f.DescriptionOverride, REPLACE(dbo.FloorName(f.FloorNumber), 'Z-Sub Level', @BasementName)) [Description],
+                f.AutocadData,
+                f.AutocadDataContentType,
+                f.FloorplanData,
+                f.FloorplanDataContentType,
+                CASE WHEN f.AutocadData IS NOT NULL
+                    THEN
+                        CASE WHEN f.AutocadDataContentType != 'application/pdf' -- Use office floorplan image or PDF
+                            THEN 'getautosketch.asp?id=' + CAST(f.FloorplanID AS VARCHAR(50))
+                            ELSE '[FLOORPLANUPLOAD' + CAST(f.FloorplanID AS VARCHAR(50)) + ']'
+                        END
+                    ELSE 'getsketch.asp?id=' + CAST(f.FloorplanID AS VARCHAR(50)) -- Use site floorplan image
+                END [ImagePath],
+                CASE WHEN f.AutocadData IS NOT NULL
+                    THEN
+                        CASE WHEN f.AutocadDataContentType != 'application/pdf' -- Use office floorplan image or PDF
+                            THEN '<img src="[HOSTNAME]/images/getautosketch.asp?id=' + CAST(f.FloorplanID AS VARCHAR(50)) + '&[RND]" class="' + ISNULL(f.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')) + ' ' + REPLACE(ISNULL(f.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')), 'tpl_', 'ConfigCSS_') + '" />'
+                            ELSE '[FLOORPLANUPLOAD' + CAST(f.FloorplanID AS VARCHAR(50)) + ']'
+                        END
+                    ELSE '<img src="[HOSTNAME]/images/getsketch.asp?id=' + CAST(f.FloorplanID AS VARCHAR(50)) + '&[RND]" class="' + ISNULL(f.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')) + ' ' + REPLACE(ISNULL(f.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')), 'tpl_', 'ConfigCSS_') + '" />' -- Use site floorplan image
+                END [ImagePathOrPDF],
+                ISNULL(f.TemplatePageLayout_SearchString, @DefaultTemplatePageLayout) [TemplatePageLayout],
+                
+                -- Columns that are the same in both UNIONS (some are in capitals for backwards compatibility):
+                j.JobID,
+                j.SurveyTypeID,
+                dbo.FormatTeamsReference('J', j.JobNo) [JobNo],
+                j.SurveyType,
+                j.Client [CLIENTNAME],
+                j.ClientBranch [ClientBranch],
+                j.Client + ISNULL(' (' + NULLIF(j.ClientBranch, '') + ')', '') [Client],
+                j.ClientAddress [ClientAddress],
+                REPLACE(j.ClientAddress, ', ', '<br />') [CLIENTADDRESSMULTILINE],
+                j.ClientPostcode [CLIENTPOSTCODE],
+                j.Project [PROJECT],
+                j.ProjectGroupName,
+                ISNULL(j.Project, '') + ISNULL(' / ' + NULLIF(j.ProjectGroupName, ''), '') [ProjectPlusProjectGroup],
+                j.SiteAddress [SiteAddress],
+                REPLACE(j.SiteAddress, ', ', '<br />') [SITEADDRESSWITHBREAKS],
+                j.SitePostcode [SitePostcode],
+                ISNULL(NULLIF(j.SiteUPRN, ''), 'N/A') [SiteUPRN],
+                (SELECT LTRIM(RTRIM(s)) FROM dbo.SplitString(j.SiteAddress, ',') WHERE zeroBasedOccurance = 0) [FirstLineSiteAddress]
+            FROM
+                @JobData j
+                INNER JOIN @RegisterData r ON j.JobID = r.JobID
+                INNER JOIN @FloorplanData f ON r.RegisterID = f.RegisterID
             
-            -- Columns that are the same in both UNIONS (some are in capitals for backwards compatibility):
-            j.JobID,
-            j.SurveyTypeID,
-            dbo.FormatTeamsReference('J', j.JobNo) [JobNo],
-            j.SurveyType,
-            j.Client [CLIENTNAME],
-            j.ClientBranch [ClientBranch],
-            j.Client + ISNULL(' (' + NULLIF(j.ClientBranch, '') + ')', '') [Client],
-            j.ClientAddress [ClientAddress],
-            REPLACE(j.ClientAddress, ', ', '<br />') [CLIENTADDRESSMULTILINE],
-            j.ClientPostcode [CLIENTPOSTCODE],
-            j.Project [PROJECT],
-            j.ProjectGroupName,
-            ISNULL(j.Project, '') + ISNULL(' / ' + NULLIF(j.ProjectGroupName, ''), '') [ProjectPlusProjectGroup],
-            j.SiteAddress [SiteAddress],
-            REPLACE(j.SiteAddress, ', ', '<br />') [SITEADDRESSWITHBREAKS],
-            j.SitePostcode [SitePostcode],
-            ISNULL(NULLIF(j.SiteUPRN, ''), 'N/A') [SiteUPRN],
-            (SELECT LTRIM(RTRIM(s)) FROM dbo.SplitString(j.SiteAddress, ',') WHERE zeroBasedOccurance = 0) [FirstLineSiteAddress]
-        FROM
-            @JobData j
-            INNER JOIN @RegisterData r ON j.JobID = r.JobID
-            INNER JOIN @FloorplanData f ON r.RegisterID = f.RegisterID
-        
-        UNION ALL
-        
-        SELECT
-            1 [Additional],
-            r.RegisterID,
-            ISNULL(r.BuildingDesignation, '') [Building],
-            dbo.FormatDateCustom(r.RegisterStart, @CustomDateFormat) [RegisterStart],
-            dbo.FormatDateCustom(r.RegisterFinish, @CustomDateFormat) [RegisterFinish],
-            CAST(r.RegisterStart AS DATE) [RegisterStartAsDate],
-            CAST(r.RegisterFinish AS DATE) [RegisterFinishAsDate],
-            fa.FloorplanAdditionalID [FloorplanID],
-            fa.FloorplanID [FloorplanRecordID],
-            fa.FloorplanAdditionalID [FloorplanAdditionalRecordID],
-            fa.FloorNumber,
-            REPLACE(dbo.FloorName(fa.FloorNumber), 'Z-Sub Level', @BasementName) [FloorName],
-            ISNULL(ISNULL(fa.Description, fa.DescriptionOverride), REPLACE(dbo.FloorName(fa.FloorNumber), 'Z-Sub Level', @BasementName)) [Description],
-            fa.AutocadData,
-            fa.AutocadDataContentType,
-            fa.FloorplanData,
-            fa.FloorplanDataContentType,
-            CASE WHEN fa.AutocadData IS NOT NULL
-                THEN
-                    CASE WHEN fa.AutocadDataContentType != 'application/pdf' -- Use office floorplan image or PDF
-                        THEN 'getautosketch.asp?id=' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + '&additional=1'
-                        ELSE '[FLOORPLANADDITIONALUPLOAD' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + ']'
-                    END 
-                ELSE 'getsketch.asp?id=' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + '&additional=1' -- Use site floorplan image
-            END [ImagePath],
-            CASE WHEN fa.AutocadData IS NOT NULL
-                THEN
-                    CASE WHEN fa.AutocadDataContentType != 'application/pdf' -- Use office floorplan image or PDF
-                        THEN '<img src="[HOSTNAME]/images/getautosketch.asp?id=' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + '&additional=1&[RND]" class="' + ISNULL(fa.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')) + ' ' + REPLACE(ISNULL(fa.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')), 'tpl_', 'ConfigCSS_') + '" />'
-                        ELSE '[FLOORPLANADDITIONALUPLOAD' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + ']'
-                    END 
-                ELSE '<img src="[HOSTNAME]/images/getsketch.asp?id=' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + '&additional=1&[RND]" class="' + ISNULL(fa.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')) + ' ' + REPLACE(ISNULL(fa.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')), 'tpl_', 'ConfigCSS_') + '" />' -- Use site floorplan image
-            END [ImagePathOrPDF],
+            UNION ALL
             
-            -- Columns that are the same in both UNIONS (some are in capitals for backwards compatibility):
-            j.JobID,
-            j.SurveyTypeID,
-            dbo.FormatTeamsReference('J', j.JobNo) [JobNo],
-            j.SurveyType,
-            j.Client [CLIENTNAME],
-            j.ClientBranch [ClientBranch],
-            j.Client + ISNULL(' (' + NULLIF(j.ClientBranch, '') + ')', '') [Client],
-            j.ClientAddress [ClientAddress],
-            REPLACE(j.ClientAddress, ', ', '<br />') [CLIENTADDRESSMULTILINE],
-            j.ClientPostcode [CLIENTPOSTCODE],
-            j.Project [PROJECT],
-            j.ProjectGroupName,
-            ISNULL(j.Project, '') + ISNULL(' / ' + NULLIF(j.ProjectGroupName, ''), '') [ProjectPlusProjectGroup],
-            j.SiteAddress [SiteAddress],
-            REPLACE(j.SiteAddress, ', ', '<br />') [SITEADDRESSWITHBREAKS],
-            j.SitePostcode [SitePostcode],
-            ISNULL(NULLIF(j.SiteUPRN, ''), 'N/A') [SiteUPRN],
-            (SELECT LTRIM(RTRIM(s)) FROM dbo.SplitString(j.SiteAddress, ',') WHERE zeroBasedOccurance = 0) [FirstLineSiteAddress]
-        FROM
-            @JobData j
-            INNER JOIN @RegisterData r ON j.JobID = r.JobID
-            INNER JOIN @FloorplanAdditionalData fa ON r.RegisterID = fa.RegisterID
-    ) a
+            SELECT
+                1 [Additional],
+                r.RegisterID,
+                ISNULL(r.BuildingDesignation, '') [Building],
+                dbo.FormatDateCustom(r.RegisterStart, @CustomDateFormat) [RegisterStart],
+                dbo.FormatDateCustom(r.RegisterFinish, @CustomDateFormat) [RegisterFinish],
+                CAST(r.RegisterStart AS DATE) [RegisterStartAsDate],
+                CAST(r.RegisterFinish AS DATE) [RegisterFinishAsDate],
+                fa.FloorplanAdditionalID [FloorplanID],
+                fa.FloorplanID [FloorplanRecordID],
+                fa.FloorplanAdditionalID [FloorplanAdditionalRecordID],
+                fa.FloorNumber,
+                REPLACE(dbo.FloorName(fa.FloorNumber), 'Z-Sub Level', @BasementName) [FloorName],
+                ISNULL(ISNULL(fa.Description, fa.DescriptionOverride), REPLACE(dbo.FloorName(fa.FloorNumber), 'Z-Sub Level', @BasementName)) [Description],
+                fa.AutocadData,
+                fa.AutocadDataContentType,
+                fa.FloorplanData,
+                fa.FloorplanDataContentType,
+                CASE WHEN fa.AutocadData IS NOT NULL
+                    THEN
+                        CASE WHEN fa.AutocadDataContentType != 'application/pdf' -- Use office floorplan image or PDF
+                            THEN 'getautosketch.asp?id=' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + '&additional=1'
+                            ELSE '[FLOORPLANADDITIONALUPLOAD' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + ']'
+                        END 
+                    ELSE 'getsketch.asp?id=' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + '&additional=1' -- Use site floorplan image
+                END [ImagePath],
+                CASE WHEN fa.AutocadData IS NOT NULL
+                    THEN
+                        CASE WHEN fa.AutocadDataContentType != 'application/pdf' -- Use office floorplan image or PDF
+                            THEN '<img src="[HOSTNAME]/images/getautosketch.asp?id=' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + '&additional=1&[RND]" class="' + ISNULL(fa.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')) + ' ' + REPLACE(ISNULL(fa.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')), 'tpl_', 'ConfigCSS_') + '" />'
+                            ELSE '[FLOORPLANADDITIONALUPLOAD' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + ']'
+                        END 
+                    ELSE '<img src="[HOSTNAME]/images/getsketch.asp?id=' + CAST(fa.FloorplanAdditionalID AS VARCHAR(50)) + '&additional=1&[RND]" class="' + ISNULL(fa.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')) + ' ' + REPLACE(ISNULL(fa.TemplatePageLayout_SearchString, ISNULL(@DefaultTemplatePageLayout, '')), 'tpl_', 'ConfigCSS_') + '" />' -- Use site floorplan image
+                END [ImagePathOrPDF],
+                ISNULL(fa.TemplatePageLayout_SearchString, @DefaultTemplatePageLayout) [TemplatePageLayout],
+                
+                -- Columns that are the same in both UNIONS (some are in capitals for backwards compatibility):
+                j.JobID,
+                j.SurveyTypeID,
+                dbo.FormatTeamsReference('J', j.JobNo) [JobNo],
+                j.SurveyType,
+                j.Client [CLIENTNAME],
+                j.ClientBranch [ClientBranch],
+                j.Client + ISNULL(' (' + NULLIF(j.ClientBranch, '') + ')', '') [Client],
+                j.ClientAddress [ClientAddress],
+                REPLACE(j.ClientAddress, ', ', '<br />') [CLIENTADDRESSMULTILINE],
+                j.ClientPostcode [CLIENTPOSTCODE],
+                j.Project [PROJECT],
+                j.ProjectGroupName,
+                ISNULL(j.Project, '') + ISNULL(' / ' + NULLIF(j.ProjectGroupName, ''), '') [ProjectPlusProjectGroup],
+                j.SiteAddress [SiteAddress],
+                REPLACE(j.SiteAddress, ', ', '<br />') [SITEADDRESSWITHBREAKS],
+                j.SitePostcode [SitePostcode],
+                ISNULL(NULLIF(j.SiteUPRN, ''), 'N/A') [SiteUPRN],
+                (SELECT LTRIM(RTRIM(s)) FROM dbo.SplitString(j.SiteAddress, ',') WHERE zeroBasedOccurance = 0) [FirstLineSiteAddress]
+            FROM
+                @JobData j
+                INNER JOIN @RegisterData r ON j.JobID = r.JobID
+                INNER JOIN @FloorplanAdditionalData fa ON r.RegisterID = fa.RegisterID
+        ) f
+        LEFT JOIN TemplatePageLayout tpl WITH (NOLOCK) ON f.TemplatePageLayout = tpl.SearchString
     
     ORDER BY -- This ORDER BY needs to use the same logic as the ROW_NUMBER() ORDER BY above.
-        a.JobID,
+        f.JobID,
         CASE WHEN @OrderByRegister = 1
-            THEN a.RegisterStartAsDate
+            THEN f.RegisterStartAsDate
             ELSE NULL
         END,
         CASE WHEN @OrderByRegister = 1
-            THEN a.Building
+            THEN f.Building
             ELSE NULL
         END,
-        a.FloorNumber,
-        a.Additional
+        f.FloorNumber,
+        f.Additional
     
     
     SET NOEXEC OFF;
@@ -49999,6 +47929,8 @@ BEGIN
 		lo.Deleted IS NULL
 			AND 
 		lo.DateRemoved IS NULL
+			AND
+		lt.Deleted IS NULL
 
 	INSERT INTO @Tasks
 	SELECT
@@ -50019,401 +47951,10 @@ GO
 
 -- Legionella paging alterations begin
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'TEAMS_LegionellaWorkInProgressGrid') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[TEAMS_LegionellaWorkInProgressGrid] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-
-
-ALTER PROCEDURE [dbo].[TEAMS_LegionellaWorkInProgressGrid]
-	-- Paging
-    @PerPage INT = 30,
-    @CurrentPage INT = 1,
-
-	-- Standard filters
-    @ClientID INT = 0,
-    @SiteID INT = 0,
-    @ProjectID INT = 0,
-	@Filter VARCHAR(MAX) = '', -- Text entered in search box (part of address, postcode etc.)
-	@JobID INT = 0,
-	@JobNo VARCHAR(MAX) = '',
-	@LoggedInEmployeeID INT = 0,
-
-	-- User selected filters
-    @FilterFromDate DATETIME = NULL,
-    @FilterToDate DATETIME = NULL,
-    @EmployeeId INT = 0,
-	@WorkTypeId INT = 0,
-	@BranchId INT = 0, -- (0 = all)
-	@Accessibility INT = 0,-- (0=all, 1=accessible, 2=not accessible)
-	@OrgStateId INT = NULL, -- (NULL=all), 0 = Queued
-	@ExcludeClientId INT = 0 -- (0=don't exclude any)
-AS
-BEGIN
-	SET NOCOUNT ON;
-	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
-	Set @FilterFromDate = ISNULL(@FilterFromDate, DATEADD(year, -1, GETDATE())) -- 1 year ago
-    Set @FilterToDate = ISNULL(@FilterToDate, DATEADD(month, 3, GETDATE())) -- 3 months time
-
-	DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
-	INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
-	SELECT
-		c.ClientID,
-		Access.EmployeeRestrictedClientAccessID
-	FROM
-		Client c
-		OUTER APPLY
-		(
-			SELECT
-				*
-			FROM
-				EmployeeRestrictedClientAccess erca
-			WHERE
-				erca.EmployeeID = @LoggedInEmployeeID
-					AND
-				erca.ClientID = c.ClientID
-		) Access
-	WHERE
-		c.Restricted = 1
-
-	-- Get all of the required data from dgLegionellaNew and dgLegionellaWip in to one table so that we can apply our filters later on in one go instead of seperately on each view
-	--DECLARE @LegionellaWIPView TABLE (IndexID INT IDENTITY(1,1), RowNo INT, JobID INT, TypeID INT, Type VARCHAR(MAX), JobNo VARCHAR(10), Start DATETIME, Finish DATETIME, MonitoringSchedule DATETIME, Due DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, Site VARCHAR(MAX), Report BIT, Photos BIT, Plans BIT, Documents BIT, DateApproved DATETIME, HasNotes INT, NotesInLastHour INT, NewGrid INT, Status VARCHAR(MAX), OrgState VARCHAR(MAX), PDF BIT, EmployeeID INT, FullName VARCHAR(MAX), ProjectID INT, LegionellaID INT, NoAccessID INT, naCreated DATETIME, NoAccess BIT)
-
-	--INSERT INTO @LegionellaWIPView
-	Select
-		ROW_NUMBER() OVER (PARTITION BY j.JobID ORDER BY MAX(l.LegionellaFinish) DESC) [RowNo],
-		j.JobID,
-		lt.LegionellaTypeID [TypeID],
-		lt.Description [Type],
-		'J' + RIGHT('000000' + CONVERT(VARCHAR(MAX),j.jobno),6) [JobNo],
-		MIN(l.LegionellaStart) [Start],
-		MAX(l.LegionellaFinish) [Finish],
-		MAX(l.MonitoringSchedule) [MonitoringSchedule],
-		MAX(al.DueDate) [Due],
-		c.ClientID,
-		c.Client + IsNull(' (' + NULLIF(c.BranchName,'') + ')','') [Client],
-		s.SiteID,
-		s.Address [Site],
-		CAST(CASE WHEN leginfo.ReportInformationID IS NULL THEN 0 ELSE 1 END as bit) [Report],
-		CAST(CASE WHEN p.PhotoID IS NOT NULL THEN 1 ELSE 0 END as BIT) [Photos],
-		CAST(CASE WHEN fp.FloorplanID IS NOT NULL THEN 1 ELSE 0 END as BIT) [Plans],
-		CAST(CASE WHEN MIN(lsd.LegionellaSupportingDocumentId) IS NOT NULL THEN 1 ELSE 0 END as BIT) [Documents],
-		l.DateApproved,
-		0 [HasNotes],
-		0 [NotesInLastHour],
-		1 [NewGrid],
-		j.Status [Status],
-		org.State [OrgState],
-		CAST(CASE WHEN pf.PDFId IS NOT NULL THEN 1 ELSE 0 END as BIT) [PDF],
-		je.EmployeeID [EmployeeID],
-		e.FullName [FullName],
-		j.ProjectID,		
-		l.legionellaID,
-		na.NoAccessID,
-		na.Created [naCreated],
-		CAST(CASE WHEN na.NoAccessID IS NOT NULL AND na.Created >= ISNULL(CASE WHEN lt.LegionellaTypeID IS NOT NULL AND l.LegionellaID IS NOT NULL THEN l.LegionellaFinish END,na.Created) THEN 1 ELSE 0 END as BIT) [NoAccess]
-	into 
-		#LegionellaWIPView
-	FROM
-		Job j WITH (NOLOCK)
-		INNER JOIN Client c WITH (NOLOCK) ON j.ClientID=c.ClientID
-		INNER JOIN Site s WITH (NOLOCK) ON j.SiteID=s.SiteID
-		INNER JOIN Quote q WITH (NOLOCK) ON j.JobID = q.JobID
-		INNER JOIN Appointment a WITH (NOLOCK) ON a.QuoteID=q.QuoteID
-		INNER JOIN AppointmentLegionella al WITH (NOLOCK) ON al.AppointmentID = a.AppointmentID
-		INNER JOIN LegionellaType lt WITH (NOLOCK) ON lt.LegionellaTypeID = al.LegionellaTypeID
-		LEFT JOIN JobEmployee je WITH (NOLOCK) ON j.JobID=je.JobID
-		LEFT JOIN Employee e WITH (NOLOCK) ON je.EmployeeID = e.EmployeeID
-		LEFT JOIN Legionella l WITH (NOLOCK) ON l.JobEmployeeID=je.JobEmployeeID AND l.DateApproved IS NULL
-		LEFT JOIN NoAccess na WITH (NOLOCK) ON na.JobID = j.JobID
-		OUTER APPLY
-		(
-			SELECT TOP 1
-				l.ReportInformationID
-			FROM
-				Job _j
-				INNER JOIN JobEmployee je ON j.JobID = je.JobID
-				INNER JOIN Legionella l ON je.JobEmployeeID = l.JobEmployeeID
-			WHERE
-				_j.JobID = j.JobId
-			ORDER BY
-				l.ReportInformationID
-		) legInfo
-		LEFT OUTER JOIN Floorplan fp WITH (NOLOCK) ON fp.LegionellaID=l.LegionellaID AND (fp.AutocadDataContentType IS NOT NULL OR fp.FloorplanDataContentType IS NOT NULL)
-		LEFT OUTER JOIN LegionellaSupportingDocument lsd WITH (NOLOCK) ON lsd.LegionellaID=l.LegionellaID
-		LEFT OUTER JOIN Photo p WITH (NOLOCK) ON p.PhotoID=l.PhotoID
-		LEFT OUTER JOIN PDF pf WITH (NOLOCK) ON pf.JobId=j.JobID AND pf.DateDeleted IS NULL
-		LEFT JOIN OfflineReportGeneration org WITH (NOLOCK) ON org.JobID = j.JobID AND org.Completed IS NULL
-	Where
-		a.DateDeclined IS NULL
-			AND
-		j.Approved IS NULL
-			AND
-		(CASE WHEN @FilterFromDate IS NULL OR @FilterToDate IS NULL THEN 1 ELSE CASE WHEN al.DueDate BETWEEN @FilterFromDate AND @FilterToDate THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @JobID = 0 THEN 1 ELSE CASE WHEN j.JobID = @JobID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @ClientID = 0 THEN 1 ELSE CASE WHEN c.ClientID = @ClientID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @SiteID = 0 THEN 1 ELSE CASE WHEN s.SiteID = @SiteID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @ProjectID = 0 THEN 1 ELSE CASE WHEN j.ProjectID = @ProjectID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @JobNo IS NULL OR LTRIM(RTRIM(@JobNo)) = '' THEN 1 ELSE CASE WHEN j.JobNo = @JobNo THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @EmployeeID = 0 THEN 1 ELSE CASE WHEN je.EmployeeID = @EmployeeID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @WorkTypeID = 0 THEN 1 ELSE CASE WHEN lt.LegionellaTypeID = @WorkTypeID THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @BranchId = 0 THEN 1 ELSE CASE WHEN j.BranchOfficeID = @BranchId THEN 1 ELSE 0 END END = 1)
-			AND
-		(CASE WHEN @ExcludeClientId = 0 THEN 1 ELSE CASE WHEN j.ClientID != @ExcludeClientId THEN 1 ELSE 0 END END = 1)
-	GROUP BY
-		j.JobID,
-		lt.LegionellaTypeID,
-		lt.Description,
-		j.JobNo,
-		c.ClientID,
-		c.Client,
-		c.BranchName,
-		s.SiteID,
-		s.Address,
-		l.DateApproved,
-		j.Status,
-		je.EmployeeID,
-		e.FullName,
-		org.State,
-		CAST(CASE WHEN pf.PDFId IS NOT NULL THEN 1 ELSE 0 END as BIT),
-		fp.FloorplanID,
-		p.PhotoID,
-		leginfo.ReportInformationID,
-		j.ProjectID,
-		l.LegionellaID,
-		na.NoAccessID,
-		na.Created,
-		CAST(CASE WHEN na.NoAccessID IS NOT NULL AND na.Created >= ISNULL(CASE WHEN lt.LegionellaTypeID IS NOT NULL AND l.LegionellaID IS NOT NULL THEN l.LegionellaFinish END,na.Created) THEN 1 ELSE 0 END as BIT)
-
-	--Apply our filters
-	--DECLARE @LegionellaWIPTopLevel TABLE (IndexID INT IDENTITY(1,1), JobID INT, TypeID INT, ReportType VARCHAR(MAX), JobNo VARCHAR(10), Start DATETIME, Finish DATETIME, MonitoringSchedule DATETIME, Due DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, Site VARCHAR(MAX), Report BIT, Photos BIT, Plans BIT, Documents BIT, DateApproved DATETIME, HasNotes INT, NotesInLastHour INT, NewGrid INT, Status VARCHAR(MAX), OrgState VARCHAR(MAX), PDF BIT, EmployeeID INT, FullName VARCHAR(MAX), ProjectID INT, BranchOfficeID INT, UPRN VARCHAR(MAX), LegionellaID INT, NoAccessID INT, naCreated DATETIME, NoAccess BIT)
-	--select * into #LegionellaWIPTopLevel from @LegionellaWIPTopLevel
-	--INSERT INTO #LegionellaWIPTopLevel (JobID, TypeID, ReportType, JobNo, Start, Finish, MonitoringSchedule, Due, ClientID, Client, SiteID, Site, Report, Photos, Plans, Documents, DateApproved, HasNotes, NotesInLastHour, NewGrid, Status, OrgState, PDF, EmployeeID, FullName, ProjectID, BranchOfficeID, UPRN, LegionellaID, NoAccessID, naCreated, NoAccess)	
-	SELECT		
-		cast(row_number() OVER (PARTITION BY (select null) order by Due desc,Finish desc) as Int) as IndexId,
-		lwipv.JobID as JobId,
-		lwipv.TypeID,
-		lwipv.Type ReportType,
-		lwipv.JobNo,
-		lwipv.Start,
-		lwipv.Finish,
-		lwipv.MonitoringSchedule,
-		lwipv.Due,
-		lwipv.ClientID,
-		lwipv.Client,
-		lwipv.SiteID,
-		--lwipv.Site,
-		si.Address + ', ' + si.Postcode [Site],
-		lwipv.Report,
-		lwipv.Photos,
-		lwipv.Plans,
-		lwipv.Documents,
-		lwipv.DateApproved,
-		lwipv.HasNotes,
-		lwipv.NotesInLastHour,
-		lwipv.NewGrid,
-		lwipv.Status,
-		lwipv.OrgState,
-		lwipv.PDF,
-		lwipv.EmployeeID,
-		lwipv.FullName,
-		lwipv.ProjectID,
-		j.BranchOfficeID,
-		si.UPRN,
-		lwipv.LegionellaID,
-		lwipv.NoAccessID,
-		lwipv.naCreated,
-		lwipv.NoAccess		
-	into 
-		#LegionellaWIPTopLevel
-	FROM
-		#LegionellaWIPView lwipv
-		INNER JOIN Job j ON lwipv.JobID = j.JobID
-		INNER JOIN Site si ON lwipv.SiteID = si.SiteID
-		LEFT JOIN orgInstruction o ON lwipv.JobID = o.JobID
-	WHERE
-		lwipv.RowNo = 1
-			AND		
-		(
-			CASE
-				WHEN LEN(@Filter ) = 0 
-				THEN 1 
-				ELSE 
-					CASE 
-						WHEN
-						(
-							lwipv.Site Like '%' + @Filter + '%'
-						) 
-						THEN 1 
-						ELSE 0 
-					END
-			END = 1
-		)
-			AND
-		(
-			CASE WHEN @Accessibility = 0 THEN
-				CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN 
-					CASE WHEN lwipv.DateApproved  IS NULL OR j.Approved IS NULL THEN 
-						1 
-					ELSE 
-						0 
-					END 
-				ELSE 
-					CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) AND j.Approved IS NULL THEN 
-						1
-					ELSE 
-						0
-					END 
-				END
-			ELSE
-				CASE WHEN @Accessibility = 1 THEN
-					CASE WHEN lwipv.DateApproved IS NULL OR j.Approved IS NULL THEN 
-						CASE WHEN lwipv.LegionellaID IS NOT NULL AND CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) THEN 0 ELSE 1 END = 1 THEN 
-							1 
-						ELSE 
-							0 
-						END
-					ELSE 
-						0
-					END
-				ELSE
-					CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) THEN 1 ELSE 0 END
-				END
-			End = 1
-		)
-			AND
-		(
-			CASE WHEN @OrgStateId IS NULL THEN 
-				1 
-			ELSE 
-				CASE @OrgStateId
-					WHEN 100 THEN
-						Case When j.RejectedBySurveyor = 1 Then 1 ELSE 0 END
-					WHEN 101 THEN
-						CASE When j.RejectedByQC = 1 Then 1 ELSE 0 END
-					WHEN 201 THEN
-						Case When
-						   lwipv.DateApproved IS NOT NULL -- Office Approved
-								  And 
-						   o.orgStateID = 6 -- Preview Generation Succeeded
-						Then 1 Else 0
-						End
-					WHEN 202 THEN
-						CASE When o.orgInstructionID IS NULL Then 1 ELSE 0 END
-					ELSE
-						CASE WHEN o.orgStateID=@OrgStateId THEN 
-							CASE WHEN @OrgStateId = 6 THEN
-								CASE WHEN
-									j.RejectedBySurveyor = 0 
-										AND 
-									j.RejectedByQC = 0
-								THEN 1 ELSE 0 END
-							ELSE 1 END
-						ELSE 0 END
-				END
-			END = 1
-		)
-			AND
-		j.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
-		GROUP BY
-			lwipv.JobID, lwipv.TypeID, lwipv.Type, lwipv.JobNo, lwipv.Start, lwipv.Finish, lwipv.MonitoringSchedule, lwipv.Due, lwipv.ClientID,
-			lwipv.Client, lwipv.SiteID, si.Address, si.Postcode, lwipv.Report, lwipv.Photos,lwipv.Plans, lwipv.Documents, lwipv.DateApproved, lwipv.HasNotes,
-			lwipv.NotesInLastHour, lwipv.NewGrid, lwipv.Status, lwipv.OrgState, lwipv.PDF, lwipv.EmployeeID, lwipv.FullName, lwipv.ProjectID, j.BranchOfficeID,
-			si.UPRN, lwipv.LegionellaID, lwipv.NoAccessId, lwipv.naCreated, lwipv.NoAccess
-			
-			declare @RowTotal as int
-			select @RowTotal = count(*) from #LegionellaWIPTopLevel
-
-	;With Paging As 
-    ( 
-        Select 
-            CASE WHEN @PerPage = 0 THEN
-                1
-            ELSE
-                Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
-            END As Pages, 
-
-            CASE WHEN @PerPage = 0 THEN
-                1
-            ELSE
-                Cast(((Row_Number() Over(Order By a.DateApproved DESC)-1) / @PerPage)+1 as int)
-            END As Page, 
-
-            Row_Number() Over(Order By a.DateApproved DESC) as Row_Num, 
-			
-			@RowTotal as RowTotal,
-            *
-        From 
-			(
-				Select * FROM #LegionellaWIPTopLevel 
-			) a
-	)
-
-SELECT 
-		IndexId,
-		JobID,
-		TypeID,
-		ReportType,
-		JobNo,
-		Start,
-		Finish,
-		MonitoringSchedule,
-		Due,
-		ClientID,
-		Client,
-		SiteID,
-		Site,
-		Report,
-		Photos,
-		Plans,
-		Documents,
-		DateApproved,
-		HasNotes,
-		NotesInLastHour,
-		NewGrid,
-		STATUS,
-		OrgState,
-		PDF,
-		EmployeeID,
-		FullName,
-		ProjectID,
-		BranchOfficeID,
-		UPRN,
-		LegionellaID,
-		NoAccessID,
-		naCreated,
-		NoAccess,
-		[Pages],
-		[Page]
-FROM 
-	Paging 
-where
-	[Page] = @CurrentPage
-
-
-
-
-	SET NOCOUNT OFF;
-END
-
-GO
-
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'TEAMS_LegionellaCompletedJobsGrid') < 1 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[TEAMS_LegionellaCompletedJobsGrid] AS BEGIN SET NOCOUNT ON; END')
 END
 GO
-
-
 
 alter PROCEDURE [dbo].[TEAMS_LegionellaCompletedJobsGrid]
 	-- Paging
@@ -50775,10 +48316,6 @@ BEGIN
 END
 GO
 
-GO
-
-
-
 if exists(SELECT * FROM sys.indexes WHERE name='idx_SurveyApproval_orgInstructionDateDeleted' AND object_id = OBJECT_ID('dbo.SurveyApproval'))
 begin
 DROP INDEX [idx_SurveyApproval_orgInstructionDateDeleted] ON [dbo].[SurveyApproval]
@@ -50839,3 +48376,2465 @@ CREATE NONCLUSTERED INDEX [idx_Appointment_LegionellaBrowse] ON [dbo].[Appointme
 GO
 
 -- Legionella paging alterations end
+
+INSERT INTO LegionellaAssetCategory (LegionellaAssetCategoryID,[Description],TabName,DefaultAssetCode,SortOrder,Deleted) Select 72,'Hose Reels','Hose Reels','HR',999,GETDATE() WHERE (SELECT COUNT(*) FROM LegionellaAssetCategory WHERE LegionellaAssetCategoryID=72)=0
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GetAdditionalClientContactsGridData') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[GetAdditionalClientContactsGridData] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+
+-- =============================================
+-- Author:		Daniel W
+-- Create date: 13/12/2017
+-- Altered : John H 24/09/2020 Deleted groups appearing in group list fix
+-- Description:	Stored procedure to get the grid data for the 'Edit Additional Client Contacts' grid
+-- =============================================
+ALTER PROCEDURE [dbo].[GetAdditionalClientContactsGridData]
+	-- Add the parameters for the stored procedure here
+	@ClientID int
+AS
+BEGIN
+	-- SET NOCOUNT ON added to prevent extra result sets from
+	-- interfering with SELECT statements.
+	SET NOCOUNT ON;
+
+    -- Insert statements for procedure here
+	SELECT
+		isnull(groups.Names,'') [Groups],
+		aci.AdditionalContactInfoID,
+		aci.Contact,
+		'Client - ' + c.Client [ClientDescription],
+		aci.Email,
+		aci.Phone,
+		aci.Salutation,
+		aci.ContactAddress,
+		aci.ContactPostcode,
+		c.ClientID
+	FROM
+		AdditionalContactInfo aci
+		INNER JOIN Client c WITH (NOLOCK) ON aci.LinkID = c.ClientID
+		OUTER APPLY
+		(SELECT
+			STUFF(
+				(
+					SELECT
+						', ' + Isnull(aci2.Contact,'')
+					FROM
+						AdditionalContactInfo aci2
+						INNER JOIN AdditionalContactGroupLinks acgl WITH (NOLOCK) ON aci2.AdditionalContactInfoID = acgl.AdditionalContactInfoId_forGroup
+					WHERE
+						aci2.Deleted IS NULL
+							AND
+						aci2.AdditionalContactTypeID = (SELECT AdditionalContactTypeID FROM AdditionalContactType act2 WHERE act2.ContactTypeDescription = 'Contact Group' AND act2.Deleted IS NULL)
+							AND
+						aci2.LinkID = @ClientID
+							AND
+						acgl.AdditionalContactInfoId_forMember = aci.AdditionalContactInfoID
+							AND							
+						aci2.b_isTemp = 0										
+					FOR XML PATH(''), TYPE
+				).value('.', 'nvarchar(max)'),
+				1,
+				1,
+				''
+			)
+		) [groups](names)
+	WHERE
+		aci.b_isTemp = 0
+			AND
+		aci.Deleted IS NULL
+			AND
+		aci.AdditionalContactTypeID = (SELECT AdditionalContactTypeID FROM AdditionalContactType act2 WHERE act2.ContactTypeDescription = 'Client' AND act2.Deleted IS NULL)
+			AND
+		aci.LinkID = @ClientID
+END
+GO
+
+IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='Sample') AND name='SampleTypeID') < 1 BEGIN
+	ALTER TABLE [Sample]
+		ADD [SampleTypeID] INT NOT NULL DEFAULT(1)
+END
+GO
+
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='SampleType')) BEGIN
+	CREATE TABLE [dbo].[SampleType](
+		[SampleTypeID] [int] NOT NULL,
+		[Description] [varchar](max) NOT NULL,
+		[DateDeleted] [datetime] NULL,
+	 CONSTRAINT [PK_SampleType] PRIMARY KEY CLUSTERED 
+	(
+		[SampleTypeID] ASC
+	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+	) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+END
+GO
+
+INSERT INTO SampleType (SampleTypeID,Description,DateDeleted) SELECT 1, 'Asbestos',NULL WHERE (SELECT COUNT(*) FROM SampleType WHERE SampleTypeID=1)=0
+INSERT INTO SampleType (SampleTypeID,Description,DateDeleted) SELECT 2, 'PCB',GETDATE() WHERE (SELECT COUNT(*) FROM SampleType WHERE SampleTypeID=2)=0
+INSERT INTO SampleType (SampleTypeID,Description,DateDeleted) SELECT 3, 'SMF',GETDATE() WHERE (SELECT COUNT(*) FROM SampleType WHERE SampleTypeID=3)=0
+INSERT INTO SampleType (SampleTypeID,Description,DateDeleted) SELECT 4, 'Lead Paint',GETDATE() WHERE (SELECT COUNT(*) FROM SampleType WHERE SampleTypeID=4)=0
+INSERT INTO SampleType (SampleTypeID,Description,DateDeleted) SELECT 5, 'Lead Dust',GETDATE() WHERE (SELECT COUNT(*) FROM SampleType WHERE SampleTypeID=5)=0
+INSERT INTO SampleType (SampleTypeID,Description,DateDeleted) SELECT 6, 'ODS',GETDATE() WHERE (SELECT COUNT(*) FROM SampleType WHERE SampleTypeID=6)=0
+
+GO
+
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='SampleTypeElement')) BEGIN
+	CREATE TABLE [dbo].[SampleTypeElement](
+		[SampleTypeElementID] [int] IDENTITY(1,1) NOT NULL,
+		[SampleTypeID] [int] NOT NULL,
+		[ElementTypeID] [int] NOT NULL,
+		[ElementTypeDescription] [varchar](max) NULL,
+		[PriorityAssessment] [BIT] NOT NULL DEFAULT(0),
+		[UseElementIntMeaningExtended] [BIT] NOT NULL DEFAULT(0),
+		[UseElementIntMeaningSubOption] [BIT] NOT NULL DEFAULT(0),
+	 CONSTRAINT [PK_SampleTypeElement] PRIMARY KEY CLUSTERED 
+	(
+		[SampleTypeElementID] ASC
+	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+	) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+END
+GO
+
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='SampleTypeElementIntMeaning')) BEGIN
+	CREATE TABLE [dbo].[SampleTypeElementIntMeaning](
+		[SampleTypeElementIntMeaningID] [int] IDENTITY(1,1) NOT NULL,
+		[SampleTypeID] [int] NOT NULL,
+		[ElementTypeID] [int] NOT NULL,
+		[ElementIntMeaningID] [int] NOT NULL,
+		[ElementIntValue] [int] NOT NULL,
+		[Description] [varchar](max) NULL,
+		[ShortDescription] [varchar](max) NULL,
+	 CONSTRAINT [PK_SampleTypeElementIntMeaning] PRIMARY KEY CLUSTERED 
+	(
+		[SampleTypeElementIntMeaningID] ASC
+	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+	) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+END
+GO
+
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='SampleTypeElementIntMeaningExtended')) BEGIN
+	CREATE TABLE [dbo].[SampleTypeElementIntMeaningExtended](
+		[SampleTypeElementIntMeaningExtendedID] [int] IDENTITY(1,1) NOT NULL,
+		[SampleTypeID] [int] NOT NULL,
+		[ElementIntMeaningExtendedID] [int] NOT NULL,
+		[ElementTypeID] [int] NOT NULL,
+		[Description] [varchar](max) NULL,
+	 CONSTRAINT [PK_SampleTypeElementIntMeaningExtended] PRIMARY KEY CLUSTERED 
+	(
+		[SampleTypeElementIntMeaningExtendedID] ASC
+	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+	) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+END
+GO
+
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='SampleTypeElementIntMeaningSubOption')) BEGIN
+	CREATE TABLE [dbo].[SampleTypeElementIntMeaningSubOption](
+		[SampleTypeElementIntMeaningSubOptionID] [int] IDENTITY(1,1) NOT NULL,
+		[SampleTypeID] [int] NOT NULL,
+		[ElementIntMeaningSubOptionID] [int] NOT NULL,
+		[ElementTypeID] [int] NOT NULL,
+		[Description] [varchar](max) NULL,
+	 CONSTRAINT [PK_SampleTypeElementIntMeaningSubOption] PRIMARY KEY CLUSTERED 
+	(
+		[SampleTypeElementIntMeaningSubOptionID] ASC
+	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+	) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+END
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'IF' AND name = 'SamplesForJob') < 1 BEGIN
+	EXEC('CREATE FUNCTION [dbo].[SamplesForJob] (@JobID as int) RETURNS TABLE RETURN ( SELECT 1 )')
+End
+GO
+
+ALTER FUNCTION [dbo].[SamplesForJob](@JobID as int)
+RETURNS TABLE 
+AS
+RETURN 
+(	
+	SELECT
+		s.SampleID,
+		s.SampleRef,
+        s.[DateAnalysed]
+	FROM
+		Sample s WITH (NOLOCK)
+		INNER JOIN Room WITH (NOLOCK) ON s.RoomID = Room.RoomID
+		INNER JOIN Register WITH (NOLOCK) ON Room.RegisterID = Register.RegisterID
+		INNER JOIN JobEmployee WITH (NOLOCK) ON Register.JobEmployeeID = JobEmployee.JobEmployeeID
+		INNER JOIN Job WITH (NOLOCK) ON JobEmployee.JobID = Job.JobID
+		LEFT JOIN Element WITH (NOLOCK) ON s.SampleID = Element.SampleID 
+	WHERE
+		(ElementTypeID = 2 OR ElementTypeID IS NULL)
+		AND JobEmployee.MainEmployee=1
+		AND NOT ISNULL(SampleRef,'') = '' 
+		AND AsSample = 0 
+		AND ( 
+				LaboratoryID IS NOT NULL
+				OR EXISTS( Select 1 From Config Where b__UseSampleCheckIn = 0 )
+			)
+        AND Job.JobID = @JobID
+		AND s.SampleTypeID = 1	
+)
+
+GO
+
+IF EXISTS (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='CreditItem') AND name='Description')
+BEGIN
+	ALTER TABLE CreditItem
+	ALTER COLUMN Description VARCHAR(MAX) NOT NULL
+END
+GO
+
+IF EXISTS (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='ProFormaItem') AND name='Description')
+BEGIN
+	ALTER TABLE ProFormaItem
+	ALTER COLUMN Description VARCHAR(MAX) NOT NULL
+END
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'PopulateSampleComputedData') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[PopulateSampleComputedData] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+USE [TEAMS]
+GO
+
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+/*
+    NEW VERSION OF POPULATE SAMPLECOMPUTEDDATA AND GUIDSAMPLES SPROCS
+    These now join to the Floorplan table as well to prevent data issues on Ensafe, in particular to do with Import data.
+    As well as this, PopulateSampleComputedData now uses less CTE's and more table variables, which has sped it up a lot. Seems to be working well on Ensafe, but we might need to keep an eye out.
+*/
+ALTER PROCEDURE [dbo].[PopulateSampleComputedData]
+    @JobID INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+
+    -- Delete existing data for the Job.
+    DELETE FROM SampleComputedData
+    WHERE JobID = @JobID
+
+    -- Set variables for logic.
+    DECLARE @CompanyName NVARCHAR(50), @BranchName NVARCHAR(50), @RecommendedActionsAllowed INT
+    SELECT
+        @CompanyName = cfg.s__CompanyName,
+        @BranchName = cfg.s__BranchName,
+        @RecommendedActionsAllowed = (SELECT mc.MobileConfigInt FROM MobileConfig mc WITH (NOLOCK) INNER JOIN MobileConfigType mct WITH (NOLOCK) ON mc.MobileConfigTypeID = mct.MobileConfigTypeID WHERE mct.ConfigType = 'RecommendedActionAllowed')
+    FROM
+        Config cfg WITH (NOLOCK)
+
+    -- Get all sample result data up front to reduce table scans on the sample table
+    DECLARE @SampleData TABLE (RegisterID INT, RegisterFinish DATETIME, PriorityAssessment BIT, RoomID INT, SampleRef VARCHAR(50), AsSample BIT, RegisterItemNo INT, SampleID INT, PhotoID INT, SampleResultID INT, SampleResult VARCHAR(500), FullSampleResult VARCHAR(500), SampleResultValue INT, SampleClassificationID INT, SampleClassification VARCHAR(500), SampleClassificationValue INT, SampleClassificationScore INT, Notes VARCHAR(MAX))
+
+    INSERT INTO @SampleData (RegisterID, RegisterFinish, PriorityAssessment, RoomID, SampleRef, AsSample, RegisterItemNo, SampleID, PhotoID, SampleResultID, SampleResult, FullSampleResult, SampleResultValue, SampleClassificationID, SampleClassification, SampleClassificationValue, SampleClassificationScore, Notes)
+    SELECT
+        r.RegisterID,
+        r.RegisterFinish,
+        r.PriorityAssessment,
+        rm.RoomID,
+        s.SampleRef,
+        s.AsSample,
+        s.RegisterItemNo,
+        s.SampleID,
+        s.PhotoID,
+        sr.SampleResultID,
+        COALESCE(sr.SampleResult, eim8.ShortDescription, eim8.Description),
+        COALESCE(sr.FullSampleResult, sr.SampleResult, eim8.ShortDescription, eim8.Description),
+        COALESCE(sr.Value, e8.ElementIntID, -1),
+        sc.SampleClassificationID,
+        COALESCE(sce.SampleClassification, sc.SampleClassification, eime6.Description, eimso6.Description, eim6.ShortDescription, eim6.Description),
+        COALESCE(sc.Value, e6sc.Value, -1),
+        COALESCE(sc.Score, e6sc.Score, 0),
+        s.Notes
+    FROM
+        JobEmployee je WITH (NOLOCK)
+        INNER JOIN Register r WITH (NOLOCK) ON r.JobEmployeeID = je.JobEmployeeID
+        INNER JOIN Survey su WITH (NOLOCK) ON su.SurveyID = r.SurveyID
+        INNER JOIN Floorplan f WITH (NOLOCK) ON r.RegisterID = f.RegisterID
+        INNER JOIN Room rm WITH (NOLOCK) ON rm.FloorplanID = f.FloorplanID
+        INNER JOIN Sample s WITH (NOLOCK) ON s.RoomID = rm.RoomID
+        LEFT JOIN SampleResult sr WITH (NOLOCK) ON s.SampleResultID = sr.SampleResultID
+        LEFT JOIN Element e8 WITH (NOLOCK) ON s.SampleID = e8.SampleID AND e8.ElementTypeID = 8
+        LEFT JOIN ElementIntMeaning eim8 WITH (NOLOCK) ON e8.ElementIntMeaningID = eim8.ElementIntMeaningID
+        LEFT JOIN SampleClassification sc WITH (NOLOCK) ON s.SampleClassificationID = sc.SampleClassificationID
+        LEFT JOIN SampleClassificationExtended sce WITH (NOLOCK) ON s.SampleClassificationExtendedID = sce.SampleClassificationExtendedID
+        LEFT JOIN Element e6 WITH (NOLOCK) ON s.SampleID = e6.SampleID AND e6.ElementTypeID = 6
+        LEFT JOIN ElementIntMeaning eim6 WITH (NOLOCK) ON e6.ElementIntMeaningID = eim6.ElementIntMeaningID
+        LEFT JOIN ElementIntMeaningExtended eime6 WITH (NOLOCK) ON e6.ElementIntMeaningExtendedID = eime6.ElementIntMeaningExtendedID
+        LEFT JOIN ElementIntMeaningSubOption eimso6 WITH (NOLOCK) ON e6.ElementIntMeaningSubOptionID = eimso6.ElementIntMeaningSubOptionID
+        LEFT JOIN SampleClassification e6sc WITH (NOLOCK) ON e6.ElementIntID = e6sc.SampleClassificationID
+    WHERE
+        je.JobID = @JobID
+            AND
+        s.Archived = 0
+	    AND
+	s.SampleTypeID = 1
+
+    -- Get all element data up front to reduce table scans on the element table
+    DECLARE @ElementData TABLE (ElementID INT, SampleID INT, ElementTypeID INT, ElementText VARCHAR(MAX), ElementIntID INT, ElementIntMeaningID INT, ElementIntMeaningExtendedID INT, ElementIntMeaningSubOptionID INT, ElementIntMeaningDescription VARCHAR(MAX), ElementIntMeaningShortDescription VARCHAR(MAX), ElementIntMeaningLongDescription VARCHAR(MAX), ElementDescriptionOrText VARCHAR(MAX))
+
+    INSERT INTO @ElementData (ElementID, SampleID, ElementTypeID, ElementText, ElementIntID, ElementIntMeaningID, ElementIntMeaningExtendedID, ElementIntMeaningSubOptionID, ElementIntMeaningDescription, ElementIntMeaningShortDescription, ElementIntMeaningLongDescription, ElementDescriptionOrText)
+    SELECT
+        e.ElementID,
+        e.SampleID,
+        e.ElementTypeID,
+        e.ElementText,
+        e.ElementIntID,
+        e.ElementIntMeaningID,
+        e.ElementIntMeaningExtendedID,
+        e.ElementIntMeaningSubOptionID,
+        COALESCE(eimso.Description, eime.Description, eim.ShortDescription, eim.Description),
+        eim.ShortDescription,
+        eim.Description,
+        COALESCE(eimso.Description, eime.Description, eim.ShortDescription, eim.Description, e.ElementText)
+    FROM
+        @SampleData s
+        INNER JOIN Element e WITH (NOLOCK) ON e.SampleID = s.SampleID
+        LEFT JOIN ElementIntMeaning eim WITH (NOLOCK) ON eim.ElementIntMeaningID = e.ElementIntMeaningID
+        LEFT JOIN ElementIntMeaningExtended eime WITH (NOLOCK) ON eime.ElementIntMeaningExtendedID = e.ElementIntMeaningExtendedID
+        LEFT JOIN ElementIntMeaningSubOption eimso WITH (NOLOCK) ON eimso.ElementIntMeaningSubOptionID = e.ElementIntMeaningSubOptionID
+
+    -- Update table variable so that As Samples get the same Sample Data of the physical Samples
+    UPDATE @SampleData
+    SET
+        SampleResultID = (SELECT subSD.SampleResultID FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0),
+        SampleResult = ISNULL((SELECT subSD.SampleResult FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), (SELECT ShortDescription FROM ElementIntMeaning WHERE ElementTypeID=8 AND ElementIntValue=e8.ElementIntID)),
+        FullSampleResult = ISNULL((SELECT subSD.FullSampleResult FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), (SELECT ShortDescription FROM ElementIntMeaning WHERE ElementTypeID=8 AND ElementIntValue=e8.ElementIntID)),
+        SampleResultValue = ISNULL((SELECT subSD.SampleResultValue FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), e8.ElementIntID),
+        SampleClassificationID = (SELECT subSD.SampleClassificationID FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0),
+        SampleClassification = ISNULL((SELECT subSD.SampleClassification FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), e6.ElementIntMeaningDescription),
+        SampleClassificationValue = ISNULL((SELECT subSD.SampleClassificationValue FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), ISNULL((SELECT Value FROM SampleClassification WHERE e6.ElementIntID=SampleClassificationID), 0)),
+        SampleClassificationScore = ISNULL((SELECT subSD.SampleClassificationScore FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0), ISNULL((SELECT Score FROM SampleClassification WHERE e6.ElementIntID=SampleClassificationID), 0)),
+        Notes = (SELECT subSD.Notes FROM @SampleData subSD WHERE subSD.SampleRef=updateSD.SampleRef AND subSD.AsSample=0)
+    FROM
+        @SampleData updateSD
+        LEFT JOIN @ElementData e8 ON updateSD.SampleID=e8.SampleID AND e8.ElementTypeID = 8
+        LEFT JOIN @ElementData e6 ON updateSD.SampleID=e6.SampleID AND e6.ElementTypeID = 6
+    WHERE
+        updateSD.AsSample = 1
+
+    -- Setup the CTEs.
+      ;With SamplesComputed As
+      (
+            Select
+                  s.SampleId,
+                  s.SampleRef,
+                  e2.ElementText [SourceDescription], 
+                  e20.ElementIntMeaningShortDescription [RecommendedAction],
+                  rac.RecommendedActionColour,
+                  CASE WHEN e20.ElementIntMeaningShortDescription = 'No further action required'
+                    THEN 0
+                    Else @RecommendedActionsAllowed + 1 - e20.ElementIntID
+                  END [RecommendedActionSortOrder],
+                  s.SampleResultValue [SampleResult],
+
+                  Case
+                        When Not s.SampleResultValue = -1 Then
+                              '(' + Cast(s.SampleResultValue as varchar(10)) + ') ' +
+                              ISNULL(s.FullSampleResult, '')
+                  End [AsbestosType],
+
+                  Coalesce(sc.Value, sc2.Value, 0) [ClassificationValue],
+                  Coalesce(sc.SampleClassification, e6.ElementIntMeaningShortDescription, e6.ElementIntMeaningLongDescription, '') [Classification],
+                  Case
+                        When sr.Value < 1 Then
+                              0
+                        When Not sc.SampleClassificationID Is Null Then
+                              sc.Score
+                        When Not e6.ElementIntID Is Null Then
+                              e6.ElementIntID
+                        Else
+                              0
+                  End [ClassificationScore],
+
+                  e9.ElementIntID + e10.ElementIntID [MaterialAssessmentScore],
+
+                  IsNull(e11.ElementIntID,0) [OccupantActivity],
+                  IsNull(e12.ElementIntID,0) [LocationScore],
+                  IsNull(e13.ElementIntID,0) [VulnerabilityScore],
+                  IsNull(e14.ElementIntID,0) [QuantityScore],
+                  IsNull(e15.ElementIntID,0) [NoOfOccupants],
+                  IsNull(e16.ElementIntID,0) [FrequencyOfUse],
+                  IsNull(e17.ElementIntID,0) [AverageTimeAreaIsInUse],
+                  IsNull(e18.ElementIntID,0) [TypeOfMaintenance],
+                  IsNull(e19.ElementIntID,0) [FrequencyOfMaintenance],
+                  
+                  s.SampleResultID,
+                  s.SampleClassificationID,
+
+                  Case
+                        When (s.SampleResultValue > 0 Or e5.ElementIntId = 0)  AND (IsNull(e48.ElementIntMeaningID,0)<>121 AND IsNull(e48.ElementIntMeaningID,0)<>126) Then
+                              Case
+                                    When e27.ElementID IS NULL Then
+                                          Case Coalesce(sc.Value,sc2.Value,0)
+                                                      When 0 Then
+                                                            Case e5.ElementIntID
+                                                                  When 0 Then 
+                                                                        -- INACCESSIBLE
+                                                                        Case e22.ElementIntMeaningID
+                                                                              When 113 Then ReviewDates.TwelveMonths
+                                                                        End
+                                                            End
+                                                      When 10 Then ReviewDates.SixMonths
+                                                      When  8 Then ReviewDates.SixMonths
+                                                      When  7 Then ReviewDates.SixMonths
+                                                      When  6 Then ReviewDates.SixMonths
+                                                      Else 
+                                                            ReviewDates.TwelveMonths
+                                          End
+                                    When ISNUMERIC(e27.ElementIntMeaningShortDescription) = 1 Then
+                                          DATEADD(MONTH, CONVERT(int, e27.ElementIntMeaningShortDescription), ReviewDates.RegisterFinish)
+                              End
+                  End [ReviewDate],
+                  
+                  Case
+                        When (s.SampleResultValue > 0 Or e5.ElementIntId = 0) And (IsNull(e48.ElementIntMeaningID,0)<>121 AND IsNull(e48.ElementIntMeaningID,0)<>126) Then
+                              Case IsNull(e24.ElementText, e24.ElementIntMeaningLongDescription)
+                                      When '2 Months' Then ReviewDates.TwoMonths
+                                      When '3 Months' Then ReviewDates.ThreeMonths
+                                      When '6 Months' Then ReviewDates.SixMonths
+                                      Else
+                                          Case
+                                                When IsDate(IsNull(e24.ElementText, e24.ElementIntMeaningLongDescription)) = 1 Then
+                                                      IsNull(e24.ElementText, e24.ElementIntMeaningLongDescription)
+                                          End
+                                    End
+                  End [TimescaleForCompletion],
+
+                  CASE WHEN s.PriorityAssessment = 1 THEN 0 ELSE 1 END [IsMAOnly],
+
+                  LTrim(
+                        Cast(IsNull(e26.ElementText, '') as varchar(Max)) + ' ' +
+                        Cast(IsNull(e3.ElementText, '') as varchar(Max)) + ' ' +
+                        Cast(IsNull(e4.ElementText, '') as varchar(Max))
+                  ) [Quantity],
+                  e31.ElementText [Comments],
+                  Cast(Case When IsNull(e48.ElementIntMeaningId,0) = 121 Then 1 Else 0 End as bit) [Removed]
+            From
+                  @SampleData s
+                  Outer Apply
+                  (
+                        Select
+							CAST(MAX(RegisterFinish) as date) RegisterFinish,							
+                            DateAdd(m,  2, Cast(Max(RegisterFinish) as date)) as TwoMonths,
+                            DateAdd(m,  3, Cast(Max(RegisterFinish) as date)) as ThreeMonths,
+                            DateAdd(m,  6, Cast(Max(RegisterFinish) as date)) as SixMonths,
+                            DateAdd(m, 12, Cast(Max(RegisterFinish) as date)) as TwelveMonths
+                        From @SampleData
+                  ) as ReviewDates
+                  LEFT JOIN SampleResult sr WITH (NOLOCK) On s.SampleResultId = sr.SampleResultId 
+                  LEFT JOIN SampleClassification sc WITH (NOLOCK) On s.SampleClassificationId = sc.SampleClassificationID
+
+                  -- Source Description
+                  LEFT JOIN @ElementData e2 On s.SampleID = e2.SampleID AND e2.ElementTypeID = 2
+
+                  -- Level of Identification
+                  LEFT JOIN @ElementData e5 On s.SampleID = e5.SampleID AND e5.ElementTypeID = 5
+
+                  -- Reinspection State
+                  LEFT JOIN @ElementData e48 On s.SampleID = e48.SampleID AND e48.ElementTypeID = 48
+
+                  -- Date of Next Review Override
+                  LEFT JOIN @ElementData e27 On s.SampleID = e27.SampleID AND e27.ElementTypeID = 27
+
+                  -- Management Option
+                  LEFT JOIN @ElementData e22 On s.SampleID = e22.SampleID AND e22.ElementTypeID = 22
+
+                  -- Timescale for Completion
+                  LEFT JOIN @ElementData e24 On s.SampleID = e24.SampleID AND e24.ElementTypeID = 24
+
+                  -- Asbestos Type
+                  LEFT JOIN @ElementData e8 On s.SampleID = e8.SampleID AND e8.ElementTypeID = 8
+
+                  -- Recommended Action
+                  LEFT JOIN @ElementData e20 On s.SampleID = e20.SampleID AND e20.ElementTypeID = 20
+                  LEFT JOIN RecommendedActionColour rac WITH (NOLOCK) On e20.ElementIntID = rac.ElementIntValue
+
+                  -- Classification Score
+                  LEFT JOIN @ElementData e6 On s.SampleID = e6.SampleID AND e6.ElementTypeID = 6
+                  LEFT JOIN SampleClassification sc2 WITH (NOLOCK) On sc2.Score = e6.ElementIntID And sc2.SampleClassificationId Between 1 And 7
+
+                  -- Quantity
+                  LEFT JOIN @ElementData e26 On s.SampleId = e26.SampleId AND e26.ElementTypeId = 26
+                  LEFT JOIN @ElementData e3 On s.SampleId = e3.SampleId AND  e3.ElementTypeId = 3
+                  LEFT JOIN @ElementData e4 On s.SampleId = e4.SampleId AND  e4.ElementTypeId = 4
+
+                  -- Comments
+                  LEFT JOIN @ElementData e31 On s.SampleId = e31.SampleId AND e31.ElementTypeId = 31
+
+                  LEFT JOIN @ElementData e7 On e7.SampleID = s.SampleID And e7.ElementTypeID = 7
+
+                  -- Material Assessment Score
+                        -- Damage/Detoriation
+                        LEFT JOIN @ElementData e9 On s.SampleID = e9.SampleID AND e9.ElementTypeID = 9
+                        -- Surface Treatment
+                        LEFT JOIN @ElementData e10 On s.SampleID = e10.SampleID AND e10.ElementTypeID = 10
+
+                  -- Priority Assessment Score
+                        -- Occupant Activity
+                        LEFT JOIN @ElementData e11 On s.SampleID = e11.SampleID AND e11.ElementTypeID = 11
+
+                  -- Disturbance Score
+                        -- Location Score
+                        LEFT JOIN @ElementData e12 On s.SampleID = e12.SampleID AND e12.ElementTypeID = 12
+                        -- Vulnerability Score
+                        LEFT JOIN @ElementData e13 On s.SampleID = e13.SampleID AND e13.ElementTypeID = 13
+                        -- Quantity Score
+                        LEFT JOIN @ElementData e14 On s.SampleID = e14.SampleID AND e14.ElementTypeID = 14
+
+                  -- ExposureScore
+                        -- No. of Occupants
+                        LEFT JOIN @ElementData e15 On s.SampleID = e15.SampleID AND e15.ElementTypeID = 15
+                        -- Frequency of Use
+                        LEFT JOIN @ElementData e16 On s.SampleID = e16.SampleID AND e16.ElementTypeID = 16
+                        -- Average Time Area is in Use
+                        LEFT JOIN @ElementData e17 On s.SampleID = e17.SampleID AND e17.ElementTypeID = 17
+
+                  -- MaintenanceScore
+                        -- Type of Maintenance
+                        LEFT JOIN @ElementData e18 On s.SampleID = e18.SampleID AND e18.ElementTypeID = 18
+                        -- Frequency of Maintenance
+                        LEFT JOIN @ElementData e19 On s.SampleID = e19.SampleID AND e19.ElementTypeID = 19
+      ),
+      SamplesComputed2 as
+      (
+            Select
+                  j.JobId,
+                  j.SiteId,
+                  j.ClientId,
+                  SampleId,
+                  SampleRef,
+                  SourceDescription,
+                  Case
+                        When SampleResult = 0 Or Removed = 1 Then
+                              'No further action required'
+                        Else
+                              RecommendedAction
+                  End as RecommendedAction,
+                  Case
+                        When AsbestosType = '(0) no asbestos detected' Or Removed = 1 Then
+                              '92A0F4'
+                        Else
+                              RecommendedActionColour
+                  End as RecommendedActionColour,
+                  Case
+                        When SampleResult = 0 Or Removed = 1 Then
+                              0-- Doesn't matter as we're not using the Rec. Action Sort Order is not used on the portal.
+                        Else
+                              RecommendedActionSortOrder
+                  End as RecommendedActionSortOrder,
+                  Case
+                        When SampleResult <> 0 And Not MaterialAssessmentScore Is Null And Not Removed = 1 Then
+                              Case
+                                    When @CompanyName = 'Environtec' And c.RegisterRowTemplate Is Null Then
+                                          -- MA Score
+                                          MaterialAssessmentScore + 
+                                          SampleResult + 
+                                          ClassificationValue
+                                    Else
+                                          -- MA Score
+                                          MaterialAssessmentScore +
+                                          SampleResult +  
+                                          ClassificationValue
+                              End
+                  End as MaterialAssessmentScore,
+                  Case
+                        When SampleResult <> 0 And Not MaterialAssessmentScore Is Null And Not Removed = 1 AND IsMAOnly = 0 Then
+                              Case
+                                    When @CompanyName = 'Environtec' And c.RegisterRowTemplate Is Null Then                                                  
+                                          -- PA Score
+                                          LocationScore + 
+                                          VulnerabilityScore + 
+                                          QuantityScore +
+                                          NoOfOccupants
+
+                                    When @CompanyName = 'G & L Consultancy Ltd' And @BranchName = 'Northern Ireland' Then
+                                          -- PA Score
+                                          OccupantActivity +
+                                                -- Disturbance Score
+                                                Round(Cast(LocationScore + VulnerabilityScore + QuantityScore as float)/3, 0) +
+                                                -- ExposureScore
+                                                Round(Cast(NoOfOccupants + FrequencyOfUse + AverageTimeAreaIsInUse as float)/3, 0) +
+                                                -- MaintenanceScore
+                                                Round(Cast(TypeOfMaintenance + FrequencyOfMaintenance as float)/2, 0)
+                                    Else
+                                          -- PA Score
+                                          OccupantActivity +
+                                                -- Disturbance Score
+                                                Ceiling(Cast(LocationScore + VulnerabilityScore + QuantityScore as float)/3) +
+                                                -- ExposureScore
+                                                Ceiling(Cast(NoOfOccupants + FrequencyOfUse + AverageTimeAreaIsInUse as float)/3) +
+                                                -- MaintenanceScore
+                                                Ceiling(Cast(TypeOfMaintenance + FrequencyOfMaintenance as float)/2)
+                              End
+                  End as PriorityAssessmentScore,
+                  Case
+                        When SampleResult <> 0 And Not MaterialAssessmentScore Is Null And Not Removed = 1 Then
+                              Case
+                                    When @CompanyName = 'Environtec' And c.RegisterRowTemplate Is Null Then
+                                          -- MA Score
+                                          MaterialAssessmentScore + 
+                                          SampleResult + 
+                                          ClassificationValue +
+
+                                          -- PA Score
+                                          CASE WHEN IsMAOnly = 0
+                                              THEN
+                                                  LocationScore + 
+                                                  VulnerabilityScore + 
+                                                  QuantityScore +
+                                                  NoOfOccupants
+                                              ELSE 0
+                                          END
+
+                                    When @CompanyName = 'G & L Consultancy Ltd' And @BranchName = 'Northern Ireland' Then
+                                          -- MA Score
+                                          MaterialAssessmentScore +
+                                          SampleResult +  
+                                          ClassificationValue +
+
+                                          CASE WHEN IsMAOnly = 0
+                                              THEN
+                                                  -- PA Score
+                                                  OccupantActivity +
+                                                  -- Disturbance Score
+                                                  Round(Cast(LocationScore + VulnerabilityScore + QuantityScore as float)/3, 0) +
+                                                  -- ExposureScore
+                                                  Round(Cast(NoOfOccupants + FrequencyOfUse + AverageTimeAreaIsInUse as float)/3, 0) +
+                                                  -- MaintenanceScore
+                                                  Round(Cast(TypeOfMaintenance + FrequencyOfMaintenance as float)/2, 0)
+                                              ELSE 0
+                                          END
+                                    Else        
+                                          -- MA Score
+                                          MaterialAssessmentScore +
+                                          SampleResult +  
+                                          ClassificationValue +
+
+                                          -- PA Score
+                                          CASE WHEN IsMAOnly = 0
+                                              THEN
+                                                  OccupantActivity +
+                                                  -- Disturbance Score
+                                                  Ceiling(Cast(LocationScore + VulnerabilityScore + QuantityScore as float)/3) +
+                                                  -- ExposureScore
+                                                  Ceiling(Cast(NoOfOccupants + FrequencyOfUse + AverageTimeAreaIsInUse as float)/3) +
+                                                  -- MaintenanceScore
+                                                  Ceiling(Cast(TypeOfMaintenance + FrequencyOfMaintenance as float)/2)
+                                              ELSE 0
+                                          END
+                              End
+                  End as RiskScore,
+                  SampleResult,
+                  AsbestosType,
+                  Classification,
+                  ClassificationScore,
+                  ClassificationValue,
+                  ReviewDate,
+                  TimescaleForCompletion,
+                  IsMAOnly,
+                  Quantity,
+                  Comments,
+                  Removed
+            From
+                  SamplesComputed s WITH (NOLOCK)
+                  Inner Join Job j WITH (NOLOCK) On @JobID = j.JobId
+                  Inner Join Client c WITH (NOLOCK) On j.ClientId = c.ClientId
+      )
+
+      -- Run the main SQL to INSERT the data.
+      INSERT INTO SampleComputedData (ClientId, SiteId, JobId, SampleId, SourceDescription, PriorityAssessmentScore, MaterialAssessmentScore, SampleResult, AsbestosType, Classification, ClassificationScore, ClassificationScoreValue, ReviewDate, TimescaleForCompletion, RecommendedAction, RecommendedActionColour, RecommendedActionSortOrder, RiskScore, RiskScoreGroupId, RiskScoreGroup, RiskScoreGroupColour, RiskScoreSortOrder, IsMAOnly, Quantity, Comments, Removed, DateCreated)
+      Select
+            s.ClientId,
+            s.SiteId,
+            s.JobID,
+            s.SampleID,
+            s.SourceDescription,
+
+            s.PriorityAssessmentScore,
+            s.MaterialAssessmentScore,
+
+            s.SampleResult,
+            s.AsbestosType,
+
+            s.Classification,
+            s.ClassificationScore,
+            s.ClassificationValue,
+            s.ReviewDate,
+            s.TimescaleForCompletion,
+            RecommendedAction,
+            RecommendedActionColour,
+            RecommendedActionSortOrder,
+            s.RiskScore,
+
+            Coalesce(rsbc.RiskScoreGroupId, rsb.RiskScoreGroupId, rsbcMA.RiskScoreGroupId, rsbMA.RiskScoreGroupId) [RiskScoreGroupId],
+            Coalesce(rsbc.ScoreGroup, rsb.ScoreGroup, rsbcMA.ScoreGroup, rsbMA.ScoreGroup) [RiskScoreGroup],
+            Coalesce(rsbc.Colour, rsb.Colour, rsbcMA.Colour, rsbMA.Colour) [RiskScoreGroupColour],
+            Coalesce(rsbc.SortOrder, rsb.SortOrder, rsbcMA.SortOrder, rsbMa.SortOrder) [SortOrder],
+
+            s.IsMAOnly,
+            s.Quantity,
+            s.Comments,
+            s.Removed,
+            GETDATE() [DateCreated]
+      From
+            SamplesComputed2 s
+
+            -- MA & PA with client specific risk.
+            LEFT JOIN RiskScore rsc WITH (NOLOCK) On Cast(s.RiskScore as int) = rsc.RiskScore And rsc.ClientId = s.ClientId And s.IsMAOnly = 0
+            LEFT JOIN RiskScoreGroup rsbc WITH (NOLOCK) On rsc.RiskScoreGroupId = rsbc.RiskScoreGroupId
+
+            -- MA & PA with default specific risk.
+            LEFT JOIN RiskScore rs WITH (NOLOCK) On Cast(s.RiskScore as int) = rs.RiskScore And rs.ClientId Is Null And s.IsMAOnly = 0
+            LEFT JOIN RiskScoreGroup rsb WITH (NOLOCK) On rs.RiskScoreGroupId = rsb.RiskScoreGroupId
+
+            -- MA Only with client specific risk.
+            LEFT JOIN RiskScoreMAOnly rscMA WITH (NOLOCK) On s.MaterialAssessmentScore = rscMA.MaterialAssessmentScore And rscMA.ClientId = s.ClientId And s.IsMAOnly = 1
+            LEFT JOIN RiskScoreGroup rsbcMA WITH (NOLOCK) On rscMA.RiskScoreGroupId = rsbcMA.RiskScoreGroupId
+
+            -- MA Only with default specific risk.
+            LEFT JOIN RiskScoreMAOnly rsMA WITH (NOLOCK) On s.MaterialAssessmentScore = rsMA.MaterialAssessmentScore And rsMA.ClientId Is Null And s.IsMAOnly = 1
+            LEFT JOIN RiskScoreGroup rsbMA WITH (NOLOCK) On rsMA.RiskScoreGroupId = rsbMA.RiskScoreGroupId
+    ORDER BY
+        s.SampleID
+
+
+    SET NOCOUNT OFF;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'V' AND name = 'ResultModifications')
+BEGIN
+    EXEC('CREATE VIEW[dbo].[ResultModifications] AS SELECT 1 GO')
+END
+GO
+
+ALTER View [dbo].[ResultModifications]
+As
+Select
+    s.RegisterItemNo,
+    j.JobID,
+    su.SurveyTypeID,
+    reg.RegisterID,
+    reg.SystemName,
+    reg.BuildingDesignation,
+    reg.Management,
+    reg.PriorityAssessment,
+    f.FloorNumber,
+    r.Number,
+    r.[Description],
+    p.PhotoNo,
+    s.AsSample,
+    s.SampleRef,
+    s.SampleID,
+    s.SampleClassificationID,
+    s.SampleResultID,
+	CASE
+		WHEN s.SampleTypeID != 1 AND s.SampleResultID IS NOT NULL THEN
+			CASE 
+				WHEN s.SampleResultID = 1 THEN 'Negative'
+				ELSE 'Positive'
+			END
+		ELSE sr.FullSampleResult
+	END [LabResult],
+    sce.SampleClassification as LabClassification
+From
+    Job j WITH (NOLOCK)
+    INNER JOIN JobEmployee je WITH (NOLOCK) On j.JobID = je.JobID
+    INNER JOIN Floorplan f WITH (NOLOCK)
+    INNER JOIN Register reg WITH (NOLOCK) On f.RegisterID = reg.RegisterID
+    INNER JOIN Room r WITH (NOLOCK) On f.FloorplanID = r.FloorplanID
+    INNER JOIN [Sample] s WITH (NOLOCK) On r.RoomID = s.RoomID
+    INNER JOIN Survey su WITH (NOLOCK) On reg.SurveyID = su.SurveyID On je.JobEmployeeID = reg.JobEmployeeID
+	LEFT JOIN Photo p WITH (NOLOCK)  On s.PhotoID = p.PhotoID
+    LEFT JOIN SampleResult sr WITH (NOLOCK) On sr.SampleResultID = s.SampleResultID    
+	LEFT JOIN SampleClassificationExtended sce WITH (NOLOCK) ON s.SampleClassificationExtendedID = sce.SampleClassificationExtendedID
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_ProjectJobSheetv2') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[Paged_ProjectJobSheetv2] AS BEGIN SET NOCOUNT ON; END')
+END
+
+GO
+
+ALTER PROCEDURE [dbo].[Paged_ProjectJobSheetv2]
+	@PerPage INT = 15
+	, @CurrentPage INT = 1
+	, @ClientID INT = NULL
+	, @ProjectGroupID INT = NULL
+	, @ProjectID INT = NULL
+	, @SiteID INT = NULL
+	, @Status VARCHAR(24) = ''
+	, @Other VARCHAR(MAX) = ''
+	, @Address VARCHAR(200) = ''
+	, @PhoneCalls INT = NULL
+	, @Letters INT = NULL,
+	@NoAccessAttempts INT = NULL
+/**********************************************************************
+** Overview: Get data for the View Project JobSheet tab - procedurised
+**		to improve performance over previous code + add paging capability
+**
+** PLEASE NOTE: The Change Log has now been removed as this has been added to SQL SVN instead.
+** Please use the latest version from SVN before making changes. Commit the changes when done.
+**********************************************************************/
+AS
+SET ANSI_WARNINGS OFF
+BEGIN
+    SET NOCOUNT ON;
+    
+	-- tidy input variables
+	SELECT @ClientID = NULLIF(@ClientID, 0)
+	SELECT @ProjectGroupID = NULLIF(@ProjectGroupID, 0)
+	SELECT @ProjectID = NULLIF(@ProjectID, 0)
+	SELECT @SiteID = NULLIF(@SiteID, 0)
+	SELECT @Status = NULLIF(@Status, '')
+	SELECT @Other = NULLIF(@Other, '')
+	SELECT @Address = NULLIF(@Address, '')
+	SELECT @PhoneCalls = NULLIF(@PhoneCalls, 0)
+	SELECT @Letters = NULLIF(@Letters, 0)
+	SELECT @NoAccessAttempts = NULLIF(@NoAccessAttempts, 0)
+
+	-- ensure we have at least 1 filter ID (don't want to kill the server!)
+	IF (@ClientID IS NULL) AND (@ProjectGroupID IS NULL) AND (@ProjectID IS NULL) AND (@SiteID IS NULL) BEGIN
+		RAISERROR('No ID values passed to GetProjectJobSheet', 16, 1)
+		RETURN
+	END
+	
+	-- get ProjectIDs into a table to join to, based on @ProjectGroupID AND @ProjectID inputs
+	CREATE TABLE #ProjectIDs (ProjectID INT)
+	IF @ProjectID IS NOT NULL BEGIN
+	
+		INSERT
+			#ProjectIDs
+		SELECT
+			@ProjectID
+			
+	END ELSE BEGIN
+		
+		INSERT
+			#ProjectIDs
+		SELECT
+			ProjectID
+		FROM
+			Project
+		WHERE
+			ProjectGroupId = @ProjectGroupID
+	END
+	
+	-- change #ProjectIDs into a comma separated string of IDs 
+	DECLARE @ProjectIDsString VARCHAR(MAX)
+	SELECT @ProjectIDsString = STUFF 
+	((
+		SELECT ',' + CONVERT(VARCHAR(20), ProjectID)
+		FROM #ProjectIDs
+		FOR XML PATH('')
+	), 1, 1, '')
+
+	SELECT * INTO #ProjectJobSheet FROM ProjectJobSheet WHERE ProjectID IN (SELECT ProjectID FROM #ProjectIDs)
+	
+	-- select from existing ProjectJobSheet view into a temp table
+	CREATE TABLE #JobSheetData (
+		JobSheetDataID INT IDENTITY (1,1) NOT NULL
+		, AppointmentID INT NULL
+		, JobId INT NULL
+		, SurveyTypeId INT NULL
+		, ClientId INT NULL
+		, ProjectId INT NULL
+		, SiteId INT NULL
+		, SurveyCompleted INT NULL
+		, SurveyStillDue INT NULL
+		, Approved INT NULL
+		, SurveyOnTime INT NULL
+		, SurveyOverTime INT NULL
+		, Unscheduled INT NULL
+		, SurveyCompletedRaw NVARCHAR(40) NULL
+		, DueDateRaw NVARCHAR(40) NULL
+		, ApprovedRaw NVARCHAR(40) NULL
+		, SortOrder INT NOT NULL
+		, Samples INT NULL
+		, SampleResults INT NULL
+		, [Status] VARCHAR(24)
+		, Other VARCHAR(MAX)
+		, [Address] VARCHAR(200)
+		, PhoneCalls INT NULL
+		, Letters INT NULL
+		, NoAccessAttempts INT NULL
+		, StatusFilterTypeID INT NULL
+		, StatusFilterType VARCHAR(MAX) NULL
+	)
+	
+	/**************************************************************************************************************************************
+	-- NOTE - We are using dynamic SQL because the WHERE filters are still evaluated even if the parameter to be filtered on IS NULL, which
+	--   causes a hit on performance.  NOT ideal, but performance is more important than tidy code here!
+	**************************************************************************************************************************************/
+	DECLARE @DynamicSQL NVARCHAR(MAX)
+	SELECT @DynamicSQL = 'INSERT
+		#JobSheetData
+	SELECT
+		pjs.AppointmentID
+		, pjs.JobId
+		, pjs.SurveyTypeId
+		, pjs.ClientId
+		, pjs.ProjectId
+		, pjs.SiteId
+		, CASE WHEN NOT SurveyCompleted IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyCompleted
+		, CASE WHEN pjs.[Status] = ''Unscheduled'' OR SortOrder = 3 THEN 0 ELSE 1 END AS SurveyStillDue
+		, CASE WHEN NOT Approved IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS Approved
+		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) <= 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOnTime
+		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) > 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOverTime
+		, CASE WHEN pjs.[Status] = ''Unscheduled'' AND SortOrder <> 3 THEN 1 ELSE 0 END AS Unscheduled
+		, SurveyCompleted
+		, DueDate
+		, Approved
+		, SortOrder
+		, Samples
+		, SampleResults
+		, pjs.[Status]
+		, pjs.Other
+		, pjs.[Address]
+		, [PhoneCalls]
+		, [Letters]
+		, pjs.NoAccessAttempts
+		, s.StatusFilterTypeID
+		, sft.[Status] As StatusFilterType
+	FROM
+		#ProjectJobSheet pjs
+		LEFT JOIN Site s ON pjs.SiteId = s.SiteID
+		LEFT JOIN StatusFilterType sft ON s.StatusFilterTypeID = sft.StatusFilterTypeID
+	WHERE
+		pjs.ProjectID IN (' + @ProjectIDsString + ') '
+
+	-- add default order by
+	SELECT @DynamicSQL = @DynamicSQL + ' ORDER BY SortOrder, JobNo, Address'
+
+	-- execute the SQL
+	EXECUTE sp_executesql @DynamicSQL
+	
+	-- ClientID filter (not applied to view above as extra view filters slow performance)
+	IF @ClientID IS NOT NULL BEGIN
+		DELETE FROM #JobSheetData WHERE ClientID <> @ClientID
+	END
+	
+	-- SiteID filter (not applied to view above as extra view filters slow performance)
+	IF @SiteID IS NOT NULL BEGIN
+		DELETE FROM #JobSheetData WHERE SiteID <> @SiteID
+	END
+
+	-- @PhoneCalls filter (not applied to view above as extra view filters slow performance)
+	IF @PhoneCalls IS NOT NULL BEGIN
+		
+		IF @PhoneCalls > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE PhoneCalls < 4
+		END
+
+		IF @PhoneCalls < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE PhoneCalls <> @PhoneCalls
+		END
+	END
+
+	-- @Letters filter (not applied to view above as extra view filters slow performance)
+	IF @Letters IS NOT NULL BEGIN
+
+		IF @Letters > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE Letters < 4
+		END
+
+		IF @Letters < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE Letters <> @Letters
+		END
+	END
+	
+	-- @NoAccessAttempts filter (not applied to view above as extra view filters slow performance)
+	IF @NoAccessAttempts IS NOT NULL BEGIN
+
+		IF @NoAccessAttempts > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE NoAccessAttempts < 4
+		END
+
+		IF @NoAccessAttempts < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE NoAccessAttempts <> @NoAccessAttempts
+		END
+	END
+
+	-- calculate useful totals
+    DECLARE @SurveysCompleted INT
+    DECLARE @SurveysStillDue INT
+    DECLARE @Approved INT
+    DECLARE @SurveysOnTime INT
+    DECLARE @SurveysOverTime INT
+    DECLARE @UnScheduled INT
+    DECLARE @KPI DECIMAL(12,2)
+    DECLARE @TotalJobs_HasSampleResults INT
+    DECLARE @Approved_HasSampleResults INT
+    DECLARE @TotalRows INT
+    
+	SELECT
+		@SurveysCompleted = ISNULL(SUM(SurveyCompleted), 0)
+		, @SurveysStillDue = ISNULL(SUM(SurveyStillDue), 0) - ISNULL(SUM(SurveyCompleted), 0)
+		, @Approved = ISNULL(SUM(Approved), 0)
+		, @SurveysOnTime = ISNULL(SUM(SurveyOnTime), 0)
+		, @SurveysOverTime = ISNULL(SUM(SurveyOverTime), 0)
+		, @UnScheduled = ISNULL(SUM(UnScheduled), 0)
+		, @KPI = ISNULL(CASE WHEN COUNT(SurveyCompletedRaw) = 0 THEN 0 ELSE ROUND(SUM(CASE WHEN DueDateRaw > SurveyCompletedRaw AND SortOrder <> 3 THEN 1 ELSE 0 END)
+					/ CONVERT(FLOAT,COUNT(SurveyCompletedRaw)), 3) * 100 END, 0)
+		, @TotalRows = COUNT(1)
+	FROM 
+		#JobSheetData
+		
+	SELECT
+		@TotalJobs_HasSampleResults = ISNULL(SUM(CASE WHEN [Status] = 'Unscheduled' OR SortOrder = 3 THEN 0 ELSE 1 END), 0) 
+		, @Approved_HasSampleResults = ISNULL(SUM(CASE WHEN NOT ApprovedRaw IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END), 0)
+	FROM 
+		#JobSheetData
+	WHERE
+		Samples > 0
+		AND Samples = SampleResults
+	
+	-- return paged raw data to front end
+	-- NOTE - @Status, @Other and @Address filters only filter this data, not the count data
+	;WITH Paging AS 
+    ( 
+       SELECT 
+           CAST(CEILING(COUNT(*) OVER(PARTITION BY '') * 1.00 / @PerPage) AS INT) AS Pages
+           , ((ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) - 1) / @PerPage) + 1 AS Page
+           , ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) AS Row_Num
+           , *
+       FROM 
+       (
+			SELECT * FROM #JobSheetData jsd
+			WHERE
+				( (jsd.[Status] = @Status) OR (jsd.[StatusFilterType] = @Status) OR (@Status IS NULL) )
+				AND ( (jsd.Other = @Other) OR (@Other IS NULL) )
+				AND ( (jsd.[Address] = @Address) OR (@Address IS NULL) )
+	   ) a
+    )	
+	SELECT  
+		main.Pages
+		, main.Page
+		, main.Row_Num
+		, pjs.SortOrder
+		, pjs.AppointmentID
+		, pjs.[Status]
+		, pjs.StatusDate
+		, pjs.JobNo
+		, pjs.[Address]
+		, pjs.Postcode
+		, pjs.Contact
+		, pjs.Telephone
+		, pjs.SiteEmail
+		, pjs.JobId
+		, pjs.SurveyTypeId
+		, pjs.AppointmentDate
+		, pjs.DateSiteWorkComplete
+		, pjs.AnalysisComplete
+		, pjs.TotalJobs
+		, pjs.WorkScheduled
+		, pjs.SiteWorkComplete
+		, pjs.Samples
+		, pjs.SampleResults
+		, pjs.[FileName]
+		, pjs.ClientOrderNo
+		, pjs.DateReceived
+		, pjs.UPRN
+		, pjs.SurveyType
+		, pjs.Surveyor
+		, pjs.SurveyStart
+		, pjs.SurveyCompleted
+		, pjs.AnalysisCompleted
+		, pjs.Approved
+		, pjs.ApprovedBy
+		, pjs.DueDate
+		, pjs.NoAccessAttempts
+		, pjs.PhoneCalls
+		, pjs.Letters
+		, (SELECT STUFF(
+			(
+				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
+				FROM SiteContact sc2
+				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 1
+				FOR XML PATH('')
+			), 1, 1, '')) AS PhoneCallSiteContactIDs
+		, (SELECT STUFF(
+			(
+				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
+				FROM SiteContact sc2
+				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 2
+				FOR XML PATH('')
+			), 1, 1, '')) AS LetterSiteContactIDs
+		, pjs.GroupName
+		, pjs.ClientId
+		, pjs.ProjectId
+		, pjs.SiteId
+		, pjs.Other
+		, pjspa.ProjectAppointmentID
+		, pjs.LastNoAccessDate
+		, pjs.LastJobEmployeeDate
+		, pjs.QuoteId
+		, pjs.QuoteDate
+		, pjs.InvoiceDate
+		, main.StatusFilterTypeID
+		, main.StatusFilterType
+    FROM 
+		Paging main
+		INNER JOIN #ProjectJobSheet pjs 
+			ON ISNULL(main.AppointmentID, 0) = ISNULL(pjs.AppointmentID, 0)
+			AND ISNULL(main.JobID, 0) = ISNULL(pjs.JobID, 0)
+			AND ISNULL(main.SurveyTypeID, 0) = ISNULL(pjs.SurveyTypeID, 0)
+			AND ISNULL(main.ClientID, 0) = ISNULL(pjs.ClientID, 0)
+			AND ISNULL(main.ProjectID, 0) = ISNULL(pjs.ProjectID, 0)
+			AND ISNULL(main.SiteID, 0) = ISNULL(pjs.SiteID, 0)
+		LEFT JOIN Appointment pjspa ON pjs.AppointmentID = pjspa.AppointmentID
+    WHERE 
+		main.Row_Num BETWEEN (@CurrentPage - 1) * @PerPage + 1 AND @CurrentPage * @PerPage
+	ORDER BY
+		main.Row_Num
+	
+	-- drop temp tables
+	DROP TABLE #ProjectIDs
+	DROP TABLE #JobSheetData
+	
+	-- return useful counts to front end
+	SELECT
+		@SurveysStillDue AS WorkScheduled
+		, @SurveysStillDue AS SurveysStillDue
+		, @Approved AS Approved
+		, @SurveysOnTime AS SurveysOnTime
+		, @SurveysOverTime AS SurveysOverTime
+		, @UnScheduled AS UnScheduled
+		, @KPI AS KPI
+		, @TotalJobs_HasSampleResults - @Approved_HasSampleResults AS SampleAnalysisComplete
+		--, @SurveysCompleted - @TotalJobs_HasSampleResults - @Approved AS SiteWorkComplete
+		, @TotalRows - @UnScheduled - @SurveysStillDue - @TotalJobs_HasSampleResults + @Approved_HasSampleResults - @Approved AS SiteWorkComplete
+    
+    
+    SET NOCOUNT OFF;
+END
+GO
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 466,'Quote - Legionella Tap Descale',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Report -%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=466)=0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 300,466,'Tap Descale','Tap Descale',GETDATE(),9,4 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=300)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 467,'Report -  Legionella Tap Descale',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Report -%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=467)=0
+Insert into LegionellaType (LegionellaTypeID,Description,TemplateTypeID,LegionellaFrequencyCategoryID,LegionellaAssetCategoryID,LegionellaMonitoring,Deleted) Select 33,'Tap Descale',467,NULL,NULL,1,GETDATE() WHERE (SELECT COUNT(*) FROM LegionellaType WHERE LegionellaTypeID=33)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 468,'Quote -  HSMS renewal',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Quote -%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=468)=0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 301,468,'HSMS renewal','HSMS renewal',GETDATE(),5,10 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=301)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 470,'Quote -  HSMS standard',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Quote -%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=470)=0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 302,470,'HSMS standard','HSMS standard',GETDATE(),5,10 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=302)=0
+
+
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GUID_CreateGUID_ByJob_AllTypes') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[GUID_CreateGUID_ByJob_AllTypes]  AS BEGIN SET NOCOUNT ON; END')
+END
+
+GO
+/*
+	JRH 9/10/2020 Fork of GUID_CreateGUID_ByJob to be used by the reports.asp in classic teams code
+	Run at the end of the process to make sure all the guids are populated 
+	Original does inner join to floorplans and not all reports will have them	
+*/
+ALTER PROCEDURE [dbo].[GUID_CreateGUID_ByJob_AllTypes] 
+      @JobID INT,
+	  @DisablePopulateProcedures INT = 0,
+      @Return INT output
+AS
+BEGIN
+
+
+      SET NOCOUNT ON;
+
+      /*    #######################################
+            Get each register, floorplan, room and sample for a job.
+            #######################################    */   
+      DECLARE @ClientID INT = (Select ClientID FROM Job Where JobID=@JobID)
+      DECLARE @SiteID INT =   (Select SiteID FROM Job Where JobID=@JobID)
+            
+      DECLARE @JobSummary TABLE 
+                  (
+                        JobID INT,RegisterID INT, RegisterGUID VARCHAR(MAX),RegisterCreated DATETIME,
+                        FloorplanID INT, FloorplanGUID VARCHAR(MAX),FloorplanCreated DATETIME,
+                        RoomID INT, RoomGUID VARCHAR(MAX),RoomCreated DATETIME,
+                        SampleID INT, SampleGUID VARCHAR(MAX),SampleCreated DATETIME
+                  )
+      
+      ;with cte_IDList (JobID,RegisterID,FloorplanID,RoomID,SampleID)
+      as
+      (
+            SELECT 
+                  j.JobID,r.RegisterID,fp.FloorplanID,rm.RoomID,s.SampleID
+            FROM Job j
+                  INNER JOIN JobEmployee je ON je.JobID = j.JobID
+                  INNER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
+                  --INNER JOIN Survey su ON su.SurveyID = r.SurveyID
+                  LEFT OUTER JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
+                  INNER JOIN Room rm ON r.RegisterID = rm.RegisterID
+                  INNER JOIN Sample s ON s.RoomID = rm.RoomID
+            WHERE j.JobID = @JobID 
+			--AND (r.GUID IS NULL OR fp.GUID IS NULL OR rm.GUID IS NULL OR s.GUID IS NULL)
+      )
+      
+      Insert into @JobSummary (RegisterID,FloorplanID,RoomID,SampleID) Select ids.RegisterID,ids.FloorplanID,ids.RoomID,ids.SampleID FROM cte_IDList ids
+      
+	  /*    #######################################
+            Creating a UNIQUE GUID based on time and ID of the table level - not possible to get duplicate without a manual update, so no need to test.
+            #######################################    */
+      
+      --    REGISTER GUIDS#########################
+	  Update @JobSummary 
+		Set 
+			RegisterGUID
+				=
+			'SCMG-' + CAST(r.RegisterID as varchar) + '-' +
+                        c.s__ServerCode + '-' + 
+                        r.SystemName + '-' +
+                        tc.TableCode + '-' + 
+                        dbo.FormatGUIDDateTime(GETDATE())
+      FROM 
+			@JobSummary js
+			INNER JOIN Register r WITH (NOLOCK) ON r.RegisterID=js.RegisterID
+			INNER JOIN TableCode tc WITH (NOLOCK) ON TableName = 'Register'
+            CROSS JOIN Config c
+      --    END REGISTER GUIDS#########################
+      
+      --    FLOORPLAN GUIDS#########################
+      Update @JobSummary 
+		Set 
+			FloorplanGUID
+				=
+			'SCMG-' + CAST(fp.FloorplanID as varchar) + '-' +
+                        c.s__ServerCode + '-' + 
+                        r.SystemName + '-' +
+                        tc.TableCode + '-' + 
+                        dbo.FormatGUIDDateTime(GETDATE())
+      FROM 
+			@JobSummary js
+			INNER JOIN Register r WITH (NOLOCK) ON r.RegisterID=js.RegisterID
+			INNER JOIN Floorplan fp WITH (NOLOCK) ON fp.FloorplanID=js.FloorplanID
+			INNER JOIN TableCode tc WITH (NOLOCK) ON TableName = 'Floorplan'
+            CROSS JOIN Config c
+      --    END FLOORPLAN GUIDS#########################
+      
+      --    ROOM GUIDS#########################
+	  Update @JobSummary 
+		Set 
+			RoomGUID
+				=
+			'SCMG-' + CAST(rm.RoomID as varchar) + '-' +
+                        c.s__ServerCode + '-' + 
+                        r.SystemName + '-' +
+                        tc.TableCode + '-' + 
+                        dbo.FormatGUIDDateTime(GETDATE())
+      FROM 
+			@JobSummary js
+			INNER JOIN Register r WITH (NOLOCK) ON r.RegisterID=js.RegisterID
+			INNER JOIN Room rm WITH (NOLOCK) ON rm.RoomID=js.RoomID
+			INNER JOIN TableCode tc WITH (NOLOCK) ON TableName = 'Room'
+            CROSS JOIN Config c
+	  --    END ROOM GUIDS#########################
+      
+      --    SAMPLE GUIDS#########################
+	  Update @JobSummary 
+		Set 
+			SampleGUID
+				=
+			'SCMG-' + CAST(s.SampleID as varchar) + '-' +
+                        c.s__ServerCode + '-' + 
+                        r.SystemName + '-' +
+                        tc.TableCode + '-' + 
+                        dbo.FormatGUIDDateTime(GETDATE())
+      FROM 
+			@JobSummary js
+			INNER JOIN Register r WITH (NOLOCK) ON r.RegisterID=js.RegisterID
+			INNER JOIN Sample s WITH (NOLOCK) ON s.SampleID=js.SampleID
+			INNER JOIN TableCode tc WITH (NOLOCK) ON TableName = 'Sample'
+            CROSS JOIN Config c
+      --    END SAMPLE GUIDS#########################
+      
+      /*    #######################################
+            Update each record updating the GUID with a where clause to make sure the GUID does not exist, keeping a track of the total number of updated rows. This needs to match the record count of those that need updating.
+            #######################################    */   
+      
+      DECLARE @registerUpdated INT = (Select COUNT(DISTINCT RegisterID) FROM @JobSummary) --SELECT @RowsUpdated = @RowsUpdated+@@ROWCOUNT
+      DECLARE @floorplanUpdated INT = (Select COUNT(DISTINCT FloorplanID) FROM @JobSummary) --SELECT @RowsUpdated = @RowsUpdated+@@ROWCOUNT
+      DECLARE @roomUpdated INT = (Select COUNT(DISTINCT RoomID) FROM @JobSummary) --SELECT @RowsUpdated = @RowsUpdated+@@ROWCOUNT
+      DECLARE @sampleUpdated INT = (Select COUNT(DISTINCT SampleID) FROM @JobSummary) --SELECT @RowsUpdated = @RowsUpdated+@@ROWCOUNT
+      DECLARE @UpdatesComplete BIT = 1
+      
+      IF (Select COUNT(*) FROM @JobSummary)=0 BEGIN 
+            Set @Return = 2 
+            Set @UpdatesComplete = 0
+      END
+      
+      IF @UpdatesComplete = 1
+      BEGIN
+            BEGIN TRANSACTION
+                  
+                  --#### UPDATE ACTUAL TABLE RECORDS ####         
+                  UPDATE Register Set GUIDVersion=1,GUID=u.Guid FROM Register INNER JOIN (Select RegisterID,RegisterGUID [Guid] FROM @JobSummary Where RegisterGUID IS NOT NULL GROUP BY RegisterID,RegisterGUID) u ON u.RegisterID=Register.RegisterID
+                  IF @@ROWCOUNT <> @registerUpdated BEGIN Set @UpdatesComplete = 5 END
+                  
+                  UPDATE Floorplan Set GUIDVersion=1,GUID=u.Guid FROM Floorplan INNER JOIN (Select FloorplanID,FloorplanGUID [Guid] FROM @JobSummary Where FloorplanGUID IS NOT NULL GROUP BY FloorplanID,FloorplanGUID) u ON u.FloorplanID=Floorplan.FloorplanID
+                  IF @@ROWCOUNT <> @floorplanUpdated BEGIN Set @UpdatesComplete = 6 END
+                  
+                  UPDATE Room Set GUIDVersion=1,GUID=u.Guid FROM Room INNER JOIN (Select RoomID,RoomGUID [Guid] FROM @JobSummary Where RoomGUID IS NOT NULL GROUP BY RoomID,RoomGUID) u ON u.RoomID=Room.RoomID
+                  IF @@ROWCOUNT <> @roomUpdated BEGIN Set @UpdatesComplete = 7 END
+                  
+                  UPDATE Sample Set GUIDVersion=1,GUID=u.Guid FROM Sample INNER JOIN (Select SampleID,SampleGUID [Guid] FROM @JobSummary Where SampleGUID IS NOT NULL GROUP BY SampleID,SampleGUID) u ON u.SampleID=Sample.SampleID
+                  IF @@ROWCOUNT <> @sampleUpdated BEGIN Set @UpdatesComplete = 8 END
+            
+            IF @UpdatesComplete = 1
+                  BEGIN
+                        COMMIT TRANSACTION
+                        IF (Select COUNT(*) FROM Job Where Approved IS NOT NULL AND JobID=@JobID) > 0 AND @DisablePopulateProcedures = 0 BEGIN
+                              Exec PopulateGuidSamples @ClientId, @SiteId 
+                              Exec CreateSiteSampleResultsOverviewSorting @ClientId, @SiteId
+                        END
+                        Set @Return = 1
+                  END
+            ELSE
+                  BEGIN
+                        ROLLBACK TRANSACTION
+                        Set @Return = 0
+            END
+      END
+  
+      RETURN @Return
+      
+      SET NOCOUNT OFF;
+
+END
+GO
+
+IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='TestExternalIndividual') AND name='LegionellaID') < 1
+BEGIN
+  ALTER TABLE TestExternalIndividual
+      ADD LegionellaID INT NULL
+END
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_QuoteHistory') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[Paged_QuoteHistory] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+
+-- =============================================
+-- Author:        Joe
+-- Create date: 03/09/2015
+-- Description:   Moving 'QuoteHistory' from a view to a stored procedure to increase speed.
+-- In addition the the normal re-factoring, this requires a page number and number of items per page
+-- =============================================
+
+/* NOTE STODD 16/10/2015 - Please ensure this proc and Export_QuoteHistory are synced at all times */
+
+
+ALTER PROCEDURE [dbo].[Paged_QuoteHistory]
+	-- Paging
+	@PerPage INT = 15,
+	@CurrentPage INT = 1,
+
+	-- Standard filters
+	@ClientID INT = 0,
+	@SiteID INT = 0,
+	@ProjectID INT = 0,
+	@QuoteID INT = 0,
+	@EnquiryID INT = 0,
+	@Filter VARCHAR(MAX) = '',
+	@LoggedInEmployeeID INT = 0,
+
+	-- User selected filters
+	@QuoteHistoryFilterAssignedTo INT = 0,
+	@QuoteHistoryFilterQuoteType INT = 0,
+	@QuoteHistoryFilterHideInstaquote INT = 0,
+	@QuoteHistoryFilterQuoteEnquiry VARCHAR(10) = '',
+	@QuoteHistoryFilterCreatedBy int = 0,
+	@FilterStartDate DATETIME = NULL,
+	@FilterEndDate DATETIME = NULL
+	
+AS
+BEGIN
+      SET NOCOUNT ON;
+
+      Set @FilterStartDate = ISNULL(@FilterStartDate,DATEADD(year,-1,GETDATE()))
+      Set @FilterEndDate = ISNULL(@FilterEndDate,DATEADD(month,3,GETDATE()))
+
+	  DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
+	  INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
+	  SELECT
+			c.ClientID,
+			Access.EmployeeRestrictedClientAccessID
+	  FROM
+			Client c
+			OUTER APPLY
+			(
+				SELECT
+					erca.EmployeeRestrictedClientAccessID
+				FROM
+					EmployeeRestrictedClientAccess erca
+				WHERE
+					erca.EmployeeID = @LoggedInEmployeeID
+						AND
+					erca.ClientID = c.ClientID
+			) Access
+	  WHERE
+			c.Restricted = 1
+      
+      DECLARE @FilterSites TABLE (SiteID INT)
+      
+      DECLARE @QuoteHistoryViewID TABLE (ItemID INT, ItemType VARCHAR(3), Created DATETIME)
+
+      DECLARE @QuoteHistoryView TABLE (ItemId INT,Itemtype VARCHAR(3),ItemNo INT, QuoteTypeID INT,QuoteType VARCHAR(MAX),Value MONEY,Created DATETIME, [Status] VARCHAR(MAX),LastNoteCreated VARCHAR(MAX),ClientId INT,ProjectID INT,SiteID INT, [Site] VARCHAR(MAX), [Address] VARCHAR(MAX), Postcode VARCHAR(MAX),Accepted DATETIME, Rejected DATETIME,IsInstaQuote BIT,AssignedEmployeeID INT, StatusText VARCHAR(MAX), isNew INT, DateActioned DATETIME, HasPDF INT, [File] varchar(MAX))
+      
+	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
+		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
+	  BEGIN
+
+		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
+		  Select  q.QuoteID as ItemId, 'Q' as ItemType, q.Created
+		  From
+				Quote q 
+				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
+				Left Outer Join Job j On q.JobId = j.JobId
+				Left Outer Join Client c On c.ClientID = q.ClientID 
+				Left Outer Join Project p On p.ProjectID = q.ProjectID 
+				Left Outer Join Site s On s.SiteID = q.SiteID
+				LEFT OUTER JOIN @FilterSites fs ON s.SiteID=fs.SiteID
+		  Where 
+				(
+					  LEN(@Filter ) = 0
+							OR
+					  (
+							s.Address Like '%' + @Filter + '%'
+								  Or 
+							s.Postcode Like '%' + @Filter + '%'
+								  Or 
+							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
+							Or s.UPRN = @Filter
+					)
+				)
+					  And
+				(Not Accepted Is Null Or Not Rejected Is Null) 
+					AND
+						(
+							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
+								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
+							ELSE
+								1
+							END = 1 
+						)
+					AND
+						(
+							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
+								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
+							ELSE
+								1
+							END = 1 
+						)
+					AND					  
+				(@ProjectID=0 OR q.ProjectID=@ProjectID)
+					  AND
+				(@SiteID=0 OR q.SiteID=@SiteID)
+					  AND
+				(@ClientID=0 OR q.ClientID=@ClientID)
+					  AND
+				(
+					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
+							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
+					  ELSE
+							CASE WHEN
+								  (
+										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN q.EmployeeID = @QuoteHistoryFilterCreatedBy THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
+											Cast(
+												Case When q.ReallyQuickQuote = 1 Then 
+													1
+												Else 
+													0 
+												End as bit) 
+										END = 0
+								  )
+							THEN 1 ELSE 0 END
+					  END = 1
+				)
+					AND
+				q.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+      END
+
+	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='E'
+	  BEGIN
+
+		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
+		  Select enq.EnquiryId,'E' as ItemType, enq.Created    
+		  From
+				Enquiries enq
+		  Where
+				(
+					  LEN(@Filter ) = 0
+							OR
+					  (
+							enq.SiteAddress Like '%' + @Filter + '%'
+								  Or 
+							enq.SitePostcode Like '%' + @Filter + '%'
+								  Or 
+							enq.SiteAddress + ', ' + enq.SitePostcode Like '%' + @Filter + '%'
+							Or enq.SiteUPRN = @Filter
+				)
+				)
+					  And
+				(Not enq.Accepted Is Null Or Not enq.Rejected Is Null) 
+					  And
+				(
+					  Not enq.QuoteId Is Null
+							Or
+					  (
+							enq.QuoteId Is Null
+								  And
+							Not enq.Rejected Is Null
+					  )
+				)
+					  AND
+				(@ProjectID=0)
+					  AND
+				(@SiteID=0 OR enq.SiteID=@SiteID)
+					  AND
+				(@ClientID=0 OR enq.ClientID=@ClientID)
+					  AND
+				(
+					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
+							CASE WHEN @QuoteID = 0 AND @EnquiryID = enq.EnquiryID THEN 1 ELSE 0 END
+					  ELSE
+							CASE WHEN
+								  (
+										enq.Created BETWEEN @FilterStartDate AND @FilterEndDate
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN enq.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN enq.EmployeeID = @QuoteHistoryFilterCreatedBy THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN enq.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
+								  )
+							THEN 1 ELSE 0 END
+					  END = 1
+				)
+					AND
+				enq.ClientId NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+      END
+
+	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
+		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
+	  BEGIN
+
+		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
+		  Select DISTINCT q.QuoteID as ItemId, 'RQV' as ItemType, q.Created
+		  FROM
+				Quote q 
+				INNER JOIN [dbo].[QuoteEmployee] qe ON qe.[QuoteID] = [q].[QuoteID]
+				INNER JOIN [dbo].[QuoteVisit] qv ON qe.[QuoteEmployeeID] = [qv].[QuoteEmployeeID]   
+				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
+				INNER JOIN Appointment a ON a.QuoteID=q.QuoteID AND a.DateDeclined IS NOT NULL
+				OUTER APPLY 
+				(
+					  /*count declined appointments and non declineds, if they have */
+					  SELECT
+							COUNT(*) [ValidAppointments]
+					  FROM
+							[dbo].[Appointment] _app 
+					  WHERE
+							_app.[QuoteID] = [q].[QuoteID]
+								  AND
+							_app.DateDeclined IS NULL
+				) currentCount
+				Left Outer Join Job j On q.JobId = j.JobId
+				Left Outer Join Client c On c.ClientID = q.ClientID 
+				Left Outer Join Project p On p.ProjectID = q.ProjectID 
+				Left Outer Join Site s On s.SiteID = q.SiteID 
+		  Where 
+				(
+					  LEN(@Filter ) = 0
+							OR
+					  (
+							s.Address Like '%' + @Filter + '%'
+								  Or 
+							s.Postcode Like '%' + @Filter + '%'
+								  Or 
+							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
+							Or s.UPRN = @Filter
+					  )
+				)
+					AND
+						(
+							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
+								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
+							ELSE
+								1
+							END = 1 
+						)
+					AND
+						(
+							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
+								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
+							ELSE
+								1
+							END = 1 
+						)
+					AND					
+				currentCount.ValidAppointments=0
+					  AND
+				(@ProjectID=0 OR q.ProjectID=@ProjectID)
+					  AND
+				(@SiteID=0 OR q.SiteID=@SiteID)
+					  AND
+				(@ClientID=0 OR q.ClientID=@ClientID)
+					  AND
+				(
+					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
+							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
+					  ELSE
+							CASE WHEN
+								  (
+										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN q.EmployeeID = @QuoteHistoryFilterCreatedBy THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
+											Cast(
+												Case When q.ReallyQuickQuote = 1 Then 
+													1
+												Else 
+													0 
+												End as bit) 
+										END = 0
+								  )
+							THEN 1 ELSE 0 END
+					  END = 1
+				)
+					AND
+				q.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+      END
+		         
+			DECLARE @TotalRowNumber INT = (Select COUNT(*) [Number] FROM @QuoteHistoryViewID)				 
+				    
+      ;With Paging As 
+    ( 
+        Select 
+
+			CASE WHEN @PerPage = 0 THEN
+				1
+			ELSE
+               Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
+			END As Pages, 
+
+			CASE WHEN @PerPage = 0 THEN
+				1
+			ELSE
+               ((Row_Number() Over(Order By a.Created DESC)-1) / @PerPage)+1
+			END As Page, 
+
+               Row_Number() Over(Order By a.Created DESC) as Row_Num, 
+               *
+               From 
+               (
+                              Select * FROM @QuoteHistoryViewID
+                     ) a
+    )
+    Select  
+			@TotalRowNumber [Row_Total],
+            main.Pages,
+            main.Page,
+            main.Row_Num,
+            main.ItemId,
+            main.Itemtype,
+            ISNULL(e.EnquiryNo,q.QuoteNo) [ItemNo], 
+            ISNULL(e.QuoteTypeID,q.QuoteTypeID) [QuoteTypeID],
+            ISNULL(e.QuoteType,qt.QuoteType) [QuoteType], 
+            q.Value [Value], 
+            main.Created [Created], 
+			CASE
+				WHEN e.QuoteNo IS NOT NULL
+				THEN dbo.FormatTeamsReference('Q', e.QuoteNo)
+			ELSE
+				q.Status
+			END [Status], 
+            ISNULL(e.LastNoteCreated,q.LastNoteCreated) [LastNoteCreated], 
+            ISNULL(e.ClientId,q.ClientID) [ClientId], 
+            IsNull(e.Client + Case When Len(e.ClientBranchName) > 0 Then ' (' + e.ClientBranchName + ')' Else '' End,c.Client + Case When Len(c.BranchName) > 0 Then ' (' + c.BranchName + ')' Else '' End) [Client],
+            q.ProjectID [ProjectID], 
+            p.Project + ' / ' + ISNULL([p].[GroupName],'') [Project], 
+            ISNULL(e.SiteId,q.SiteID) [SiteID], 
+            ISNULL(e.SiteAddress,s.Address) [Site], 
+            ISNULL(e.SiteAddress,s.Address) [Address], 
+            ISNULL(e.SitePostcode,s.Postcode) [Postcode], 
+            ISNULL(e.Accepted,q.Accepted) [Accepted], 
+            ISNULL(e.Rejected,q.Rejected) [Rejected], 
+            Cast(Case When ABS(DateDiff(day, j.Created, q.Created)) = 0 Then Case When ABS(DateDiff(s, j.Created, q.Created)) <= 10 Then 1 Else 0 End ELSE 0 END as bit) [IsInstaQuote], --the deault is 0 i.e. for enquiries
+            ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID) [AssignedEmployeeID], 
+            CASE main.ItemType WHEN 'RTQ' Then 'Discarded' ELSE CASE WHEN IsNull(e.Rejected,q.Rejected) IS NOT NULL THEN COALESCE(e.DiscardReason, q.RejectReason, 'Rejected') ELSE 'Accepted' END END [StatusText], 
+            ISNULL(CASE WHEN IsNull(e.Created,q.Created) > DATEADD(hh,-1,GetDate()) THEN 1 END,0) [isNew], 
+            ISNULL(q.Rejected,CASE WHEN IsNull(e.Accepted,q.Accepted) IS NOT NULL THEN IsNull(e.Accepted,q.Accepted) ELSE IsNull(e.Rejected,q.Rejected) END) [DateActioned], 
+            CASE WHEN main.ItemType = 'Q' THEN CASE WHEN PDFId is not null then 1 ELSE 0 END END [HasPDF], 
+            CASE WHEN main.ItemType = 'Q' THEN pdf.FileName END [File],
+            q.JobID,
+			ISNULL(e.EnquirySource,es.Description) [Source],
+			ISNULL(e.LeadEmployee, qemp.FullName)	[SourceOrigin],
+			CONVERT(BIT, CASE WHEN qt.MethodStatement_TemplateTypeID IS NOT NULL THEN 1 ELSE 0 END) [UseMethodStatement],
+            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN 1 ELSE 0 END as BIT) [HasNotes],
+            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) > DATEADD(hh,-1,GetDate()) THEN 1 ELSE 0 END ELSE 0 END as BIT) [NotesInLastHour],
+			ISNULL(emp.FullName, '') [AssignedTo],
+			q.CurrencyId [CurrencyID],
+			Isnull(ecb.FullName,'Not Recorded') CreatedBy			
+	From 
+            Paging main
+            LEFT OUTER JOIN Enquiries e ON main.ItemID=e.EnquiryID AND main.ItemType='E'
+			LEFT OUTER JOIN Quote q ON main.ItemID=q.QuoteID AND (main.ItemType='Q' OR main.ItemType='RQV')
+			LEFT OUTER JOIN EnquirySource es ON q.EnquirySourceID = es.EnquirySourceID
+			LEFT OUTER JOIN Employee qemp ON q.EnquiryEmployeeID = qemp.EmployeeID
+            LEFT OUTER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
+            LEFT OUTER JOIN Job j On q.JobId = j.JobId
+            LEFT OUTER JOIN Client c On c.ClientID = q.ClientID 
+            LEFT OUTER JOIN Project p On p.ProjectID = q.ProjectID 
+            LEFT OUTER JOIN Site s On s.SiteID = q.SiteID
+            LEFT OUTER JOIN Employee emp ON emp.EmployeeID=ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID)
+			LEFT OUTER JOIN Employee ecb ON ecb.EmployeeID = q.EmployeeID
+            OUTER APPLY
+            (
+                  Select IsNull((Select top 1 Value FROM QuoteValueHistory qvh Where qvh.QuoteID=q.QuoteID AND ((Accepted IS NOT NULL AND q.Accepted IS NOT NULL) OR (Rejected IS NOT NULL AND q.Rejected IS NOT NULL)) Order by CASE WHEN Accepted IS NOT NULL THEN Accepted ELSE Rejected END DESC),q.VALUE) [QuoteHistoryValue]
+            ) qHistory
+            OUTER APPLY
+            (
+                  SELECT TOP 1 [Pdf].[PDFId],[Pdf].[FileName] from Pdf where Pdf.QuoteID = q.QuoteID  and pdf.DateDeleted IS null order BY [Pdf].[DateCreated] DESC    
+            )pdf(PDFId,filename)
+            
+	Where 
+            (main.Row_Num Between (@CurrentPage - 1) * @PerPage + 1 And @CurrentPage * @PerPage) OR (@PerPage=0 AND @CurrentPage=0)
+    Order by
+            main.Row_Num
+      
+    SET NOCOUNT OFF;
+END
+
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_OutstandingQuotes') < 1
+BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[Paged_OutstandingQuotes] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+
+
+-- =============================================
+-- Author:        Joe
+-- Create date: 03/09/2015
+-- Description:   Clone of Paged_QuoteHistory changed to Outstanding to repalce view
+-- =============================================
+
+/* NOTE STODD 16/10/2015 - Please ensure this proc and Export_QuoteHistory are synced at all times */
+
+ALTER PROCEDURE [dbo].[Paged_OutstandingQuotes]
+	-- Paging
+	@PerPage INT = 15,
+	@CurrentPage INT = 1,
+
+	-- Standard filter
+	@ClientID INT = 0,
+	@SiteID INT = 0,
+	@ProjectID INT = 0,
+	@QuoteID INT = 0,
+	@EnquiryID INT = 0,
+	@Filter VARCHAR(MAX) = '',
+	@LoggedInEmployeeID INT = 0,
+
+	-- User selected filters
+	@OutstandingQuotesFilterAssignedTo INT = 0,
+	@OutstandingQuotesFilterCreatedBy INT = 0,
+	@OutstandingQuotesFilterQuoteType INT = 0,	
+	@OutstandingQuotesHideInstaquote INT = 0,	
+	@FilterStartDate DATETIME = NULL,
+	@FilterEndDate DATETIME = NULL
+AS
+BEGIN
+      SET NOCOUNT ON;
+
+      Set @FilterStartDate = ISNULL(@FilterStartDate,DATEADD(year,-1,GETDATE()))
+      Set @FilterEndDate = ISNULL(@FilterEndDate,DATEADD(month,3,GETDATE()))
+
+	  DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
+	  INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
+	  SELECT
+			c.ClientID,
+			Access.EmployeeRestrictedClientAccessID
+	  FROM
+			Client c
+			OUTER APPLY
+			(
+				SELECT
+					erca.EmployeeRestrictedClientAccessID
+				FROM
+					EmployeeRestrictedClientAccess erca
+				WHERE
+					erca.EmployeeID = @LoggedInEmployeeID
+						AND
+					erca.ClientID = c.ClientID
+			) Access
+	  WHERE
+			c.Restricted = 1
+      
+      DECLARE @FilterSites TABLE (SiteID INT)
+      
+      DECLARE @OutstandingQuotesViewID TABLE (ItemID INT, ItemType VARCHAR(3), Created DATETIME)
+
+      DECLARE @OutstandingQuotesView TABLE (ItemId INT,Itemtype VARCHAR(3),ItemNo INT, QuoteTypeID INT,QuoteType VARCHAR(MAX),Value MONEY,Created DATETIME, [Status] VARCHAR(MAX),LastNoteCreated VARCHAR(MAX),ClientId INT,ProjectID INT,SiteID INT, [Site] VARCHAR(MAX), [Address] VARCHAR(MAX), Postcode VARCHAR(MAX),Accepted DATETIME, Rejected DATETIME,IsInstaQuote BIT,AssignedEmployeeID INT, StatusText VARCHAR(MAX), isNew INT, DateActioned DATETIME, HasPDF INT, [File] varchar(MAX), CreatedBy varchar(50))
+      
+  	  Insert into @OutstandingQuotesViewID (ItemID,ItemType,Created)
+	  Select  q.QuoteID as ItemId, 'Q' as ItemType, q.Created
+	  From
+			Quote q 
+			Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
+			Left Outer Join Job j On q.JobId = j.JobId
+			Left Outer Join Client c On c.ClientID = q.ClientID 
+			Left Outer Join Project p On p.ProjectID = q.ProjectID 
+			Left Outer Join Site s On s.SiteID = q.SiteID
+			LEFT OUTER JOIN @FilterSites fs ON s.SiteID=fs.SiteID			
+			OUTER APPLY
+			(
+				SELECT CASE when
+				EXISTS 
+				( 
+		        
+					SELECT 
+						'x'
+					FROM
+						[dbo].[Appointment] [a]
+						INNER JOIN [dbo].[AppointmentType] [at] ON [at].[AppointmentTypeId] = [a].[AppointmentTypeID]
+					WHERE
+						[a].[QuoteID] = [q].[QuoteID]     
+							AND
+						[a].[AppointmentTypeID] = 8
+				)
+				THEN 
+					1
+				ELSE 
+					0
+				END 
+			)isQuoteVisitApointment(val)
+	  Where 
+			(
+				  LEN(@Filter ) = 0
+						OR
+				  (
+						s.Address Like '%' + @Filter + '%'
+							  Or 
+						s.Postcode Like '%' + @Filter + '%'
+							  Or 
+						s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
+						Or s.UPRN = @Filter
+				)
+			)
+				  AND
+			(
+				CASE WHEN qt.QuoteVisitTypeID IS NOT NULL AND [isQuoteVisitApointment].[val] = 1 THEN
+					(Select COUNT(*) FROM QuoteVisit qv INNER JOIN QuoteEmployee qe ON qv.QuoteEmployeeID=qe.QuoteEmployeeID Where qe.QuoteID=q.QuoteID AND qe.EmployeeID>0)
+				ELSE
+					1
+				END = 1
+			)
+				And
+			(Accepted Is Null) 
+				AND
+			(Rejected IS NULL)
+				AND					  
+			(@ProjectID=0 OR q.ProjectID=@ProjectID)
+				  AND
+			(@SiteID=0 OR q.SiteID=@SiteID)
+				  AND
+			(@ClientID=0 OR q.ClientID=@ClientID)
+				  AND
+			(
+				  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
+						CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
+				  ELSE
+						CASE WHEN
+							  (
+									q.Created BETWEEN @FilterStartDate AND @FilterEndDate
+							  )
+									AND
+							  (
+									CASE WHEN @OutstandingQuotesFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @OutstandingQuotesFilterAssignedTo THEN 1 ELSE 0 END END = 1
+							  )
+									AND
+							  (
+									CASE WHEN @OutstandingQuotesFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN q.EmployeeID = @OutstandingQuotesFilterCreatedBy THEN 1 ELSE 0 END END = 1
+							  )
+									AND
+									
+							  (
+									CASE WHEN @OutstandingQuotesFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @OutstandingQuotesFilterQuoteType THEN 1 ELSE 0 END END = 1
+							  )
+									AND
+							  (
+									CASE WHEN @OutstandingQuotesHideInstaquote = 0 THEN 0 ELSE 
+										Cast(
+											Case When q.ReallyQuickQuote = 1 Then 
+												1
+											Else 
+												0 
+											End as bit) 
+									END = 0
+							  )
+						THEN 1 ELSE 0 END
+				  END = 1
+			)
+				AND
+			q.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+      
+	  DECLARE @TotalRowNumber INT = (Select COUNT(*) [Number] FROM @OutstandingQuotesViewID)
+		            
+      ;With Paging As 
+		( 
+			Select 
+
+				CASE WHEN @PerPage = 0 THEN
+					1
+				ELSE
+				   Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
+				END As Pages, 
+
+				CASE WHEN @PerPage = 0 THEN
+					1
+				ELSE
+				   ((Row_Number() Over(Order By a.Created DESC)-1) / @PerPage)+1
+				END As Page, 
+
+				   Row_Number() Over(Order By a.Created DESC) as Row_Num, 
+				   *
+				   From 
+				   (
+						Select * FROM @OutstandingQuotesViewID
+				   ) a
+		)
+	
+    Select  
+			@TotalRowNumber [Row_Total],
+            main.Pages,
+            main.Page,
+            main.Row_Num,
+            main.ItemId,
+            main.Itemtype,
+            ISNULL(e.EnquiryNo,q.QuoteNo) [ItemNo], 
+            ISNULL(e.QuoteTypeID,q.QuoteTypeID) [QuoteTypeID],
+            ISNULL(e.QuoteType,qt.QuoteType) [QuoteType], 
+            q.Value [Value], 
+            main.Created [Created], 
+            ISNULL('Q' + Right('00000'+ Cast(e.QuoteNo as varchar), Case When Len(e.QuoteNo)<=6 Then 6 Else Len(e.QuoteNo) End),q.Status) [Status], 
+            ISNULL(e.LastNoteCreated,q.LastNoteCreated) [LastNoteCreated], 
+            ISNULL(e.ClientId,q.ClientID) [ClientId], 
+            IsNull(e.Client + Case When Len(e.ClientBranchName) > 0 Then ' (' + e.ClientBranchName + ')' Else '' End,c.Client + Case When Len(c.BranchName) > 0 Then ' (' + c.BranchName + ')' Else '' End) [Client],
+            q.ProjectID [ProjectID], 
+            p.Project + ' / ' + ISNULL([p].[GroupName],'') [Project], 
+            ISNULL(e.SiteId,q.SiteID) [SiteID], 
+            ISNULL(e.SiteAddress,s.Address) [Site], 
+            ISNULL(e.SiteAddress,s.Address) [Address], 
+            ISNULL(e.SitePostcode,s.Postcode) [Postcode], 
+            ISNULL(e.SiteUPRN,s.UPRN) [UPRN], 
+            ISNULL(e.Accepted,q.Accepted) [Accepted], 
+            ISNULL(e.Rejected,q.Rejected) [Rejected], 
+            Cast(Case When ABS(DateDiff(day, j.Created, q.Created)) = 0 Then Case When ABS(DateDiff(s, j.Created, q.Created)) <= 10 Then 1 Else 0 End ELSE 0 END as bit) [IsInstaQuote], --the deault is 0 i.e. for enquiries
+            ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID) [AssignedEmployeeID], 
+            CASE main.ItemType WHEN 'RTQ' Then 'Discarded' ELSE CASE WHEN IsNull(e.Rejected,q.Rejected) IS NOT NULL THEN 'Rejected' ELSE 'Accepted' END END [StatusText], 
+            ISNULL(CASE WHEN IsNull(e.Created,q.Created) > DATEADD(hh,-1,GetDate()) THEN 1 END,0) [isNew], 
+            ISNULL(q.Rejected,CASE WHEN IsNull(e.Accepted,q.Accepted) IS NOT NULL THEN IsNull(e.Accepted,q.Accepted) ELSE IsNull(e.Rejected,q.Rejected) END) [DateActioned], 
+            CAST(CASE WHEN main.ItemType = 'Q' THEN CASE WHEN PDFId is not null then 1 ELSE 0 END END as BIT) [HasPDF], 
+            CASE WHEN main.ItemType = 'Q' THEN pdf.FileName END [File],
+            q.JobID,
+            q.ReminderDate [ReminderDate],
+            CONVERT(BIT, CASE WHEN qt.MethodStatement_TemplateTypeID IS NOT NULL THEN 1 ELSE 0 END) [UseMethodStatement],
+            CAST(ISNULL(s.SiteID,bQuoteHasSite.[Count]) as BIT) [bQuoteHasSite],
+            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN 1 ELSE 0 END as BIT) [HasNotes],
+            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) > DATEADD(hh,-1,GetDate()) THEN 1 ELSE 0 END ELSE 0 END as BIT) [NotesInLastHour],
+			ISNULL(emp.FullName, '') [AssignedTo],
+			q.CurrencyId [CurrencyID],
+			ISNULL(ecb.FullName,'Not Recorded') as CreatedBy 
+    From 
+            Paging main
+
+            LEFT OUTER JOIN Enquiries e ON main.ItemID=e.EnquiryID AND main.ItemType='E'
+            
+            LEFT OUTER JOIN Quote q ON main.ItemID=q.QuoteID AND (main.ItemType='Q' OR main.ItemType='RQV')
+            LEFT OUTER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
+            LEFT OUTER JOIN Job j On q.JobId = j.JobId
+            LEFT OUTER JOIN Client c On c.ClientID = q.ClientID 
+            LEFT OUTER JOIN Project p On p.ProjectID = q.ProjectID 
+            LEFT OUTER JOIN Site s On s.SiteID = q.SiteID
+            LEFT OUTER JOIN Employee emp ON emp.EmployeeID=ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID)
+			LEFT OUTER JOIN Employee ecb ON ecb.EmployeeID = q.EmployeeID
+            
+            OUTER APPLY
+            (
+                  Select IsNull((Select top 1 Value FROM QuoteValueHistory qvh Where qvh.QuoteID=q.QuoteID AND ((Accepted IS NOT NULL AND q.Accepted IS NOT NULL) OR (Rejected IS NOT NULL AND q.Rejected IS NOT NULL)) Order by CASE WHEN Accepted IS NOT NULL THEN Accepted ELSE Rejected END DESC),q.VALUE) [QuoteHistoryValue]
+            ) qHistory
+            OUTER APPLY
+            (
+                  SELECT TOP 1 [Pdf].[PDFId],[Pdf].[FileName] from Pdf where Pdf.QuoteID = q.QuoteID  and pdf.DateDeleted IS null AND [FileName] Not  Like '%ra%'  order BY [Pdf].[DateCreated] DESC    
+            )pdf(PDFId,filename)
+            OUTER APPLY
+            (
+				Select COUNT(*) [Count] FROM ProjectSite Where ProjectID=p.ProjectID
+            ) bQuoteHasSite
+	Where 
+            (main.Row_Num Between (@CurrentPage - 1) * @PerPage + 1 And @CurrentPage * @PerPage) OR (@PerPage=0 AND @CurrentPage=0)
+    Order by
+            main.Row_Num
+      
+    SET NOCOUNT OFF;
+END
+GO
+
+IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='StandardProcedure') AND name='DownloadToSurveyingApp') < 1
+BEGIN
+  ALTER TABLE StandardProcedure
+      ADD DownloadToSurveyingApp BIT NOT NULL DEFAULT(1)
+END
+GO
+
+IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='StandardProcedure') AND name='DownloadToAirApp') < 1
+BEGIN
+  ALTER TABLE StandardProcedure
+      ADD DownloadToAirApp BIT NOT NULL DEFAULT(1)
+END
+GO
+
+IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='StandardProcedure') AND name='DownloadToLegionellaApp') < 1
+BEGIN
+  ALTER TABLE StandardProcedure
+      ADD DownloadToLegionellaApp BIT NOT NULL DEFAULT(1)
+END
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'TEAMS_LegionellaWorkInProgressGrid') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[TEAMS_LegionellaWorkInProgressGrid] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+ALTER PROCEDURE [dbo].[TEAMS_LegionellaWorkInProgressGrid]
+	-- Paging
+    @PerPage INT = 30,
+    @CurrentPage INT = 1,
+
+	-- Standard filters
+    @ClientID INT = 0,
+    @SiteID INT = 0,
+    @ProjectID INT = 0,
+	@Filter VARCHAR(MAX) = '', -- Text entered in search box (part of address, postcode etc.)
+	@JobID INT = 0,
+	@JobNo VARCHAR(MAX) = '',
+	@LoggedInEmployeeID INT = 0,
+
+	-- User selected filters
+    @FilterFromDate DATETIME = NULL,
+    @FilterToDate DATETIME = NULL,
+    @EmployeeId INT = 0,
+	@WorkTypeId INT = 0,
+	@BranchId INT = 0, -- (0 = all)
+	@Accessibility INT = 0,-- (0=all, 1=accessible, 2=not accessible)
+	@OrgStateId INT = NULL, -- (NULL=all), 0 = Queued
+	@ExcludeClientId INT = 0 -- (0=don't exclude any)
+AS
+BEGIN
+	SET NOCOUNT ON;
+	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+	Set @FilterFromDate = ISNULL(@FilterFromDate, DATEADD(year, -1, GETDATE())) -- 1 year ago
+    Set @FilterToDate = ISNULL(@FilterToDate, DATEADD(month, 3, GETDATE())) -- 3 months time
+
+	DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
+	INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
+	SELECT
+		c.ClientID,
+		Access.EmployeeRestrictedClientAccessID
+	FROM
+		Client c
+		OUTER APPLY
+		(
+			SELECT
+				*
+			FROM
+				EmployeeRestrictedClientAccess erca
+			WHERE
+				erca.EmployeeID = @LoggedInEmployeeID
+					AND
+				erca.ClientID = c.ClientID
+		) Access
+	WHERE
+		c.Restricted = 1
+
+	-- Get all of the required data from dgLegionellaNew and dgLegionellaWip in to one table so that we can apply our filters later on in one go instead of seperately on each view
+	--DECLARE @LegionellaWIPView TABLE (IndexID INT IDENTITY(1,1), RowNo INT, JobID INT, TypeID INT, Type VARCHAR(MAX), JobNo VARCHAR(10), Start DATETIME, Finish DATETIME, MonitoringSchedule DATETIME, Due DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, Site VARCHAR(MAX), Report BIT, Photos BIT, Plans BIT, Documents BIT, DateApproved DATETIME, HasNotes INT, NotesInLastHour INT, NewGrid INT, Status VARCHAR(MAX), OrgState VARCHAR(MAX), PDF BIT, EmployeeID INT, FullName VARCHAR(MAX), ProjectID INT, LegionellaID INT, NoAccessID INT, naCreated DATETIME, NoAccess BIT)
+
+	--INSERT INTO @LegionellaWIPView
+	Select
+		ROW_NUMBER() OVER (PARTITION BY j.JobID ORDER BY MAX(l.LegionellaFinish) DESC) [RowNo],
+		j.JobID,
+		lt.LegionellaTypeID [TypeID],
+		lt.Description [Type],
+		'J' + RIGHT('000000' + CONVERT(VARCHAR(MAX),j.jobno),6) [JobNo],
+		MIN(l.LegionellaStart) [Start],
+		MAX(l.LegionellaFinish) [Finish],
+		MAX(l.MonitoringSchedule) [MonitoringSchedule],
+		MAX(al.DueDate) [Due],
+		c.ClientID,
+		c.Client + IsNull(' (' + NULLIF(c.BranchName,'') + ')','') [Client],
+		s.SiteID,
+		s.Address [Site],
+		CAST(CASE WHEN leginfo.ReportInformationID IS NULL THEN 0 ELSE 1 END as bit) [Report],
+		CAST(CASE WHEN p.PhotoID IS NOT NULL THEN 1 ELSE 0 END as BIT) [Photos],
+		CAST(CASE WHEN fp.FloorplanID IS NOT NULL THEN 1 ELSE 0 END as BIT) [Plans],
+		CAST(CASE WHEN MIN(lsd.LegionellaSupportingDocumentId) IS NOT NULL THEN 1 ELSE 0 END as BIT) [Documents],
+		l.DateApproved,
+		0 [HasNotes],
+		0 [NotesInLastHour],
+		1 [NewGrid],
+		j.Status [Status],
+		org.State [OrgState],
+		CAST(CASE WHEN pf.PDFId IS NOT NULL THEN 1 ELSE 0 END as BIT) [PDF],
+		je.EmployeeID [EmployeeID],
+		e.FullName [FullName],
+		j.ProjectID,		
+		l.legionellaID,
+		na.NoAccessID,
+		na.Created [naCreated],
+		CAST(CASE WHEN na.NoAccessID IS NOT NULL AND na.Created >= ISNULL(CASE WHEN lt.LegionellaTypeID IS NOT NULL AND l.LegionellaID IS NOT NULL THEN l.LegionellaFinish END,na.Created) THEN 1 ELSE 0 END as BIT) [NoAccess]
+	into 
+		#LegionellaWIPView
+	FROM
+		Job j WITH (NOLOCK)
+		INNER JOIN Client c WITH (NOLOCK) ON j.ClientID=c.ClientID
+		INNER JOIN Site s WITH (NOLOCK) ON j.SiteID=s.SiteID
+		INNER JOIN Quote q WITH (NOLOCK) ON j.JobID = q.JobID
+		INNER JOIN Appointment a WITH (NOLOCK) ON a.QuoteID=q.QuoteID
+		INNER JOIN AppointmentLegionella al WITH (NOLOCK) ON al.AppointmentID = a.AppointmentID
+		INNER JOIN LegionellaType lt WITH (NOLOCK) ON lt.LegionellaTypeID = al.LegionellaTypeID
+		LEFT JOIN JobEmployee je WITH (NOLOCK) ON j.JobID=je.JobID
+		LEFT JOIN Employee e WITH (NOLOCK) ON je.EmployeeID = e.EmployeeID
+		LEFT JOIN Legionella l WITH (NOLOCK) ON l.JobEmployeeID=je.JobEmployeeID AND l.DateApproved IS NULL
+		LEFT JOIN NoAccess na WITH (NOLOCK) ON na.JobID = j.JobID
+		OUTER APPLY
+		(
+			SELECT TOP 1
+				l.ReportInformationID
+			FROM
+				Job _j
+				INNER JOIN JobEmployee je ON j.JobID = je.JobID
+				INNER JOIN Legionella l ON je.JobEmployeeID = l.JobEmployeeID
+			WHERE
+				_j.JobID = j.JobId
+			ORDER BY
+				l.ReportInformationID
+		) legInfo
+		LEFT OUTER JOIN Floorplan fp WITH (NOLOCK) ON fp.LegionellaID=l.LegionellaID AND (fp.AutocadDataContentType IS NOT NULL OR fp.FloorplanDataContentType IS NOT NULL)
+		LEFT OUTER JOIN LegionellaSupportingDocument lsd WITH (NOLOCK) ON lsd.LegionellaID=l.LegionellaID
+		LEFT OUTER JOIN Photo p WITH (NOLOCK) ON p.PhotoID=l.PhotoID
+		LEFT OUTER JOIN PDF pf WITH (NOLOCK) ON pf.JobId=j.JobID AND pf.DateDeleted IS NULL
+		LEFT JOIN OfflineReportGeneration org WITH (NOLOCK) ON org.JobID = j.JobID AND org.Completed IS NULL
+	Where
+		a.DateDeclined IS NULL
+			AND
+		j.Approved IS NULL
+			AND
+		(CASE WHEN @FilterFromDate IS NULL OR @FilterToDate IS NULL THEN 1 ELSE CASE WHEN al.DueDate BETWEEN @FilterFromDate AND @FilterToDate THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @JobID = 0 THEN 1 ELSE CASE WHEN j.JobID = @JobID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ClientID = 0 THEN 1 ELSE CASE WHEN c.ClientID = @ClientID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @SiteID = 0 THEN 1 ELSE CASE WHEN s.SiteID = @SiteID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ProjectID = 0 THEN 1 ELSE CASE WHEN j.ProjectID = @ProjectID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @JobNo IS NULL OR LTRIM(RTRIM(@JobNo)) = '' THEN 1 ELSE CASE WHEN j.JobNo = @JobNo THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @EmployeeID = 0 THEN 1 ELSE CASE WHEN je.EmployeeID = @EmployeeID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @WorkTypeID = 0 THEN 1 ELSE CASE WHEN lt.LegionellaTypeID = @WorkTypeID THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @BranchId = 0 THEN 1 ELSE CASE WHEN j.BranchOfficeID = @BranchId THEN 1 ELSE 0 END END = 1)
+			AND
+		(CASE WHEN @ExcludeClientId = 0 THEN 1 ELSE CASE WHEN j.ClientID != @ExcludeClientId THEN 1 ELSE 0 END END = 1)
+	GROUP BY
+		j.JobID,
+		lt.LegionellaTypeID,
+		lt.Description,
+		j.JobNo,
+		c.ClientID,
+		c.Client,
+		c.BranchName,
+		s.SiteID,
+		s.Address,
+		l.DateApproved,
+		j.Status,
+		je.EmployeeID,
+		e.FullName,
+		org.State,
+		CAST(CASE WHEN pf.PDFId IS NOT NULL THEN 1 ELSE 0 END as BIT),
+		fp.FloorplanID,
+		p.PhotoID,
+		leginfo.ReportInformationID,
+		j.ProjectID,
+		l.LegionellaID,
+		na.NoAccessID,
+		na.Created,
+		CAST(CASE WHEN na.NoAccessID IS NOT NULL AND na.Created >= ISNULL(CASE WHEN lt.LegionellaTypeID IS NOT NULL AND l.LegionellaID IS NOT NULL THEN l.LegionellaFinish END,na.Created) THEN 1 ELSE 0 END as BIT)
+
+	--Apply our filters
+	--DECLARE @LegionellaWIPTopLevel TABLE (IndexID INT IDENTITY(1,1), JobID INT, TypeID INT, ReportType VARCHAR(MAX), JobNo VARCHAR(10), Start DATETIME, Finish DATETIME, MonitoringSchedule DATETIME, Due DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, Site VARCHAR(MAX), Report BIT, Photos BIT, Plans BIT, Documents BIT, DateApproved DATETIME, HasNotes INT, NotesInLastHour INT, NewGrid INT, Status VARCHAR(MAX), OrgState VARCHAR(MAX), PDF BIT, EmployeeID INT, FullName VARCHAR(MAX), ProjectID INT, BranchOfficeID INT, UPRN VARCHAR(MAX), LegionellaID INT, NoAccessID INT, naCreated DATETIME, NoAccess BIT)
+	--select * into #LegionellaWIPTopLevel from @LegionellaWIPTopLevel
+	--INSERT INTO #LegionellaWIPTopLevel (JobID, TypeID, ReportType, JobNo, Start, Finish, MonitoringSchedule, Due, ClientID, Client, SiteID, Site, Report, Photos, Plans, Documents, DateApproved, HasNotes, NotesInLastHour, NewGrid, Status, OrgState, PDF, EmployeeID, FullName, ProjectID, BranchOfficeID, UPRN, LegionellaID, NoAccessID, naCreated, NoAccess)	
+	SELECT		
+		cast(row_number() OVER (PARTITION BY (select null) order by Due asc,Finish desc) as Int) as IndexId,
+		lwipv.JobID as JobId,
+		lwipv.TypeID,
+		lwipv.Type ReportType,
+		lwipv.JobNo,
+		lwipv.Start,
+		lwipv.Finish,
+		lwipv.MonitoringSchedule,
+		lwipv.Due,
+		lwipv.ClientID,
+		lwipv.Client,
+		lwipv.SiteID,
+		--lwipv.Site,
+		si.Address + ', ' + si.Postcode [Site],
+		lwipv.Report,
+		lwipv.Photos,
+		lwipv.Plans,
+		lwipv.Documents,
+		lwipv.DateApproved,
+		lwipv.HasNotes,
+		lwipv.NotesInLastHour,
+		lwipv.NewGrid,
+		lwipv.Status,
+		lwipv.OrgState,
+		lwipv.PDF,
+		lwipv.EmployeeID,
+		lwipv.FullName,
+		lwipv.ProjectID,
+		j.BranchOfficeID,
+		si.UPRN,
+		lwipv.LegionellaID,
+		lwipv.NoAccessID,
+		lwipv.naCreated,
+		lwipv.NoAccess		
+	into 
+		#LegionellaWIPTopLevel
+	FROM
+		#LegionellaWIPView lwipv
+		INNER JOIN Job j ON lwipv.JobID = j.JobID
+		INNER JOIN Site si ON lwipv.SiteID = si.SiteID
+		LEFT JOIN orgInstruction o ON lwipv.JobID = o.JobID
+	WHERE
+		lwipv.RowNo = 1
+			AND		
+		(
+			CASE
+				WHEN LEN(@Filter ) = 0 
+				THEN 1 
+				ELSE 
+					CASE 
+						WHEN
+						(
+							lwipv.Site Like '%' + @Filter + '%'
+						) 
+						THEN 1 
+						ELSE 0 
+					END
+			END = 1
+		)
+			AND
+		(
+			CASE WHEN @Accessibility = 0 THEN
+				CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN 
+					CASE WHEN lwipv.DateApproved  IS NULL OR j.Approved IS NULL THEN 
+						1 
+					ELSE 
+						0 
+					END 
+				ELSE 
+					CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) AND j.Approved IS NULL THEN 
+						1
+					ELSE 
+						0
+					END 
+				END
+			ELSE
+				CASE WHEN @Accessibility = 1 THEN
+					CASE WHEN lwipv.DateApproved IS NULL OR j.Approved IS NULL THEN 
+						CASE WHEN lwipv.LegionellaID IS NOT NULL AND CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) THEN 0 ELSE 1 END = 1 THEN 
+							1 
+						ELSE 
+							0 
+						END
+					ELSE 
+						0
+					END
+				ELSE
+					CASE WHEN lwipv.NoAccessID IS NOT NULL AND lwipv.naCreated >= ISNULL(CASE WHEN lwipv.TypeID IS NOT NULL AND lwipv.LegionellaID IS NOT NULL THEN lwipv.Finish END,lwipv.naCreated) THEN 1 ELSE 0 END
+				END
+			End = 1
+		)
+			AND
+		(
+			CASE WHEN @OrgStateId IS NULL THEN 
+				1 
+			ELSE 
+				CASE @OrgStateId
+					WHEN 100 THEN
+						Case When j.RejectedBySurveyor = 1 Then 1 ELSE 0 END
+					WHEN 101 THEN
+						CASE When j.RejectedByQC = 1 Then 1 ELSE 0 END
+					WHEN 201 THEN
+						Case When
+						   lwipv.DateApproved IS NOT NULL -- Office Approved
+								  And 
+						   o.orgStateID = 6 -- Preview Generation Succeeded
+						Then 1 Else 0
+						End
+					WHEN 202 THEN
+						CASE When o.orgInstructionID IS NULL Then 1 ELSE 0 END
+					ELSE
+						CASE WHEN o.orgStateID=@OrgStateId THEN 
+							CASE WHEN @OrgStateId = 6 THEN
+								CASE WHEN
+									j.RejectedBySurveyor = 0 
+										AND 
+									j.RejectedByQC = 0
+								THEN 1 ELSE 0 END
+							ELSE 1 END
+						ELSE 0 END
+				END
+			END = 1
+		)
+			AND
+		j.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+		GROUP BY
+			lwipv.JobID, lwipv.TypeID, lwipv.Type, lwipv.JobNo, lwipv.Start, lwipv.Finish, lwipv.MonitoringSchedule, lwipv.Due, lwipv.ClientID,
+			lwipv.Client, lwipv.SiteID, si.Address, si.Postcode, lwipv.Report, lwipv.Photos,lwipv.Plans, lwipv.Documents, lwipv.DateApproved, lwipv.HasNotes,
+			lwipv.NotesInLastHour, lwipv.NewGrid, lwipv.Status, lwipv.OrgState, lwipv.PDF, lwipv.EmployeeID, lwipv.FullName, lwipv.ProjectID, j.BranchOfficeID,
+			si.UPRN, lwipv.LegionellaID, lwipv.NoAccessId, lwipv.naCreated, lwipv.NoAccess
+			
+			declare @RowTotal as int
+			select @RowTotal = count(*) from #LegionellaWIPTopLevel
+
+	;With Paging As 
+    ( 
+        Select 
+            CASE WHEN @PerPage = 0 THEN
+                1
+            ELSE
+                Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
+            END As Pages, 
+
+            CASE WHEN @PerPage = 0 THEN
+                1
+            ELSE
+                Cast(((Row_Number() Over(Order By a.DateApproved DESC)-1) / @PerPage)+1 as int)
+            END As Page, 
+
+            Row_Number() Over(Order By a.DateApproved DESC) as Row_Num, 
+			
+			@RowTotal as RowTotal,
+            *
+        From 
+			(
+				Select * FROM #LegionellaWIPTopLevel 
+			) a
+	)
+
+SELECT 
+		IndexId,
+		JobID,
+		TypeID,
+		ReportType,
+		JobNo,
+		Start,
+		Finish,
+		MonitoringSchedule,
+		Due,
+		ClientID,
+		Client,
+		SiteID,
+		Site,
+		Report,
+		Photos,
+		Plans,
+		Documents,
+		DateApproved,
+		HasNotes,
+		NotesInLastHour,
+		NewGrid,
+		STATUS,
+		OrgState,
+		PDF,
+		EmployeeID,
+		FullName,
+		ProjectID,
+		BranchOfficeID,
+		UPRN,
+		LegionellaID,
+		NoAccessID,
+		naCreated,
+		NoAccess,
+		[Pages],
+		[Page]
+FROM 
+	Paging 
+where
+	[Page] = @CurrentPage
+
+	SET NOCOUNT OFF;
+END
+GO
+
+

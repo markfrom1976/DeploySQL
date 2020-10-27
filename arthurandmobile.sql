@@ -8173,7 +8173,7 @@ AS
 BEGIN
 	SET NOCOUNT ON;	
 	
-	IF (SELECT COUNT(*) FROM Config WHERE s__CompanyName = 'TEAMS DEMO COMPANY') = 1 BEGIN 
+	IF (SELECT COUNT(*) FROM Config WHERE s__CompanyName = 'TEAMS DEMO COMPANY' OR s__CompanyName = 'App Review Demo Company') = 1 BEGIN 
 		UPDATE Config SET s__EnableMobileLicensing = DATEADD(dd,2,GETDATE())
 	END
 
@@ -8360,7 +8360,7 @@ BEGIN
 		SET @Authorised = 1
 	END
 	
-	IF (SELECT COUNT(*) FROM Config WHERE s__CompanyName = 'TEAMS DEMO COMPANY') = 1 BEGIN 
+	IF (SELECT COUNT(*) FROM Config WHERE s__CompanyName = 'TEAMS DEMO COMPANY' OR s__CompanyName = 'App Review Demo Company') = 1 BEGIN 
 		UPDATE Config SET s__EnableMobileLicensing = DATEADD(dd,2,GETDATE())
 	END
 	
@@ -8374,7 +8374,6 @@ BEGIN
 	SET NOCOUNT OFF;
 	
 END
-
 GO
 
 USE [TEAMS]
@@ -15133,7 +15132,7 @@ BEGIN
   END
   
   IF @StartTableNumber IS NULL OR (@StartTableNumber >= 23 AND @StartTableNumber <= 27) BEGIN
-  DECLARE @RiskElementTypeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [RiskElementTypeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[Description|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[ResultThreshold|INTEGER|NOTNULL||] INT NOT NULL DEFAULT ((6)),[RiskSeverity|INTEGER|NOTNULL||] INT NOT NULL ,[ControlMethod|VARCHAR|NULL||] VARCHAR(MAX) NULL )     INSERT INTO @RiskElementTypeTable ([SQLTableName|NVARCHAR|NOTNULL||], [RiskElementTypeID|INTEGER|NOTNULL||SERVERKEY],[Description|VARCHAR|NOTNULL||],[ResultThreshold|INTEGER|NOTNULL||],[RiskSeverity|INTEGER|NOTNULL||],[ControlMethod|VARCHAR|NULL||])      Select 'RiskElementType' AS [SQLTableName|NVARCHAR|NOTNULL||], [RiskElementTypeID],[Description],[ResultThreshold],[RiskSeverity],[ControlMethod] FROM RiskElementType WHERE Deleted IS NULL       SELECT 'RiskElementType' AS [SQLTableName|NVARCHAR|NOTNULL||], [RiskElementTypeID|INTEGER|NOTNULL||SERVERKEY],[Description|VARCHAR|NOTNULL||],[ResultThreshold|INTEGER|NOTNULL||],[RiskSeverity|INTEGER|NOTNULL||],[ControlMethod|VARCHAR|NULL||] FROM @RiskElementTypeTable
+  DECLARE @RiskElementTypeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [RiskElementTypeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[Description|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[ResultThreshold|INTEGER|NOTNULL||] INT NOT NULL DEFAULT ((6)),[RiskSeverity|INTEGER|NOTNULL||] INT NOT NULL ,[ControlMethod|VARCHAR|NULL||] VARCHAR(MAX) NULL, [Deleted|DATETIME|NULL||] DATETIME NULL)     INSERT INTO @RiskElementTypeTable ([SQLTableName|NVARCHAR|NOTNULL||], [RiskElementTypeID|INTEGER|NOTNULL||SERVERKEY],[Description|VARCHAR|NOTNULL||],[ResultThreshold|INTEGER|NOTNULL||],[RiskSeverity|INTEGER|NOTNULL||],[ControlMethod|VARCHAR|NULL||],[Deleted|DATETIME|NULL||])      Select 'RiskElementType' AS [SQLTableName|NVARCHAR|NOTNULL||], [RiskElementTypeID],[Description],[ResultThreshold],[RiskSeverity],[ControlMethod],[Deleted] FROM RiskElementType       SELECT 'RiskElementType' AS [SQLTableName|NVARCHAR|NOTNULL||], [RiskElementTypeID|INTEGER|NOTNULL||SERVERKEY],[Description|VARCHAR|NOTNULL||],[ResultThreshold|INTEGER|NOTNULL||],[RiskSeverity|INTEGER|NOTNULL||],[ControlMethod|VARCHAR|NULL||],[Deleted|DATETIME|NULL||] FROM @RiskElementTypeTable
   END
 
   IF @StartTableNumber IS NULL OR (@StartTableNumber >= 24 AND @StartTableNumber <= 28) BEGIN
@@ -15331,7 +15330,7 @@ BEGIN
     SET @Authorised = 1
   END
   
-  IF (SELECT COUNT(*) FROM Config WHERE s__CompanyName = 'TEAMS DEMO COMPANY') = 1 BEGIN 
+  IF (SELECT COUNT(*) FROM Config WHERE s__CompanyName = 'TEAMS DEMO COMPANY' OR s__CompanyName = 'App Review Demo Company') = 1 BEGIN 
     UPDATE Config SET s__EnableMobileLicensing = DATEADD(dd,2,GETDATE())
   END
   

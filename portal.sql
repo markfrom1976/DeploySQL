@@ -3002,7 +3002,8 @@ BEGIN
         scd.IsMAOnly,
         CAST(r.RegisterStart AS DATE) [SurveyStartDate],
         CAST(r.RegisterFinish AS DATE) [SurveyFinishDate],
-		e31.ElementText [PositionComments]
+        COALESCE(e23.ElementText, eim23.ShortDescription, eim23.Description) [ManagementAction],
+	e31.ElementText [PositionComments]
     FROM
         GuidSamples gs WITH (NOLOCK) 
         INNER JOIN SampleComputedData scd WITH (NOLOCK) ON gs.SampleID = scd.SampleID AND gs.ClientID = scd.ClientID AND gs.SiteID = scd.SiteID
@@ -3022,7 +3023,10 @@ BEGIN
                 ELSE ''
             END + '
 		LEFT JOIN Element e1 WITH (NOLOCK) ON s.SampleID = e1.SampleID AND e1.ElementTypeID = 1
+		LEFT JOIN Element e5 WITH (NOLOCK) ON s.SampleID = e5.SampleID AND e5.ElementTypeID = 5
 		LEFT JOIN Element e31 WITH (NOLOCK) ON s.SampleID = e31.SampleID AND e31.ElementTypeID = 31
+        LEFT JOIN Element e23 WITH (NOLOCK) ON s.SampleID = e23.SampleID AND e23.ElementTypeID = 23
+		LEFT JOIN ElementIntMeaning eim23 WITH (NOLOCK) ON e23.ElementIntMeaningID = eim23.ElementIntMeaningID
     WHERE
         si.Deleted IS NULL
             AND
@@ -3058,7 +3062,7 @@ BEGIN
     END
     IF @Risk = 'Inaccessible'
     BEGIN
-        SELECT @DynamicSQL = @DynamicSQL + ' AND scd.SampleResult <> 0'
+        SELECT @DynamicSQL = @DynamicSQL + ' AND scd.SampleResult <> 0 AND e5.ElementIntMeaningID = 1'
     END
     IF @Risk IS NOT NULL
     BEGIN
@@ -4431,7 +4435,7 @@ BEGIN
     END
 
     -- Get all Air Test Data up front to reduce the main SELECT table scans.
-    DECLARE @AirTestData TABLE (IsSiteDocument BIT NOT NULL, JobID INT, JobNo INT, ClientOrderNo VARCHAR(50), Created DATETIME NOT NULL, LastNoteCreated DATETIME, ClientID INT NOT NULL, Client VARCHAR(100) NOT NULL, BranchName VARCHAR(100), SiteID INT NOT NULL, Address VARCHAR(200) NOT NULL, Postcode VARCHAR(1) NOT NULL, UPRN VARCHAR(50), AirTestID INT, AirTestNo INT, AirTestStart DATETIME, AirTestFinish DATETIME, SiteArrival DATETIME, LocationEnclosure VARCHAR(MAX), Status VARCHAR(100), SystemName VARCHAR(2), Approved DATETIME, AirTestTypeID INT, AirTestType VARCHAR(50), AirTestReport VARCHAR(100), SiteDocumentID INT, SiteDocumentsCount INT NOT NULL)
+    DECLARE @AirTestData TABLE (IsSiteDocument BIT NOT NULL, JobID INT, JobNo INT, ClientOrderNo VARCHAR(50), Created DATETIME NOT NULL, LastNoteCreated DATETIME, ClientID INT NOT NULL, Client VARCHAR(100) NOT NULL, BranchName VARCHAR(100), SiteID INT NOT NULL, Address VARCHAR(200) NOT NULL, Postcode VARCHAR(15) NOT NULL, UPRN VARCHAR(50), AirTestID INT, AirTestNo INT, AirTestStart DATETIME, AirTestFinish DATETIME, SiteArrival DATETIME, LocationEnclosure VARCHAR(MAX), Status VARCHAR(100), SystemName VARCHAR(2), Approved DATETIME, AirTestTypeID INT, AirTestType VARCHAR(50), AirTestReport VARCHAR(100), SiteDocumentID INT, SiteDocumentsCount INT NOT NULL)
 
     -- Get normal Air Tests first.
     IF @LocGetSiteDocuments <> 1
