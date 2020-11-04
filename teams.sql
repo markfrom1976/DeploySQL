@@ -50837,4 +50837,41 @@ where
 END
 GO
 
+IF (SELECT COUNT(*) FROM TeamsV2Tab WHERE TeamsV2SectionID = 2 AND TabText = 'Asbestos') = 0
+BEGIN
+
+	UPDATE TeamsV2Tab SET DateDeleted = GETDATE() WHERE TabText = 'Outstanding Sample Reports' AND TeamsV2SectionID = 2
+	UPDATE TeamsV2Tab SET DateDeleted = GETDATE() WHERE TabText = 'Completed Sample Reports' AND TeamsV2SectionID = 2
+	UPDATE TeamsV2Tab SET DateDeleted = GETDATE() WHERE TabText = 'Create Stand Alone Report' AND TeamsV2SectionID = 2
+
+	INSERT INTO TeamsV2Tab (TeamsV2SectionID, TabText, [Order], UsesMvcSubTabs)
+	SELECT 2, 'Asbestos', 1, 1
+
+	DECLARE
+		@TabId INT = (SELECT TeamsV2TabId FROM TeamsV2Tab WHERE TeamsV2SectionID = 2 AND TabText = 'Asbestos')
+
+	INSERT INTO TeamsV2SubTab (TeamsV2TabID, TabText, [Order], EnableMvcGrid)
+	VALUES
+	(@TabId, 'Outstanding Sample Reports', 1, 1),
+	(@TabId, 'Completed Sample Reports', 2, 1),
+	(@TabId, 'Create Stand Alone Report', 3, null)
+
+END
+GO
+
+IF (SELECT COUNT(*) FROM TeamsV2Tab WHERE TeamsV2SectionID = 2 AND TabText = 'Legionella') = 0
+BEGIN
+	INSERT INTO TeamsV2Tab (TeamsV2SectionID, TabText, [Order], DateDeleted, UsesMvcSubTabs)
+	SELECT 2, 'Legionella', 2, GETDATE(), 1
+
+	DECLARE
+		@TabID INT = (SELECT * FROM TeamsV2Tab WHERE TeamsV2SectionID = 2 AND TabText = 'Legionella')
+
+	INSERT INTO TeamsV2SubTab (TeamsV2TabId, TabText, [Order], DateDeleted, IsMvcTab, EnableMvcGrid)
+	VALUES
+	(@TabId, 'Outstanding Sample Reports', 1, GETDATE(), 1, 1),
+	(@TabId, 'Completed Sample Reports', 2, GETDATE(), 1, 1),
+	(@TabId, 'Create Stand Alone Report', 3, GETDATE(), 1, 0)
+END
+GO
 
