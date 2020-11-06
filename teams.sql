@@ -21793,512 +21793,6 @@ IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo'
 		) ON [PRIMARY]
 		TEXTIMAGE_ON [PRIMARY];
 	END 
-
-
-GO
-
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'util_InvalidDateFind') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[util_InvalidDateFind] AS BEGIN SET NOCOUNT ON; END')
-END
-
-GO
-
-/****** Object:  StoredProcedure [dbo].[util_InvalidDateFind]    Script Date: 05/07/2019 12:25:31 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-
-ALTER PROC [dbo].[util_InvalidDateFind]
-
-As
-Begin
-	SET NOCOUNT ON;
-	DECLARE @sql nvarchar (max), @Table nvarchar(max), @1900Date nvarchar(max) = '1900-01-01 00:00:00.000', @DateCol nvarchar(max), @TableIdentity nvarchar(max)
-
-	DECLARE DateFields CURSOR FOR
-	SELECT
-		  t.name,
-		  c.name,
-		  pri.name
-	FROM
-		  sys.tables t 
-		  INNER JOIN sys.columns c ON t.object_id=c.object_id
-		  LEFT OUTER JOIN sys.columns pri ON t.object_id=pri.object_id AND pri.is_identity = 1
-	WHERE
-		  c.system_type_id IN (40,42,58,61)
-
-	OPEN DateFields
-	FETCH NEXT FROM DateFields INTO @Table, @DateCol, @TableIdentity
-
-	WHILE @@FETCH_STATUS= 0 BEGIN
-		SET @sql ='SELECT ''' + @Table + ''', ''' + @DateCol + ''', ' + CASE WHEN @TableIdentity IS NULL THEN 'NULL' ELSE 't.' + CAST(@TableIdentity as varchar(MAX)) END + ' FROM ' + @Table + ' t LEFT OUTER JOIN util_InvalidDate uid ON uid.ID=' + CASE WHEN @TableIdentity IS NULL THEN 'NULL' ELSE 't.' + CAST(@TableIdentity as varchar(MAX)) END + ' AND uid.[Table]=''' + @Table + ''' AND uid.[Field]=''' + @DateCol + ''' WHERE t.' + @DateCol + ' = ''' + @1900Date + ''' AND uid.util_InvalidDateID IS NULL'
-	
-		INSERT INTO util_InvalidDate ([Table],[Field],[ID])
-		EXEC sp_executesql @sql 
-
-		FETCH NEXT FROM DateFields INTO @Table, @DateCol, @TableIdentity
-	
-	END
-
-	CLOSE DateFields
-	DEALLOCATE DateFields
-	
-/*##################### REGISTER START FIX #####################*/
-		
-	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Register' AND Field='RegisterStart') > 0 BEGIN
-		UPDATE Register
-				SET RegisterStart=u.FixedDate
-		FROM
-			Register
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='RegisterStart'
-			OUTER APPLY
-			(
-				SELECT 
-					CASE WHEN fp.FloorplanID IS NULL THEN
-						ISNULL(iat.DateCreated,j.Created)
-					ELSE
-						ISNULL(je.ActualStart,je.ScheduledStart)
-					END [FixedDate]
-				FROM 
-					  Job j
-					  INNER JOIN JobEmployee je ON je.JobID = j.JobID
-					  INNER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
-					  LEFT OUTER JOIN IntranetAuditTrail iat ON iat.DataTable='Job' AND iat.DataID=j.JobID AND iat.Message='Created job number'
-					  LEFT JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
-				WHERE 
-					  r.RegisterID=Register.RegisterID
-			) u
-			WHERE
-				u.FixedDate IS NOT NULL
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				Register
-				INNER JOIN util_InvalidDate uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='RegisterStart'
-			WHERE
-				Register.RegisterStart!='1900/01/01 00:00:00'
-				
-		END
-		
-/*##################### REGISTER START FIX END #####################*/
-		
-/*##################### REGISTER FINISH FIX #####################*/
-		
-		IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Register' AND Field='RegisterFinish') > 0 BEGIN
-			UPDATE Register
-				SET RegisterFinish=u.FixedDate
-			FROM
-				Register
-				INNER JOIN 
-				(
-					SELECT
-						uid.[Table],uid.Field,uid.ID
-					FROM
-						util_InvalidDate uid
-					WHERE
-						uid.DateFixed IS NULL
-				) uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='RegisterFinish'
-				OUTER APPLY
-				(
-					SELECT 
-						CASE WHEN fp.FloorplanID IS NULL THEN
-							ISNULL(iat.DateCreated,j.Created)
-						ELSE
-							ISNULL(je.ActualFinish,je.ScheduledFinish)
-						END [FixedDate]
-					FROM 
-						  Job j
-						  INNER JOIN JobEmployee je ON je.JobID = j.JobID
-						  INNER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
-						  LEFT OUTER JOIN IntranetAuditTrail iat ON iat.DataTable='Job' AND iat.DataID=j.JobID AND iat.Message='Created job number'
-						  LEFT JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
-					WHERE 
-						  r.RegisterID=Register.RegisterID
-				) u
-			WHERE
-				u.FixedDate IS NOT NULL
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				Register
-				INNER JOIN util_InvalidDate uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='RegisterFinish'
-			WHERE
-				Register.RegisterFinish!='1900/01/01 00:00:00'
-				
-		END	
-		
-/*##################### REGISTER FINISH FIX END #####################*/
-
-/*##################### JOB CREATED FIX START #####################*/
-IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Job' AND Field='Created') > 0 BEGIN
-		UPDATE Job
-				SET Created=u.FixedDate
-		FROM
-			Job
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON Job.JobID=uid.ID AND uid.[Table]='Job' AND uid.Field='Created'
-			OUTER APPLY
-			(
-				SELECT 
-					iat.datecreated [FixedDate]
-				FROM 
-					  Job j
-					  LEFT OUTER JOIN IntranetAuditTrail iat ON iat.DataTable='Job' AND iat.DataID=j.JobID AND iat.Message='Created job number'
-				WHERE 
-					  j.JobID=Job.JobID
-			) u
-			WHERE
-				u.FixedDate IS NOT NULL
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				Job
-				INNER JOIN util_InvalidDate uid ON Job.JOBID=uid.ID AND uid.[Table]='Job' AND uid.Field='Created'
-			WHERE
-				Job.Created!='1900/01/01 00:00:00'
-	END
-/*##################### JOB CREATED FIX END #####################*/
-
-/*##################### JobEmployeeAppointment ENDTIME FIX START #####################*/
-IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='JobEmployeeAppointment' AND Field='EndTime') > 0 BEGIN
-		UPDATE JobEmployeeAppointment
-				SET EndTime=u.FixedDate
-		FROM
-			JobEmployeeAppointment
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON JobEmployeeAppointment.JobEmployeeAppointmentID=uid.ID AND uid.[Table]='JobEmployeeAppointment' AND uid.Field='EndTime'
-			OUTER APPLY
-			(
-				SELECT 
-					ISNULL(je.ActualFinish,je.ScheduledFinish) [FixedDate]
-				FROM 
-					  JobEmployeeAppointment jea
-					  INNER JOIN Jobemployee je on je.jobemployeeid = jea.jobemployeeid
-				WHERE 
-					  jea.JobEmployeeAppointmentID=JobEmployeeAppointment.JobEmployeeAppointmentID
-			) u
-			WHERE
-				u.FixedDate IS NOT NULL
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				JobEmployeeAppointment
-				INNER JOIN util_InvalidDate uid ON JobEmployeeAppointment.JobEmployeeAppointmentID=uid.ID AND uid.[Table]='JobEmployeeAppointment' AND uid.Field='EndTime'
-			WHERE
-				JobEmployeeAppointment.EndTime !='1900/01/01 00:00:00'
-	END
-/*##################### JobEmployeeAppointment ENDTIME FIX END #####################*/
-
-/*##################### APPOINTMENT StartTime FIX START FOR DECLINED APPOINTMENTS #####################*/
-IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Appointment' AND Field='StartTime') > 0 BEGIN
-		UPDATE Appointment
-				SET StartTime='1900/01/01 00:01:00'
-		FROM
-			Appointment
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='StartTime'
-			WHERE
-				appointment.DateDeclined IS NOT NULL 
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				Appointment
-				INNER JOIN util_InvalidDate uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='StartTime'
-			WHERE
-				Appointment.StartTime !='1900/01/01 00:00:00'
-	END
-/*##################### APPOINTMENT StartTime FIX START FOR DECLINED APPOINTMENTS END #####################*/
-	
-/*##################### APPOINTMENT EndTime FIX START FOR DECLINED APPOINTMENTS START #####################*/
-	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Appointment' AND Field='EndTime') > 0 BEGIN
-		UPDATE Appointment
-				SET EndTime='1900/01/01 00:01:00'
-		FROM
-			Appointment
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='EndTime'
-		WHERE
-			appointment.DateDeclined IS NOT NULL 
-
-						
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				Appointment
-				INNER JOIN util_InvalidDate uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='EndTime'
-			WHERE
-				Appointment.EndTime !='1900/01/01 00:00:00'
-	END
-/*##################### APPOINTMENT EndTime FIX START FOR DECLINED APPOINTMENTS END #####################*/
-
-/*##################### APPOINTMENT StartTime FIX START FOR NON-DECLINED APPOINTMENTS END #####################*/	
-	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Appointment' AND Field='StartTime') > 0 BEGIN
-		UPDATE Appointment
-				SET StartTime=u.FixedDate
-		FROM
-			Appointment
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='StartTime'
-			OUTER APPLY
-			(
-				SELECT 
-					cast(CONVERT(VARCHAR(11),app.EndTime,106) + ' 00:00:00' as datetime) [FixedDate]
-				FROM 
-					  Appointment app 
-				WHERE 
-					app.AppointmentID=Appointment.AppointmentID
-						and 
-					app.EndTime != '1900/01/01 00:00:00'
-						and
-					app.DateDeclined IS NULL
-			) u
-			WHERE
-				u.FixedDate IS NOT NULL
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				Appointment
-				INNER JOIN util_InvalidDate uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='StartTime'
-			WHERE
-				Appointment.StartTime!='1900/01/01 00:00:00'
-	END
-/*##################### APPOINTMENT StartTime FIX START FOR NON-DECLINED APPOINTMENTS END #####################*/	
-
-/*##################### APPOINTMENT EndTime FIX END FOR NON-DECLINED APPOINTMENTS START #####################*/		
-	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Appointment' AND Field='EndTime') > 0 BEGIN
-		UPDATE Appointment
-				SET EndTime=u.FixedDate
-		FROM
-			Appointment
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='EndTime'
-			OUTER APPLY
-			(
-				SELECT 
-					cast(CONVERT(VARCHAR(11),app.StartTime,106) + ' 23:59:59' as datetime) [FixedDate]
-				FROM 
-					  Appointment app 
-				WHERE 
-					app.AppointmentID=Appointment.AppointmentID
-					  		and 
-					app.StartTime != '1900/01/01 00:00:00'
-						and
-					app.DateDeclined IS NULL
-			) u
-			WHERE
-				u.FixedDate IS NOT NULL
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				Appointment
-				INNER JOIN util_InvalidDate uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='EndTime'
-			WHERE
-				Appointment.StartTime!='1900/01/01 00:00:00'
-	END
-/*##################### APPOINTMENT EndTime FIX END FOR NON-DECLINED APPOINTMENTS END #####################*/		
-	
-/*##################### JOBEMPLOYEE ACTUALSTART FIX #####################*/
-		
-	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='JobEmployee' AND Field='ActualStart') > 0 BEGIN
-		UPDATE JobEmployee
-				SET ActualStart=ISNULL(JobEmployee.ScheduledStart,GETDATE())
-		FROM
-			JobEmployee
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON JobEmployee.JobEmployeeID=uid.ID AND uid.[Table]='JobEmployee' AND uid.Field='ActualStart'
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				JobEmployee
-				INNER JOIN util_InvalidDate uid ON JobEmployee.JobEmployeeID=uid.ID AND uid.[Table]='JobEmployee' AND uid.Field='ActualStart'
-			WHERE
-				JobEmployee.ActualStart!='1900/01/01 00:00:00'
-	END
-		
-/*##################### JOBEMPLOYEE ACTUALSTART FIX END #####################*/
-		
-/*##################### JOBEMPLOYEE ACTUALFINISH FIX #####################*/
-		
-	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='JobEmployee' AND Field='ActualFinish') > 0 BEGIN
-		UPDATE JobEmployee
-				SET ActualFinish=ISNULL(JobEmployee.ScheduledFinish,GETDATE())
-		FROM
-			JobEmployee
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON JobEmployee.JobEmployeeID=uid.ID AND uid.[Table]='JobEmployee' AND uid.Field='ActualFinish'
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				JobEmployee
-				INNER JOIN util_InvalidDate uid ON JobEmployee.JobEmployeeID=uid.ID AND uid.[Table]='JobEmployee' AND uid.Field='ActualFinish'
-			WHERE
-				JobEmployee.ActualFinish!='1900/01/01 00:00:00'
-	END	
-		
-/*##################### JOBEMPLOYEE ACTUALFINISH FIX END #####################*/
-
-/*##################### EQUIPMENT DatePurchased FIX START #####################*/
-		
-	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Equipment' AND Field='DatePurchased') > 0 BEGIN
-		UPDATE Equipment
-				SET DatePurchased='1900/01/01 00:00:01'
-		FROM
-			Equipment
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON Equipment.EquipmentID=uid.ID AND uid.[Table]='Equipment' AND uid.Field='DatePurchased'
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				Equipment
-				INNER JOIN util_InvalidDate uid ON Equipment.EquipmentID=uid.ID AND uid.[Table]='Equipment' AND uid.Field='DatePurchased'
-			WHERE
-				Equipment.DatePurchased!='1900/01/01 00:00:00'
-	END	
-		
-/*##################### EQUIPMENT DatePurchased FIX END #####################*/
-
-/*##################### SAMPLE DateCheckedIn FIX START #####################*/
-	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Sample' AND Field='DateCheckedIn') > 0 BEGIN
-		UPDATE Sample
-				SET DateCheckedIn=u.FixedDate
-		FROM
-			Sample
-			INNER JOIN 
-			(
-				SELECT
-					uid.[Table],uid.Field,uid.ID
-				FROM
-					util_InvalidDate uid
-				WHERE
-					uid.DateFixed IS NULL
-			) uid ON Sample.SampleID=uid.ID AND uid.[Table]='Sample' AND uid.Field='DateCheckedIn'
-			OUTER APPLY
-			(
-				SELECT 
-					 ISNULL(iat.datecreated, s.DateCreated) [FixedDate]
-				FROM 
-					Sample s 
-					LEFT OUTER JOIN IntranetAuditTrail iat ON iat.DataTable = 'Sample' AND iat.DataID = s.SampleID AND iat.Message = 'Sample modified via Add/Edit sample screen'
-				WHERE 
-				  s.SampleID=Sample.SampleID
-					and
-				s.sampleref like '%{%'
-			) u
-			WHERE
-				u.FixedDate IS NOT NULL
-			
-			UPDATE 
-				uid 
-				SET DateFixed=GETDATE()
-			FROM
-				Sample
-				INNER JOIN util_InvalidDate uid ON Sample.SampleID=uid.ID AND uid.[Table]='Sample' AND uid.Field='DateCheckedIn'
-			WHERE
-				Sample.DateCreated !='1900/01/01 00:00:00'
-				
-		END
-/*##################### SAMPLE DateCheckedIn FIX END #####################*/
-
-	SET NOCOUNT OFF;
-End
-
 GO
 
 IF (SELECT COUNT(*) FROM TeamsV2SubTab WHERE TabText = 'Project Tools') = 0
@@ -42040,47 +41534,9 @@ BEGIN
 END
 GO
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'FN' AND name = 'WorkingDaysInterval') < 1 BEGIN
-	EXEC('CREATE FUNCTION [dbo].[WorkingDaysInterval] ( @StartDate DATETIME, @FinishDate DATETIME ) RETURNS INT BEGIN RETURN 0 END;')
-END
-GO
-
-ALTER FUNCTION [dbo].[WorkingDaysInterval]
-(
-    @StartDate DATETIME,
-    @FinishDate DATETIME
-)
-RETURNS INT
-AS
-
-BEGIN
-
-DECLARE
-	@WorkingStartDate DATETIME = @StartDate,
-	@WorkingInterval INT = 0
-
-WHILE @WorkingStartDate < @FinishDate
-BEGIN
-	
-	SET @WorkingStartDate = DATEADD(DAY, 1, @WorkingStartDate)
-
-	IF DATEPART(WEEKDAY, @WorkingStartDate) NOT IN (1, 7) AND NOT EXISTS (SELECT * FROM TeamsBankHoliday WHERE BankHolidayDate = @WorkingStartDate)
-	BEGIN
-		SET @WorkingInterval = @WorkingInterval + 1
-	END
-	
-END
-
-RETURN NULLIF(@WorkingInterval, 0)
-
-END      
-GO
-
-
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'getClientEmailFromJobIDOrInvoiceID') < 1 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[getClientEmailFromJobIDOrInvoiceID] AS BEGIN SET NOCOUNT ON; END')
 END
-
 GO  
 
 ALTER PROCEDURE [dbo].[getClientEmailFromJobIDOrInvoiceID]
@@ -50865,7 +50321,7 @@ BEGIN
 	SELECT 2, 'Legionella', 2, GETDATE(), 1
 
 	DECLARE
-		@TabID INT = (SELECT * FROM TeamsV2Tab WHERE TeamsV2SectionID = 2 AND TabText = 'Legionella')
+		@TabID INT = (SELECT TeamsV2TabId FROM TeamsV2Tab WHERE TeamsV2SectionID = 2 AND TabText = 'Legionella')
 
 	INSERT INTO TeamsV2SubTab (TeamsV2TabId, TabText, [Order], DateDeleted, IsMvcTab, EnableMvcGrid)
 	VALUES
@@ -50875,3 +50331,646 @@ BEGIN
 END
 GO
 
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 471,'Quote - Bulk Sampling - Legionella',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Quote -%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=471)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 472,'Report - Bulk Sampling - Legionella',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Report%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=472)=0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 303,471,'Bulk Sampling - Legionella','Bulk Sampling - Legionella',GETDATE(),9,4 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=303)=0
+Update TemplateType SET TemplateType='Report - Bulk Sampling - Legionella' WHERE TemplateTypeID=472 AND TemplateType = 'Quote - Bulk Sampling - Legionella'
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'FN' AND name = 'WorkingDaysInterval') < 1 BEGIN
+	EXEC('CREATE FUNCTION [dbo].[WorkingDaysInterval] ( @StartDate DATETIME, @FinishDate DATETIME ) RETURNS INT BEGIN RETURN 0 END;')
+END
+GO
+
+ALTER FUNCTION [dbo].[WorkingDaysInterval]
+(
+    @StartDate DATETIME,
+    @FinishDate DATETIME
+)
+RETURNS INT
+AS
+BEGIN
+	IF @StartDate IS NULL OR @FinishDate IS NULL
+	BEGIN
+		RETURN NULL
+	END
+
+	IF CONVERT(date, @StartDate) = CONVERT(date, @FinishDate)
+	BEGIN
+		RETURN 0
+	END
+
+	DECLARE
+		@WorkingStartDate DATETIME = CONVERT(date, @StartDate),
+		@WorkingFinishDate DATETIME = CONVERT(date, @FinishDate),
+		@WorkingInterval INT = 0,
+		@Multiplier INT = 1
+
+	IF @WorkingFinishDate < @WorkingStartDate
+	BEGIN
+		SET @WorkingStartDate = CONVERT(date, @FinishDate)
+		SET @WorkingFinishDate = CONVERT(date, @StartDate)	
+		SET @Multiplier = -1	
+	END
+
+	WHILE @WorkingStartDate < @WorkingFinishDate
+	BEGIN
+	
+		SET @WorkingStartDate = DATEADD(DAY, 1, @WorkingStartDate)
+
+		IF DATEPART(WEEKDAY, @WorkingStartDate) NOT IN (1, 7) AND NOT EXISTS (SELECT * FROM TeamsBankHoliday WHERE BankHolidayDate = @WorkingStartDate)
+		BEGIN
+			SET @WorkingInterval = @WorkingInterval + 1
+		END
+	
+	END
+
+	RETURN @WorkingInterval * @Multiplier
+END      
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'util_InvalidDateFind') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[util_InvalidDateFind] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+ALTER PROC [dbo].[util_InvalidDateFind]
+As
+Begin
+	SET NOCOUNT ON;
+	DECLARE @sql nvarchar (max), @Table nvarchar(max), @1900Date nvarchar(max) = '1900-01-01 00:00:00.000', @DateCol nvarchar(max), @TableIdentity nvarchar(max)
+
+	DECLARE DateFields CURSOR FOR
+	SELECT
+		  t.name,
+		  c.name,
+		  pri.name
+	FROM
+		  sys.tables t 
+		  INNER JOIN sys.columns c ON t.object_id=c.object_id
+		  LEFT OUTER JOIN sys.columns pri ON t.object_id=pri.object_id AND pri.is_identity = 1
+	WHERE
+		  c.system_type_id IN (40,42,58,61)
+
+	OPEN DateFields
+	FETCH NEXT FROM DateFields INTO @Table, @DateCol, @TableIdentity
+
+	WHILE @@FETCH_STATUS= 0 BEGIN
+		SET @sql ='SELECT ''' + @Table + ''', ''' + @DateCol + ''', ' + CASE WHEN @TableIdentity IS NULL THEN 'NULL' ELSE 't.' + CAST(@TableIdentity as varchar(MAX)) END + ' FROM ' + @Table + ' t LEFT OUTER JOIN util_InvalidDate uid ON uid.ID=' + CASE WHEN @TableIdentity IS NULL THEN 'NULL' ELSE 't.' + CAST(@TableIdentity as varchar(MAX)) END + ' AND uid.[Table]=''' + @Table + ''' AND uid.[Field]=''' + @DateCol + ''' WHERE t.' + @DateCol + ' = ''' + @1900Date + ''' AND uid.util_InvalidDateID IS NULL'
+	
+		INSERT INTO util_InvalidDate ([Table],[Field],[ID])
+		EXEC sp_executesql @sql 
+
+		FETCH NEXT FROM DateFields INTO @Table, @DateCol, @TableIdentity
+	
+	END
+
+	CLOSE DateFields
+	DEALLOCATE DateFields
+	
+/*##################### REGISTER START FIX #####################*/
+		
+	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Register' AND Field='RegisterStart') > 0 BEGIN
+		UPDATE Register
+				SET RegisterStart=u.FixedDate
+		FROM
+			Register
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='RegisterStart'
+			OUTER APPLY
+			(
+				SELECT 
+					CASE WHEN fp.FloorplanID IS NULL THEN
+						ISNULL(iat.DateCreated,j.Created)
+					ELSE
+						ISNULL(je.ActualStart,je.ScheduledStart)
+					END [FixedDate]
+				FROM 
+					  Job j
+					  INNER JOIN JobEmployee je ON je.JobID = j.JobID
+					  INNER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
+					  LEFT OUTER JOIN IntranetAuditTrail iat ON iat.DataTable='Job' AND iat.DataID=j.JobID AND iat.Message='Created job number'
+					  LEFT JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
+				WHERE 
+					  r.RegisterID=Register.RegisterID
+			) u
+			WHERE
+				u.FixedDate IS NOT NULL
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Register
+				INNER JOIN util_InvalidDate uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='RegisterStart'
+			WHERE
+				Register.RegisterStart!='1900/01/01 00:00:00'
+				
+		END
+		
+/*##################### REGISTER START FIX END #####################*/
+		
+/*##################### REGISTER FINISH FIX #####################*/
+		
+		IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Register' AND Field='RegisterFinish') > 0 BEGIN
+			UPDATE Register
+				SET RegisterFinish=u.FixedDate
+			FROM
+				Register
+				INNER JOIN 
+				(
+					SELECT
+						uid.[Table],uid.Field,uid.ID
+					FROM
+						util_InvalidDate uid
+					WHERE
+						uid.DateFixed IS NULL
+				) uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='RegisterFinish'
+				OUTER APPLY
+				(
+					SELECT 
+						CASE WHEN fp.FloorplanID IS NULL THEN
+							ISNULL(iat.DateCreated,j.Created)
+						ELSE
+							ISNULL(je.ActualFinish,je.ScheduledFinish)
+						END [FixedDate]
+					FROM 
+						  Job j
+						  INNER JOIN JobEmployee je ON je.JobID = j.JobID
+						  INNER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
+						  LEFT OUTER JOIN IntranetAuditTrail iat ON iat.DataTable='Job' AND iat.DataID=j.JobID AND iat.Message='Created job number'
+						  LEFT JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
+					WHERE 
+						  r.RegisterID=Register.RegisterID
+				) u
+			WHERE
+				u.FixedDate IS NOT NULL
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Register
+				INNER JOIN util_InvalidDate uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='RegisterFinish'
+			WHERE
+				Register.RegisterFinish!='1900/01/01 00:00:00'
+				
+		END	
+		
+/*##################### REGISTER FINISH FIX END #####################*/
+
+/*##################### JOB CREATED FIX START #####################*/
+IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Job' AND Field='Created') > 0 BEGIN
+		UPDATE Job
+				SET Created=u.FixedDate
+		FROM
+			Job
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Job.JobID=uid.ID AND uid.[Table]='Job' AND uid.Field='Created'
+			OUTER APPLY
+			(
+				SELECT 
+					iat.datecreated [FixedDate]
+				FROM 
+					  Job j
+					  LEFT OUTER JOIN IntranetAuditTrail iat ON iat.DataTable='Job' AND iat.DataID=j.JobID AND iat.Message='Created job number'
+				WHERE 
+					  j.JobID=Job.JobID
+			) u
+			WHERE
+				u.FixedDate IS NOT NULL
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Job
+				INNER JOIN util_InvalidDate uid ON Job.JOBID=uid.ID AND uid.[Table]='Job' AND uid.Field='Created'
+			WHERE
+				Job.Created!='1900/01/01 00:00:00'
+	END
+/*##################### JOB CREATED FIX END #####################*/
+
+/*##################### JobEmployeeAppointment ENDTIME FIX START #####################*/
+IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='JobEmployeeAppointment' AND Field='EndTime') > 0 BEGIN
+		UPDATE JobEmployeeAppointment
+				SET EndTime=u.FixedDate
+		FROM
+			JobEmployeeAppointment
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON JobEmployeeAppointment.JobEmployeeAppointmentID=uid.ID AND uid.[Table]='JobEmployeeAppointment' AND uid.Field='EndTime'
+			OUTER APPLY
+			(
+				SELECT 
+					ISNULL(je.ActualFinish,je.ScheduledFinish) [FixedDate]
+				FROM 
+					  JobEmployeeAppointment jea
+					  INNER JOIN Jobemployee je on je.jobemployeeid = jea.jobemployeeid
+				WHERE 
+					  jea.JobEmployeeAppointmentID=JobEmployeeAppointment.JobEmployeeAppointmentID
+			) u
+			WHERE
+				u.FixedDate IS NOT NULL
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				JobEmployeeAppointment
+				INNER JOIN util_InvalidDate uid ON JobEmployeeAppointment.JobEmployeeAppointmentID=uid.ID AND uid.[Table]='JobEmployeeAppointment' AND uid.Field='EndTime'
+			WHERE
+				JobEmployeeAppointment.EndTime !='1900/01/01 00:00:00'
+	END
+/*##################### JobEmployeeAppointment ENDTIME FIX END #####################*/
+
+/*##################### APPOINTMENT StartTime FIX START FOR DECLINED APPOINTMENTS #####################*/
+IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Appointment' AND Field='StartTime') > 0 BEGIN
+		UPDATE Appointment
+				SET StartTime='1900/01/01 00:01:00'
+		FROM
+			Appointment
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='StartTime'
+			WHERE
+				appointment.DateDeclined IS NOT NULL 
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Appointment
+				INNER JOIN util_InvalidDate uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='StartTime'
+			WHERE
+				Appointment.StartTime !='1900/01/01 00:00:00'
+	END
+/*##################### APPOINTMENT StartTime FIX START FOR DECLINED APPOINTMENTS END #####################*/
+	
+/*##################### APPOINTMENT EndTime FIX START FOR DECLINED APPOINTMENTS START #####################*/
+	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Appointment' AND Field='EndTime') > 0 BEGIN
+		UPDATE Appointment
+				SET EndTime='1900/01/01 00:01:00'
+		FROM
+			Appointment
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='EndTime'
+		WHERE
+			appointment.DateDeclined IS NOT NULL 
+
+						
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Appointment
+				INNER JOIN util_InvalidDate uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='EndTime'
+			WHERE
+				Appointment.EndTime !='1900/01/01 00:00:00'
+	END
+/*##################### APPOINTMENT EndTime FIX START FOR DECLINED APPOINTMENTS END #####################*/
+
+/*##################### APPOINTMENT StartTime FIX START FOR NON-DECLINED APPOINTMENTS END #####################*/	
+	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Appointment' AND Field='StartTime') > 0 BEGIN
+		UPDATE Appointment
+				SET StartTime=u.FixedDate
+		FROM
+			Appointment
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='StartTime'
+			OUTER APPLY
+			(
+				SELECT 
+					cast(CONVERT(VARCHAR(11),app.EndTime,106) + ' 00:00:00' as datetime) [FixedDate]
+				FROM 
+					  Appointment app 
+				WHERE 
+					app.AppointmentID=Appointment.AppointmentID
+						and 
+					app.EndTime != '1900/01/01 00:00:00'
+						and
+					app.DateDeclined IS NULL
+			) u
+			WHERE
+				u.FixedDate IS NOT NULL
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Appointment
+				INNER JOIN util_InvalidDate uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='StartTime'
+			WHERE
+				Appointment.StartTime!='1900/01/01 00:00:00'
+	END
+/*##################### APPOINTMENT StartTime FIX START FOR NON-DECLINED APPOINTMENTS END #####################*/	
+
+/*##################### APPOINTMENT EndTime FIX END FOR NON-DECLINED APPOINTMENTS START #####################*/		
+	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Appointment' AND Field='EndTime') > 0 BEGIN
+		UPDATE Appointment
+				SET EndTime=u.FixedDate
+		FROM
+			Appointment
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='EndTime'
+			OUTER APPLY
+			(
+				SELECT 
+					cast(CONVERT(VARCHAR(11),app.StartTime,106) + ' 23:59:59' as datetime) [FixedDate]
+				FROM 
+					  Appointment app 
+				WHERE 
+					app.AppointmentID=Appointment.AppointmentID
+					  		and 
+					app.StartTime != '1900/01/01 00:00:00'
+						and
+					app.DateDeclined IS NULL
+			) u
+			WHERE
+				u.FixedDate IS NOT NULL
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Appointment
+				INNER JOIN util_InvalidDate uid ON Appointment.AppointmentID=uid.ID AND uid.[Table]='Appointment' AND uid.Field='EndTime'
+			WHERE
+				Appointment.StartTime!='1900/01/01 00:00:00'
+	END
+/*##################### APPOINTMENT EndTime FIX END FOR NON-DECLINED APPOINTMENTS END #####################*/		
+	
+/*##################### JOBEMPLOYEE ACTUALSTART FIX #####################*/
+		
+	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='JobEmployee' AND Field='ActualStart') > 0 BEGIN
+		UPDATE JobEmployee
+				SET ActualStart=ISNULL(JobEmployee.ScheduledStart,GETDATE())
+		FROM
+			JobEmployee
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON JobEmployee.JobEmployeeID=uid.ID AND uid.[Table]='JobEmployee' AND uid.Field='ActualStart'
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				JobEmployee
+				INNER JOIN util_InvalidDate uid ON JobEmployee.JobEmployeeID=uid.ID AND uid.[Table]='JobEmployee' AND uid.Field='ActualStart'
+			WHERE
+				JobEmployee.ActualStart!='1900/01/01 00:00:00'
+	END
+		
+/*##################### JOBEMPLOYEE ACTUALSTART FIX END #####################*/
+		
+/*##################### JOBEMPLOYEE ACTUALFINISH FIX #####################*/
+		
+	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='JobEmployee' AND Field='ActualFinish') > 0 BEGIN
+		UPDATE JobEmployee
+				SET ActualFinish=ISNULL(JobEmployee.ScheduledFinish,GETDATE())
+		FROM
+			JobEmployee
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON JobEmployee.JobEmployeeID=uid.ID AND uid.[Table]='JobEmployee' AND uid.Field='ActualFinish'
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				JobEmployee
+				INNER JOIN util_InvalidDate uid ON JobEmployee.JobEmployeeID=uid.ID AND uid.[Table]='JobEmployee' AND uid.Field='ActualFinish'
+			WHERE
+				JobEmployee.ActualFinish!='1900/01/01 00:00:00'
+	END	
+		
+/*##################### JOBEMPLOYEE ACTUALFINISH FIX END #####################*/
+
+/*##################### EQUIPMENT DatePurchased FIX START #####################*/
+		
+	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Equipment' AND Field='DatePurchased') > 0 BEGIN
+		UPDATE Equipment
+				SET DatePurchased='1900/01/01 00:00:01'
+		FROM
+			Equipment
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Equipment.EquipmentID=uid.ID AND uid.[Table]='Equipment' AND uid.Field='DatePurchased'
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Equipment
+				INNER JOIN util_InvalidDate uid ON Equipment.EquipmentID=uid.ID AND uid.[Table]='Equipment' AND uid.Field='DatePurchased'
+			WHERE
+				Equipment.DatePurchased!='1900/01/01 00:00:00'
+	END	
+		
+/*##################### EQUIPMENT DatePurchased FIX END #####################*/
+
+/*##################### SAMPLE DateCheckedIn FIX START #####################*/
+	IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Sample' AND Field='DateCheckedIn') > 0 BEGIN
+		UPDATE Sample
+				SET DateCheckedIn=u.FixedDate
+		FROM
+			Sample
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Sample.SampleID=uid.ID AND uid.[Table]='Sample' AND uid.Field='DateCheckedIn'
+			OUTER APPLY
+			(
+				SELECT 
+					 ISNULL(iat.datecreated, s.DateCreated) [FixedDate]
+				FROM 
+					Sample s 
+					LEFT OUTER JOIN IntranetAuditTrail iat ON iat.DataTable = 'Sample' AND iat.DataID = s.SampleID AND iat.Message = 'Sample modified via Add/Edit sample screen'
+				WHERE 
+				  s.SampleID=Sample.SampleID
+					and
+				s.sampleref like '%{%'
+			) u
+			WHERE
+				u.FixedDate IS NOT NULL
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Sample
+				INNER JOIN util_InvalidDate uid ON Sample.SampleID=uid.ID AND uid.[Table]='Sample' AND uid.Field='DateCheckedIn'
+			WHERE
+				Sample.DateCreated !='1900/01/01 00:00:00'
+				
+		END
+/*##################### SAMPLE DateCheckedIn FIX END #####################*/
+
+
+/*##################### JOB APPROVED (IMPORTED) FIX START #####################*/
+IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Job' AND Field='Approved') > 0 BEGIN
+		UPDATE Job
+				SET Approved='1900/01/01 01:00:00'
+		FROM
+			Job
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Job.JobID=uid.ID AND uid.[Table]='Job' AND uid.Field='Approved'
+			WHERE
+				job.importID IS NOT NULL
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Job
+				INNER JOIN util_InvalidDate uid ON Job.JOBID=uid.ID AND uid.[Table]='Job' AND uid.Field='Approved'
+			WHERE
+				Job.Approved !='1900/01/01 00:00:00'
+	END
+
+/*##################### JOB APPROVED (IMPORTED) FIX END #####################*/
+
+/*##################### REGISTER APPROVED (IMPORTED) FIX START #####################*/
+
+IF (Select COUNT(*) FROM util_InvalidDate WHERE DateFixed IS NULL AND [Table]='Register' AND Field='DateApproved') > 0 BEGIN
+		UPDATE Register
+				SET DateApproved='1900/01/01 01:00:00'
+		FROM
+			Register
+			INNER JOIN 
+			(
+				SELECT
+					uid.[Table],uid.Field,uid.ID
+				FROM
+					util_InvalidDate uid
+				WHERE
+					uid.DateFixed IS NULL
+			) uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='DateApproved'
+			WHERE
+				register.ImportID IS NOT NULL
+			
+			UPDATE 
+				uid 
+				SET DateFixed=GETDATE()
+			FROM
+				Register
+				INNER JOIN util_InvalidDate uid ON Register.RegisterID=uid.ID AND uid.[Table]='Register' AND uid.Field='DateApproved'
+			WHERE
+				Register.DateApproved !='1900/01/01 00:00:00'
+	END
+
+/*##################### REGISTER APPROVED (IMPORTED) FIX END #####################*/
+
+	SET NOCOUNT OFF;
+End
+GO
+
+IF (SELECT COUNT(*) FROM TableCode WHERE TableName = 'WaterSample') = 0
+BEGIN
+	INSERT INTO TableCode (TableCodeID, TableName, TableCode)
+	SELECT (SELECT MAX(TableCodeID) + 1 FROM TableCode), 'WaterSample', 'u9fj6o'
+END
+GO
+
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='WaterSample'))
+BEGIN
+	CREATE TABLE [dbo].[WaterSample](
+		[WaterSampleId] [int] IDENTITY(1,1) NOT NULL,
+		[Created] [datetime] NOT NULL,
+		[JobId] [int] NOT NULL,
+		[SampleRef] [varchar](100) NOT NULL,
+		[SiteReference] [varchar](max) NULL,
+		[Description] [varchar](max) NULL,
+		[SamplingOfficerEmployeeId] [int] NULL,
+		[Collected] [datetime] NULL,
+		[Filtered] [datetime] NULL,
+		[FilterVolumeId] [int] NULL,
+		[Analysed] [datetime] NULL,
+		[GUID] [varchar](50) NOT NULL,
+		[GUIDVersion] [int] NOT NULL,
+	CONSTRAINT [PK_WaterSample] PRIMARY KEY CLUSTERED 
+	(
+		[WaterSampleId] ASC
+	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+	) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+	GO
+
+	ALTER TABLE [dbo].[WaterSample] ADD  CONSTRAINT [DF_WaterSample_Created]  DEFAULT (getdate()) FOR [Created]
+END
+GO
