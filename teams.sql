@@ -25416,42 +25416,6 @@ INSERT INTO LegionellaAssetCategory (LegionellaAssetCategoryID,Description,TabNa
 
 GO
 
-If (SELECT COUNT(*) FROM sys.objects WHERE type = 'FN' AND name = 'GetNextSampleRef') < 1 BEGIN
-	EXEC('CREATE Function [dbo].[GetNextSampleRef] () RETURNS VARCHAR(max) AS BEGIN RETURN '''' END')
-End
-
-GO
-
-ALTER Function [dbo].[GetNextSampleRef]
-(
-)
-RETURNS VARCHAR(MAX)
-As
-BEGIN
-
-	DECLARE @NextSampleRef VARCHAR(MAX) = ''
-	SELECT @NextSampleRef = 
-		(
-			SELECT TOP 1 'BS' + CASE
-									WHEN LEN(CONVERT(VARCHAR(MAX), _s.SamplerefNo + 1)) < 6 THEN RIGHT('000000' + CAST(_s.SampleRefNo + 1 AS VARCHAR), 6)
-									ELSE CONVERT(VARCHAR(MAX), _s.SamplerefNo + 1)
-								END   [nv]
-			FROM (
-				SELECT s.SampleRef, CAST(s.SampleRefNo AS INT) [SampleRefNo]
-				FROM (
-						Select s.SampleRef [SampleRef], REPLACE(s.SampleRef,'BS','') [SampleRefNo] 
-						FROM Sample s 
-						WHERE LEFT(s.SampleRef,2) = 'BS'
-						) s
-				WHERE LTRIM(RTRIM(s.SampleRefNo)) NOT LIKE '%[^0-9]%'
-				) _s
-			ORDER BY _s.SampleRefNo DESC
-		)
-
-	RETURN @NextSampleRef
-END
-GO
-
 IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='util_UpdateGuidedDataStatePriority'))
 BEGIN
 	CREATE TABLE [dbo].[util_UpdateGuidedDataStatePriority](
@@ -50952,13 +50916,13 @@ IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo'
 BEGIN
 	CREATE TABLE [dbo].[WaterSample](
 		[WaterSampleId] [int] IDENTITY(1,1) NOT NULL,
-		[Created] [datetime] NOT NULL,
 		[JobId] [int] NOT NULL,
 		[SampleRef] [varchar](100) NOT NULL,
 		[SiteReference] [varchar](max) NULL,
 		[Description] [varchar](max) NULL,
-		[SamplingOfficerEmployeeId] [int] NULL,
+		[SamplingOfficerEmployeeId] [int] NULL,		
 		[Collected] [datetime] NULL,
+		[CheckedIn] [datetime] NULL,
 		[Filtered] [datetime] NULL,
 		[FilterVolumeId] [int] NULL,
 		[Analysed] [datetime] NULL,
@@ -50970,7 +50934,66 @@ BEGIN
 	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
 	) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 	GO
-
-	ALTER TABLE [dbo].[WaterSample] ADD  CONSTRAINT [DF_WaterSample_Created]  DEFAULT (getdate()) FOR [Created]
+	
 END
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'FN' AND name = 'GetNextSampleRef') < 1 BEGIN
+	EXEC('CREATE Function [dbo].[GetNextSampleRef] () RETURNS VARCHAR(max) AS BEGIN RETURN '''' END')
+End
+
+GO
+
+ALTER Function [dbo].[GetNextSampleRef]
+(
+)
+RETURNS VARCHAR(MAX)
+As
+BEGIN
+
+	DECLARE @NextSampleRef VARCHAR(MAX) = ''
+	SELECT @NextSampleRef = 
+		(
+			SELECT TOP 1 'BS' + CASE
+									WHEN LEN(CONVERT(VARCHAR(MAX), _s.SamplerefNo + 1)) < 6 THEN RIGHT('000000' + CAST(_s.SampleRefNo + 1 AS VARCHAR), 6)
+									ELSE CONVERT(VARCHAR(MAX), _s.SamplerefNo + 1)
+								END   [nv]
+			FROM 
+			(
+				SELECT 
+					s.SampleRef, CAST(s.SampleRefNo AS INT) [SampleRefNo]
+				FROM 
+					(
+						Select s.SampleRef [SampleRef], REPLACE(s.SampleRef,'BS','') [SampleRefNo] 
+						FROM Sample s 
+						WHERE LEFT(s.SampleRef,2) = 'BS'
+					) s
+				WHERE 
+					LTRIM(RTRIM(s.SampleRefNo)) NOT LIKE '%[^0-9]%'
+
+				UNION
+
+				SELECT 
+					ws.SampleRef, CAST(ws.SampleRefNo AS INT) [SampleRefNo]
+				FROM 
+					(
+						Select ws.SampleRef [SampleRef], REPLACE(ws.SampleRef,'BS','') [SampleRefNo] 
+						FROM WaterSample ws 
+						WHERE LEFT(ws.SampleRef,2) = 'BS'
+					) ws
+				WHERE 
+					LTRIM(RTRIM(ws.SampleRefNo)) NOT LIKE '%[^0-9]%'
+			) _s
+			ORDER BY 
+				_s.SampleRefNo DESC
+		)
+
+	RETURN @NextSampleRef
+END
+GO
+
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,SampleType,AirSampleType,Deleted,NoEquipmentAllowed,RemovalType,CheckFrequency,CheckLevel,LabType,LegionellaType)  SELECT   71,'Triacetin',0,0,0,0,GETDATE(),0,0,NULL,NULL,1,0  WHERE    (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID = 71)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,SampleType,AirSampleType,Deleted,NoEquipmentAllowed,RemovalType,CheckFrequency,CheckLevel,LabType,LegionellaType)  SELECT   72,'Acetone',0,0,0,0,GETDATE(),0,0,NULL,NULL,1,0  WHERE    (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID = 72)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,SampleType,AirSampleType,Deleted,NoEquipmentAllowed,RemovalType,CheckFrequency,CheckLevel,LabType,LegionellaType)  SELECT   73,'Tablets',0,0,0,0,GETDATE(),0,0,NULL,NULL,0,0  WHERE    (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID = 73)=0
+
 GO
