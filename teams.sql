@@ -49143,448 +49143,11 @@ BEGIN
 END
 GO
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_QuoteHistory') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[Paged_QuoteHistory] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-
--- =============================================
--- Author:        Joe
--- Create date: 03/09/2015
--- Description:   Moving 'QuoteHistory' from a view to a stored procedure to increase speed.
--- In addition the the normal re-factoring, this requires a page number and number of items per page
--- =============================================
-
-/* NOTE STODD 16/10/2015 - Please ensure this proc and Export_QuoteHistory are synced at all times */
-
-
-ALTER PROCEDURE [dbo].[Paged_QuoteHistory]
-	-- Paging
-	@PerPage INT = 15,
-	@CurrentPage INT = 1,
-
-	-- Standard filters
-	@ClientID INT = 0,
-	@SiteID INT = 0,
-	@ProjectID INT = 0,
-	@QuoteID INT = 0,
-	@EnquiryID INT = 0,
-	@Filter VARCHAR(MAX) = '',
-	@LoggedInEmployeeID INT = 0,
-
-	-- User selected filters
-	@QuoteHistoryFilterAssignedTo INT = 0,
-	@QuoteHistoryFilterQuoteType INT = 0,
-	@QuoteHistoryFilterHideInstaquote INT = 0,
-	@QuoteHistoryFilterQuoteEnquiry VARCHAR(10) = '',
-	@QuoteHistoryFilterCreatedBy int = 0,
-	@FilterStartDate DATETIME = NULL,
-	@FilterEndDate DATETIME = NULL
-	
-AS
-BEGIN
-      SET NOCOUNT ON;
-
-      Set @FilterStartDate = ISNULL(@FilterStartDate,DATEADD(year,-1,GETDATE()))
-      Set @FilterEndDate = ISNULL(@FilterEndDate,DATEADD(month,3,GETDATE()))
-
-	  DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
-	  INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
-	  SELECT
-			c.ClientID,
-			Access.EmployeeRestrictedClientAccessID
-	  FROM
-			Client c
-			OUTER APPLY
-			(
-				SELECT
-					erca.EmployeeRestrictedClientAccessID
-				FROM
-					EmployeeRestrictedClientAccess erca
-				WHERE
-					erca.EmployeeID = @LoggedInEmployeeID
-						AND
-					erca.ClientID = c.ClientID
-			) Access
-	  WHERE
-			c.Restricted = 1
-      
-      DECLARE @FilterSites TABLE (SiteID INT)
-      
-      DECLARE @QuoteHistoryViewID TABLE (ItemID INT, ItemType VARCHAR(3), Created DATETIME)
-
-      DECLARE @QuoteHistoryView TABLE (ItemId INT,Itemtype VARCHAR(3),ItemNo INT, QuoteTypeID INT,QuoteType VARCHAR(MAX),Value MONEY,Created DATETIME, [Status] VARCHAR(MAX),LastNoteCreated VARCHAR(MAX),ClientId INT,ProjectID INT,SiteID INT, [Site] VARCHAR(MAX), [Address] VARCHAR(MAX), Postcode VARCHAR(MAX),Accepted DATETIME, Rejected DATETIME,IsInstaQuote BIT,AssignedEmployeeID INT, StatusText VARCHAR(MAX), isNew INT, DateActioned DATETIME, HasPDF INT, [File] varchar(MAX))
-      
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
-		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select  q.QuoteID as ItemId, 'Q' as ItemType, q.Created
-		  From
-				Quote q 
-				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-				Left Outer Join Job j On q.JobId = j.JobId
-				Left Outer Join Client c On c.ClientID = q.ClientID 
-				Left Outer Join Project p On p.ProjectID = q.ProjectID 
-				Left Outer Join Site s On s.SiteID = q.SiteID
-				LEFT OUTER JOIN @FilterSites fs ON s.SiteID=fs.SiteID
-		  Where 
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							s.Address Like '%' + @Filter + '%'
-								  Or 
-							s.Postcode Like '%' + @Filter + '%'
-								  Or 
-							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
-							Or s.UPRN = @Filter
-					)
-				)
-					  And
-				(Not Accepted Is Null Or Not Rejected Is Null) 
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
-								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
-								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND					  
-				(@ProjectID=0 OR q.ProjectID=@ProjectID)
-					  AND
-				(@SiteID=0 OR q.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR q.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN q.EmployeeID = @QuoteHistoryFilterCreatedBy THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
-											Cast(
-												Case When q.ReallyQuickQuote = 1 Then 
-													1
-												Else 
-													0 
-												End as bit) 
-										END = 0
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-					AND
-				q.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
-      END
-
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='E'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select enq.EnquiryId,'E' as ItemType, enq.Created    
-		  From
-				Enquiries enq
-		  Where
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							enq.SiteAddress Like '%' + @Filter + '%'
-								  Or 
-							enq.SitePostcode Like '%' + @Filter + '%'
-								  Or 
-							enq.SiteAddress + ', ' + enq.SitePostcode Like '%' + @Filter + '%'
-							Or enq.SiteUPRN = @Filter
-				)
-				)
-					  And
-				(Not enq.Accepted Is Null Or Not enq.Rejected Is Null) 
-					  And
-				(
-					  Not enq.QuoteId Is Null
-							Or
-					  (
-							enq.QuoteId Is Null
-								  And
-							Not enq.Rejected Is Null
-					  )
-				)
-					  AND
-				(@ProjectID=0)
-					  AND
-				(@SiteID=0 OR enq.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR enq.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN @QuoteID = 0 AND @EnquiryID = enq.EnquiryID THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										enq.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN enq.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN enq.EmployeeID = @QuoteHistoryFilterCreatedBy THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN enq.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-					AND
-				enq.ClientId NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
-      END
-
-	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
-		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
-	  BEGIN
-
-		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
-		  Select DISTINCT q.QuoteID as ItemId, 'RQV' as ItemType, q.Created
-		  FROM
-				Quote q 
-				INNER JOIN [dbo].[QuoteEmployee] qe ON qe.[QuoteID] = [q].[QuoteID]
-				INNER JOIN [dbo].[QuoteVisit] qv ON qe.[QuoteEmployeeID] = [qv].[QuoteEmployeeID]   
-				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-				INNER JOIN Appointment a ON a.QuoteID=q.QuoteID AND a.DateDeclined IS NOT NULL
-				OUTER APPLY 
-				(
-					  /*count declined appointments and non declineds, if they have */
-					  SELECT
-							COUNT(*) [ValidAppointments]
-					  FROM
-							[dbo].[Appointment] _app 
-					  WHERE
-							_app.[QuoteID] = [q].[QuoteID]
-								  AND
-							_app.DateDeclined IS NULL
-				) currentCount
-				Left Outer Join Job j On q.JobId = j.JobId
-				Left Outer Join Client c On c.ClientID = q.ClientID 
-				Left Outer Join Project p On p.ProjectID = q.ProjectID 
-				Left Outer Join Site s On s.SiteID = q.SiteID 
-		  Where 
-				(
-					  LEN(@Filter ) = 0
-							OR
-					  (
-							s.Address Like '%' + @Filter + '%'
-								  Or 
-							s.Postcode Like '%' + @Filter + '%'
-								  Or 
-							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
-							Or s.UPRN = @Filter
-					  )
-				)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
-								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND
-						(
-							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
-								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
-							ELSE
-								1
-							END = 1 
-						)
-					AND					
-				currentCount.ValidAppointments=0
-					  AND
-				(@ProjectID=0 OR q.ProjectID=@ProjectID)
-					  AND
-				(@SiteID=0 OR q.SiteID=@SiteID)
-					  AND
-				(@ClientID=0 OR q.ClientID=@ClientID)
-					  AND
-				(
-					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
-							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
-					  ELSE
-							CASE WHEN
-								  (
-										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN q.EmployeeID = @QuoteHistoryFilterCreatedBy THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
-								  )
-										AND
-								  (
-										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
-											Cast(
-												Case When q.ReallyQuickQuote = 1 Then 
-													1
-												Else 
-													0 
-												End as bit) 
-										END = 0
-								  )
-							THEN 1 ELSE 0 END
-					  END = 1
-				)
-					AND
-				q.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
-      END
-		         
-			DECLARE @TotalRowNumber INT = (Select COUNT(*) [Number] FROM @QuoteHistoryViewID)				 
-				    
-      ;With Paging As 
-    ( 
-        Select 
-
-			CASE WHEN @PerPage = 0 THEN
-				1
-			ELSE
-               Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
-			END As Pages, 
-
-			CASE WHEN @PerPage = 0 THEN
-				1
-			ELSE
-               ((Row_Number() Over(Order By a.Created DESC)-1) / @PerPage)+1
-			END As Page, 
-
-               Row_Number() Over(Order By a.Created DESC) as Row_Num, 
-               *
-               From 
-               (
-                              Select * FROM @QuoteHistoryViewID
-                     ) a
-    )
-    Select  
-			@TotalRowNumber [Row_Total],
-            main.Pages,
-            main.Page,
-            main.Row_Num,
-            main.ItemId,
-            main.Itemtype,
-            ISNULL(e.EnquiryNo,q.QuoteNo) [ItemNo], 
-            ISNULL(e.QuoteTypeID,q.QuoteTypeID) [QuoteTypeID],
-            ISNULL(e.QuoteType,qt.QuoteType) [QuoteType], 
-            q.Value [Value], 
-            main.Created [Created], 
-			CASE
-				WHEN e.QuoteNo IS NOT NULL
-				THEN dbo.FormatTeamsReference('Q', e.QuoteNo)
-			ELSE
-				q.Status
-			END [Status], 
-            ISNULL(e.LastNoteCreated,q.LastNoteCreated) [LastNoteCreated], 
-            ISNULL(e.ClientId,q.ClientID) [ClientId], 
-            IsNull(e.Client + Case When Len(e.ClientBranchName) > 0 Then ' (' + e.ClientBranchName + ')' Else '' End,c.Client + Case When Len(c.BranchName) > 0 Then ' (' + c.BranchName + ')' Else '' End) [Client],
-            q.ProjectID [ProjectID], 
-            p.Project + ' / ' + ISNULL([p].[GroupName],'') [Project], 
-            ISNULL(e.SiteId,q.SiteID) [SiteID], 
-            ISNULL(e.SiteAddress,s.Address) [Site], 
-            ISNULL(e.SiteAddress,s.Address) [Address], 
-            ISNULL(e.SitePostcode,s.Postcode) [Postcode], 
-            ISNULL(e.Accepted,q.Accepted) [Accepted], 
-            ISNULL(e.Rejected,q.Rejected) [Rejected], 
-            Cast(Case When ABS(DateDiff(day, j.Created, q.Created)) = 0 Then Case When ABS(DateDiff(s, j.Created, q.Created)) <= 10 Then 1 Else 0 End ELSE 0 END as bit) [IsInstaQuote], --the deault is 0 i.e. for enquiries
-            ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID) [AssignedEmployeeID], 
-            CASE main.ItemType WHEN 'RTQ' Then 'Discarded' ELSE CASE WHEN IsNull(e.Rejected,q.Rejected) IS NOT NULL THEN COALESCE(e.DiscardReason, q.RejectReason, 'Rejected') ELSE 'Accepted' END END [StatusText], 
-            ISNULL(CASE WHEN IsNull(e.Created,q.Created) > DATEADD(hh,-1,GetDate()) THEN 1 END,0) [isNew], 
-            ISNULL(q.Rejected,CASE WHEN IsNull(e.Accepted,q.Accepted) IS NOT NULL THEN IsNull(e.Accepted,q.Accepted) ELSE IsNull(e.Rejected,q.Rejected) END) [DateActioned], 
-            CASE WHEN main.ItemType = 'Q' THEN CASE WHEN PDFId is not null then 1 ELSE 0 END END [HasPDF], 
-            CASE WHEN main.ItemType = 'Q' THEN pdf.FileName END [File],
-            q.JobID,
-			ISNULL(e.EnquirySource,es.Description) [Source],
-			ISNULL(e.LeadEmployee, qemp.FullName)	[SourceOrigin],
-			CONVERT(BIT, CASE WHEN qt.MethodStatement_TemplateTypeID IS NOT NULL THEN 1 ELSE 0 END) [UseMethodStatement],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN 1 ELSE 0 END as BIT) [HasNotes],
-            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) > DATEADD(hh,-1,GetDate()) THEN 1 ELSE 0 END ELSE 0 END as BIT) [NotesInLastHour],
-			ISNULL(emp.FullName, '') [AssignedTo],
-			q.CurrencyId [CurrencyID],
-			Isnull(ecb.FullName,'Not Recorded') CreatedBy			
-	From 
-            Paging main
-            LEFT OUTER JOIN Enquiries e ON main.ItemID=e.EnquiryID AND main.ItemType='E'
-			LEFT OUTER JOIN Quote q ON main.ItemID=q.QuoteID AND (main.ItemType='Q' OR main.ItemType='RQV')
-			LEFT OUTER JOIN EnquirySource es ON q.EnquirySourceID = es.EnquirySourceID
-			LEFT OUTER JOIN Employee qemp ON q.EnquiryEmployeeID = qemp.EmployeeID
-            LEFT OUTER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
-            LEFT OUTER JOIN Job j On q.JobId = j.JobId
-            LEFT OUTER JOIN Client c On c.ClientID = q.ClientID 
-            LEFT OUTER JOIN Project p On p.ProjectID = q.ProjectID 
-            LEFT OUTER JOIN Site s On s.SiteID = q.SiteID
-            LEFT OUTER JOIN Employee emp ON emp.EmployeeID=ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID)
-			LEFT OUTER JOIN Employee ecb ON ecb.EmployeeID = q.EmployeeID
-            OUTER APPLY
-            (
-                  Select IsNull((Select top 1 Value FROM QuoteValueHistory qvh Where qvh.QuoteID=q.QuoteID AND ((Accepted IS NOT NULL AND q.Accepted IS NOT NULL) OR (Rejected IS NOT NULL AND q.Rejected IS NOT NULL)) Order by CASE WHEN Accepted IS NOT NULL THEN Accepted ELSE Rejected END DESC),q.VALUE) [QuoteHistoryValue]
-            ) qHistory
-            OUTER APPLY
-            (
-                  SELECT TOP 1 [Pdf].[PDFId],[Pdf].[FileName] from Pdf where Pdf.QuoteID = q.QuoteID  and pdf.DateDeleted IS null order BY [Pdf].[DateCreated] DESC    
-            )pdf(PDFId,filename)
-            
-	Where 
-            (main.Row_Num Between (@CurrentPage - 1) * @PerPage + 1 And @CurrentPage * @PerPage) OR (@PerPage=0 AND @CurrentPage=0)
-    Order by
-            main.Row_Num
-      
-    SET NOCOUNT OFF;
-END
-
-GO
-
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_OutstandingQuotes') < 1
 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[Paged_OutstandingQuotes] AS BEGIN SET NOCOUNT ON; END')
 END
 GO
-
-
 
 -- =============================================
 -- Author:        Joe
@@ -50933,8 +50496,6 @@ BEGIN
 		[WaterSampleId] ASC
 	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
 	) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
-	GO
-	
 END
 GO
 
@@ -50995,5 +50556,437 @@ GO
 INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,SampleType,AirSampleType,Deleted,NoEquipmentAllowed,RemovalType,CheckFrequency,CheckLevel,LabType,LegionellaType)  SELECT   71,'Triacetin',0,0,0,0,GETDATE(),0,0,NULL,NULL,1,0  WHERE    (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID = 71)=0
 INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,SampleType,AirSampleType,Deleted,NoEquipmentAllowed,RemovalType,CheckFrequency,CheckLevel,LabType,LegionellaType)  SELECT   72,'Acetone',0,0,0,0,GETDATE(),0,0,NULL,NULL,1,0  WHERE    (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID = 72)=0
 INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,SampleType,AirSampleType,Deleted,NoEquipmentAllowed,RemovalType,CheckFrequency,CheckLevel,LabType,LegionellaType)  SELECT   73,'Tablets',0,0,0,0,GETDATE(),0,0,NULL,NULL,0,0  WHERE    (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID = 73)=0
+GO
 
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_QuoteHistory') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[Paged_QuoteHistory] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+-- =============================================
+-- Author:        Joe
+-- Create date: 03/09/2015
+-- Description:   Moving 'QuoteHistory' from a view to a stored procedure to increase speed.
+-- In addition the the normal re-factoring, this requires a page number and number of items per page
+-- =============================================
+
+/* NOTE STODD 16/10/2015 - Please ensure this proc and Export_QuoteHistory are synced at all times */
+
+
+ALTER PROCEDURE [dbo].[Paged_QuoteHistory]
+	-- Paging
+	@PerPage INT = 15,
+	@CurrentPage INT = 1,
+
+	-- Standard filters
+	@ClientID INT = 0,
+	@SiteID INT = 0,
+	@ProjectID INT = 0,
+	@QuoteID INT = 0,
+	@EnquiryID INT = 0,
+	@Filter VARCHAR(MAX) = '',
+	@LoggedInEmployeeID INT = 0,
+
+	-- User selected filters
+	@QuoteHistoryFilterAssignedTo INT = 0,
+	@QuoteHistoryFilterQuoteType INT = 0,
+	@QuoteHistoryFilterHideInstaquote INT = 0,
+	@QuoteHistoryFilterQuoteEnquiry VARCHAR(10) = '',
+	@QuoteHistoryFilterCreatedBy int = 0,
+	@FilterStartDate DATETIME = NULL,
+	@FilterEndDate DATETIME = NULL
+WITH RECOMPILE	
+AS
+BEGIN
+      SET NOCOUNT ON;
+
+      Set @FilterStartDate = ISNULL(@FilterStartDate,DATEADD(year,-1,GETDATE()))
+      Set @FilterEndDate = ISNULL(@FilterEndDate,DATEADD(month,3,GETDATE()))
+
+	  DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
+	  INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
+	  SELECT
+			c.ClientID,
+			Access.EmployeeRestrictedClientAccessID
+	  FROM
+			Client c
+			OUTER APPLY
+			(
+				SELECT
+					erca.EmployeeRestrictedClientAccessID
+				FROM
+					EmployeeRestrictedClientAccess erca
+				WHERE
+					erca.EmployeeID = @LoggedInEmployeeID
+						AND
+					erca.ClientID = c.ClientID
+			) Access
+	  WHERE
+			c.Restricted = 1
+      
+      DECLARE @FilterSites TABLE (SiteID INT)
+      
+      DECLARE @QuoteHistoryViewID TABLE (ItemID INT, ItemType VARCHAR(3), Created DATETIME)
+
+      DECLARE @QuoteHistoryView TABLE (ItemId INT,Itemtype VARCHAR(3),ItemNo INT, QuoteTypeID INT,QuoteType VARCHAR(MAX),Value MONEY,Created DATETIME, [Status] VARCHAR(MAX),LastNoteCreated VARCHAR(MAX),ClientId INT,ProjectID INT,SiteID INT, [Site] VARCHAR(MAX), [Address] VARCHAR(MAX), Postcode VARCHAR(MAX),Accepted DATETIME, Rejected DATETIME,IsInstaQuote BIT,AssignedEmployeeID INT, StatusText VARCHAR(MAX), isNew INT, DateActioned DATETIME, HasPDF INT, [File] varchar(MAX))
+      
+	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
+		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
+	  BEGIN
+
+		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
+		  Select  q.QuoteID as ItemId, 'Q' as ItemType, q.Created
+		  From
+				Quote q 
+				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
+				Left Outer Join Job j On q.JobId = j.JobId
+				Left Outer Join Client c On c.ClientID = q.ClientID 
+				Left Outer Join Project p On p.ProjectID = q.ProjectID 
+				Left Outer Join Site s On s.SiteID = q.SiteID
+				LEFT OUTER JOIN @FilterSites fs ON s.SiteID=fs.SiteID
+		  Where 
+				(
+					  LEN(@Filter ) = 0
+							OR
+					  (
+							s.Address Like '%' + @Filter + '%'
+								  Or 
+							s.Postcode Like '%' + @Filter + '%'
+								  Or 
+							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
+							Or s.UPRN = @Filter
+					)
+				)
+					  And
+				(Not Accepted Is Null Or Not Rejected Is Null) 
+					AND
+						(
+							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
+								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
+							ELSE
+								1
+							END = 1 
+						)
+					AND
+						(
+							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
+								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
+							ELSE
+								1
+							END = 1 
+						)
+					AND					  
+				(@ProjectID=0 OR q.ProjectID=@ProjectID)
+					  AND
+				(@SiteID=0 OR q.SiteID=@SiteID)
+					  AND
+				(@ClientID=0 OR q.ClientID=@ClientID)
+					  AND
+				(
+					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
+							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
+					  ELSE
+							CASE WHEN
+								  (
+										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN q.EmployeeID = @QuoteHistoryFilterCreatedBy THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
+											Cast(
+												Case When q.ReallyQuickQuote = 1 Then 
+													1
+												Else 
+													0 
+												End as bit) 
+										END = 0
+								  )
+							THEN 1 ELSE 0 END
+					  END = 1
+				)
+					AND
+				q.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+      END
+
+	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='E'
+	  BEGIN
+
+		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
+		  Select enq.EnquiryId,'E' as ItemType, enq.Created    
+		  From
+				Enquiries enq
+		  Where
+				(
+					  LEN(@Filter ) = 0
+							OR
+					  (
+							enq.SiteAddress Like '%' + @Filter + '%'
+								  Or 
+							enq.SitePostcode Like '%' + @Filter + '%'
+								  Or 
+							enq.SiteAddress + ', ' + enq.SitePostcode Like '%' + @Filter + '%'
+							Or enq.SiteUPRN = @Filter
+				)
+				)
+					  And
+				(Not enq.Accepted Is Null Or Not enq.Rejected Is Null) 
+					  And
+				(
+					  Not enq.QuoteId Is Null
+							Or
+					  (
+							enq.QuoteId Is Null
+								  And
+							Not enq.Rejected Is Null
+					  )
+				)
+					  AND
+				(@ProjectID=0)
+					  AND
+				(@SiteID=0 OR enq.SiteID=@SiteID)
+					  AND
+				(@ClientID=0 OR enq.ClientID=@ClientID)
+					  AND
+				(
+					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
+							CASE WHEN @QuoteID = 0 AND @EnquiryID = enq.EnquiryID THEN 1 ELSE 0 END
+					  ELSE
+							CASE WHEN
+								  (
+										enq.Created BETWEEN @FilterStartDate AND @FilterEndDate
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN enq.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN enq.EmployeeID = @QuoteHistoryFilterCreatedBy THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN enq.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
+								  )
+							THEN 1 ELSE 0 END
+					  END = 1
+				)
+					AND
+				enq.ClientId NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+      END
+
+	  IF @QuoteHistoryFilterQuoteEnquiry='' OR @QuoteHistoryFilterQuoteEnquiry='Q' 
+		OR @QuoteHistoryFilterQuoteEnquiry='Q_AC' OR @QuoteHistoryFilterQuoteEnquiry='Q_RJ'
+	  BEGIN
+
+		  Insert into @QuoteHistoryViewID (ItemID,ItemType,Created)
+		  Select DISTINCT q.QuoteID as ItemId, 'RQV' as ItemType, q.Created
+		  FROM
+				Quote q 
+				INNER JOIN [dbo].[QuoteEmployee] qe ON qe.[QuoteID] = [q].[QuoteID]
+				INNER JOIN [dbo].[QuoteVisit] qv ON qe.[QuoteEmployeeID] = [qv].[QuoteEmployeeID]   
+				Inner Join QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
+				INNER JOIN Appointment a ON a.QuoteID=q.QuoteID AND a.DateDeclined IS NOT NULL
+				OUTER APPLY 
+				(
+					  /*count declined appointments and non declineds, if they have */
+					  SELECT
+							COUNT(*) [ValidAppointments]
+					  FROM
+							[dbo].[Appointment] _app 
+					  WHERE
+							_app.[QuoteID] = [q].[QuoteID]
+								  AND
+							_app.DateDeclined IS NULL
+				) currentCount
+				Left Outer Join Job j On q.JobId = j.JobId
+				Left Outer Join Client c On c.ClientID = q.ClientID 
+				Left Outer Join Project p On p.ProjectID = q.ProjectID 
+				Left Outer Join Site s On s.SiteID = q.SiteID 
+		  Where 
+				(
+					  LEN(@Filter ) = 0
+							OR
+					  (
+							s.Address Like '%' + @Filter + '%'
+								  Or 
+							s.Postcode Like '%' + @Filter + '%'
+								  Or 
+							s.Address + ', ' + s.Postcode Like '%' + @Filter + '%'
+							Or s.UPRN = @Filter
+					  )
+				)
+					AND
+						(
+							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_AC' THEN
+								CASE WHEN Not q.Accepted Is Null THEN 1 ELSE 0 END
+							ELSE
+								1
+							END = 1 
+						)
+					AND
+						(
+							CASE WHEN @QuoteHistoryFilterQuoteEnquiry = 'Q_RJ' THEN
+								CASE WHEN Not q.Rejected Is Null THEN 1 ELSE 0 END
+							ELSE
+								1
+							END = 1 
+						)
+					AND					
+				currentCount.ValidAppointments=0
+					  AND
+				(@ProjectID=0 OR q.ProjectID=@ProjectID)
+					  AND
+				(@SiteID=0 OR q.SiteID=@SiteID)
+					  AND
+				(@ClientID=0 OR q.ClientID=@ClientID)
+					  AND
+				(
+					  CASE WHEN @QuoteID > 0 OR @EnquiryID > 0 THEN
+							CASE WHEN q.QuoteID = @QuoteID AND @EnquiryID = 0 THEN 1 ELSE 0 END
+					  ELSE
+							CASE WHEN
+								  (
+										q.Created BETWEEN @FilterStartDate AND @FilterEndDate
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterAssignedTo = 0 THEN 1 ELSE CASE WHEN q.AssignedEmployeeID = @QuoteHistoryFilterAssignedTo THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterCreatedBy = 0 THEN 1 ELSE CASE WHEN q.EmployeeID = @QuoteHistoryFilterCreatedBy THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterQuoteType = 0 THEN 1 ELSE CASE WHEN q.QuoteTypeID = @QuoteHistoryFilterQuoteType THEN 1 ELSE 0 END END = 1
+								  )
+										AND
+								  (
+										CASE WHEN @QuoteHistoryFilterHideInstaquote = 0 THEN 0 ELSE 
+											Cast(
+												Case When q.ReallyQuickQuote = 1 Then 
+													1
+												Else 
+													0 
+												End as bit) 
+										END = 0
+								  )
+							THEN 1 ELSE 0 END
+					  END = 1
+				)
+					AND
+				q.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+      END
+		         
+			DECLARE @TotalRowNumber INT = (Select COUNT(*) [Number] FROM @QuoteHistoryViewID)				 
+				    
+      ;With Paging As 
+    ( 
+        Select 
+
+			CASE WHEN @PerPage = 0 THEN
+				1
+			ELSE
+               Cast(Ceiling(Count(*) Over (Partition By '') * 1.00 / @PerPage) as int)
+			END As Pages, 
+
+			CASE WHEN @PerPage = 0 THEN
+				1
+			ELSE
+               ((Row_Number() Over(Order By a.Created DESC)-1) / @PerPage)+1
+			END As Page, 
+
+               Row_Number() Over(Order By a.Created DESC) as Row_Num, 
+               *
+               From 
+               (
+                              Select * FROM @QuoteHistoryViewID
+                     ) a
+    )
+    Select  
+			@TotalRowNumber [Row_Total],
+            main.Pages,
+            main.Page,
+            main.Row_Num,
+            main.ItemId,
+            main.Itemtype,
+            ISNULL(e.EnquiryNo,q.QuoteNo) [ItemNo], 
+            ISNULL(e.QuoteTypeID,q.QuoteTypeID) [QuoteTypeID],
+            ISNULL(e.QuoteType,qt.QuoteType) [QuoteType], 
+            q.Value [Value], 
+            main.Created [Created], 
+			CASE
+				WHEN e.QuoteNo IS NOT NULL
+				THEN dbo.FormatTeamsReference('Q', e.QuoteNo)
+			ELSE
+				q.Status
+			END [Status], 
+            ISNULL(e.LastNoteCreated,q.LastNoteCreated) [LastNoteCreated], 
+            ISNULL(e.ClientId,q.ClientID) [ClientId], 
+            IsNull(e.Client + Case When Len(e.ClientBranchName) > 0 Then ' (' + e.ClientBranchName + ')' Else '' End,c.Client + Case When Len(c.BranchName) > 0 Then ' (' + c.BranchName + ')' Else '' End) [Client],
+            q.ProjectID [ProjectID], 
+            p.Project + ' / ' + ISNULL([p].[GroupName],'') [Project], 
+            ISNULL(e.SiteId,q.SiteID) [SiteID], 
+            ISNULL(e.SiteAddress,s.Address) [Site], 
+            ISNULL(e.SiteAddress,s.Address) [Address], 
+            ISNULL(e.SitePostcode,s.Postcode) [Postcode], 
+            ISNULL(e.Accepted,q.Accepted) [Accepted], 
+            ISNULL(e.Rejected,q.Rejected) [Rejected], 
+            Cast(Case When ABS(DateDiff(day, j.Created, q.Created)) = 0 Then Case When ABS(DateDiff(s, j.Created, q.Created)) <= 10 Then 1 Else 0 End ELSE 0 END as bit) [IsInstaQuote], --the deault is 0 i.e. for enquiries
+            ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID) [AssignedEmployeeID], 
+            CASE main.ItemType WHEN 'RTQ' Then 'Discarded' ELSE CASE WHEN IsNull(e.Rejected,q.Rejected) IS NOT NULL THEN COALESCE(e.DiscardReason, q.RejectReason, 'Rejected') ELSE 'Accepted' END END [StatusText], 
+            ISNULL(CASE WHEN IsNull(e.Created,q.Created) > DATEADD(hh,-1,GetDate()) THEN 1 END,0) [isNew], 
+            ISNULL(q.Rejected,CASE WHEN IsNull(e.Accepted,q.Accepted) IS NOT NULL THEN IsNull(e.Accepted,q.Accepted) ELSE IsNull(e.Rejected,q.Rejected) END) [DateActioned], 
+            CASE WHEN main.ItemType = 'Q' THEN CASE WHEN PDFId is not null then 1 ELSE 0 END END [HasPDF], 
+            CASE WHEN main.ItemType = 'Q' THEN pdf.FileName END [File],
+            q.JobID,
+			ISNULL(e.EnquirySource,es.Description) [Source],
+			ISNULL(e.LeadEmployee, qemp.FullName)	[SourceOrigin],
+			CONVERT(BIT, CASE WHEN qt.MethodStatement_TemplateTypeID IS NOT NULL THEN 1 ELSE 0 END) [UseMethodStatement],
+            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN 1 ELSE 0 END as BIT) [HasNotes],
+            CAST(CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) IS NOT NULL THEN CASE WHEN ISNULL(e.LastNoteCreated,q.LastNoteCreated) > DATEADD(hh,-1,GetDate()) THEN 1 ELSE 0 END ELSE 0 END as BIT) [NotesInLastHour],
+			ISNULL(emp.FullName, '') [AssignedTo],
+			q.CurrencyId [CurrencyID],
+			Isnull(ecb.FullName,'Not Recorded') CreatedBy			
+	From 
+            Paging main
+            LEFT OUTER JOIN Enquiries e ON main.ItemID=e.EnquiryID AND main.ItemType='E'
+			LEFT OUTER JOIN Quote q ON main.ItemID=q.QuoteID AND (main.ItemType='Q' OR main.ItemType='RQV')
+			LEFT OUTER JOIN EnquirySource es ON q.EnquirySourceID = es.EnquirySourceID
+			LEFT OUTER JOIN Employee qemp ON q.EnquiryEmployeeID = qemp.EmployeeID
+            LEFT OUTER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID 
+            LEFT OUTER JOIN Job j On q.JobId = j.JobId
+            LEFT OUTER JOIN Client c On c.ClientID = q.ClientID 
+            LEFT OUTER JOIN Project p On p.ProjectID = q.ProjectID 
+            LEFT OUTER JOIN Site s On s.SiteID = q.SiteID
+            LEFT OUTER JOIN Employee emp ON emp.EmployeeID=ISNULL(e.AssignedEmployeeId,q.AssignedEmployeeID)
+			LEFT OUTER JOIN Employee ecb ON ecb.EmployeeID = q.EmployeeID
+            OUTER APPLY
+            (
+                  Select IsNull((Select top 1 Value FROM QuoteValueHistory qvh Where qvh.QuoteID=q.QuoteID AND ((Accepted IS NOT NULL AND q.Accepted IS NOT NULL) OR (Rejected IS NOT NULL AND q.Rejected IS NOT NULL)) Order by CASE WHEN Accepted IS NOT NULL THEN Accepted ELSE Rejected END DESC),q.VALUE) [QuoteHistoryValue]
+            ) qHistory
+            OUTER APPLY
+            (
+                  SELECT TOP 1 [Pdf].[PDFId],[Pdf].[FileName] from Pdf where Pdf.QuoteID = q.QuoteID  and pdf.DateDeleted IS null order BY [Pdf].[DateCreated] DESC    
+            )pdf(PDFId,filename)
+            
+	Where 
+            (main.Row_Num Between (@CurrentPage - 1) * @PerPage + 1 And @CurrentPage * @PerPage) OR (@PerPage=0 AND @CurrentPage=0)
+    Order by
+            main.Row_Num
+      
+    SET NOCOUNT OFF;
+END
 GO

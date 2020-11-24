@@ -17363,6 +17363,13 @@ BEGIN
   EXEC('CREATE PROCEDURE [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_StaticTables] AS BEGIN SET NOCOUNT ON; END')
 END
 GO
+USE [TEAMS]
+GO
+/****** Object:  StoredProcedure [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_StaticTables]    Script Date: 12/11/2020 15:51:25 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
 
 ALTER PROC [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_StaticTables]
 (
@@ -17406,13 +17413,13 @@ BEGIN
 	END
 
 	IF @StartTableNumber IS NULL OR (@StartTableNumber <= 5) BEGIN
-	DECLARE @CalibrationTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [CalibrationID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[EquipmentID|INTEGER|NOTNULL||] INT NOT NULL ,[CalibrationDate|DATETIME|NOTNULL||] DATETIME NOT NULL ,[DateCreated|DATETIME|NOTNULL||] DATETIME NOT NULL ,[DateDeleted|DATETIME|NULL||] DATETIME NULL )   INSERT INTO @CalibrationTable ([SQLTableName|NVARCHAR|NOTNULL||], [CalibrationID|INTEGER|NOTNULL||SERVERKEY],[EquipmentID|INTEGER|NOTNULL||],[CalibrationDate|DATETIME|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[DateDeleted|DATETIME|NULL||])      Select 'Calibration' AS [SQLTableName|NVARCHAR|NOTNULL||], [CalibrationID],[EquipmentID],[CalibrationDate],[DateCreated],[DateDeleted] FROM Calibration  SELECT 'Calibration' AS [SQLTableName|NVARCHAR|NOTNULL||], [CalibrationID|INTEGER|NOTNULL||SERVERKEY],[EquipmentID|INTEGER|NOTNULL||],[CalibrationDate|DATETIME|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[DateDeleted|DATETIME|NULL||] FROM @CalibrationTable
+	DECLARE @CalibrationTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [CalibrationID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[EquipmentID|INTEGER|NOTNULL||] INT NOT NULL ,[CalibrationDate|DATETIME|NOTNULL||] DATETIME NOT NULL ,[DateCreated|DATETIME|NOTNULL||] DATETIME NOT NULL ,[DateDeleted|DATETIME|NULL||] DATETIME NULL )    INSERT INTO @CalibrationTable ([SQLTableName|NVARCHAR|NOTNULL||], [CalibrationID|INTEGER|NOTNULL||SERVERKEY],[EquipmentID|INTEGER|NOTNULL||],[CalibrationDate|DATETIME|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[DateDeleted|DATETIME|NULL||])       SELECT c.[SQLTableName|NVARCHAR|NOTNULL||],[CalibrationID],[EquipmentID],[CalibrationDate],[DateCreated],[DateDeleted] FROM (Select 'Calibration' AS [SQLTableName|NVARCHAR|NOTNULL||], c.[CalibrationID],c.[EquipmentID],c.[CalibrationDate],c.[DateCreated],c.[DateDeleted],ROW_NUMBER() OVER (Partition By c.EquipmentID ORDER BY c.DateDeleted, c.CalibrationDate DESC) [LatestCalibration] FROM Calibration c INNER JOIN Equipment e ON c.EquipmentID=e.EquipmentID INNER JOIN CalibrationInformation ci ON c.CalibrationID=ci.CalibrationID INNER JOIN CalibrationInformationType cit ON cit.CalibrationInformationTypeID=ci.CalibrationInformationTypeID AND cit.Description='Result' WHERE  e.Deleted IS NULL AND e.NotInUse=0 AND e.EquipmentCategoryID<>19) c WHERE c.LatestCalibration=1 SELECT 'Calibration' AS [SQLTableName|NVARCHAR|NOTNULL||], [CalibrationID|INTEGER|NOTNULL||SERVERKEY],[EquipmentID|INTEGER|NOTNULL||],[CalibrationDate|DATETIME|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[DateDeleted|DATETIME|NULL||] FROM @CalibrationTable
 	END
 
 	-- This is where the StartTableNumber check has to check the lower limit as well
 
 	IF @StartTableNumber IS NULL OR (@StartTableNumber >= 2 AND @StartTableNumber <= 6) BEGIN
-	DECLARE @CalibrationInformationTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [CalibrationInformationID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[CalibrationID|INTEGER|NOTNULL||] INT NOT NULL ,[CalibrationInformationTypeID|INTEGER|NOTNULL||] INT NOT NULL ,[CalibrationInt|INTEGER|NULL||] INT NULL ,[CalibrationText|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[CalibrationDateTime|DATETIME|NULL||] DATETIME NULL ) INSERT INTO @CalibrationInformationTable ([SQLTableName|NVARCHAR|NOTNULL||], [CalibrationInformationID|INTEGER|NOTNULL||SERVERKEY],[CalibrationID|INTEGER|NOTNULL||],[CalibrationInformationTypeID|INTEGER|NOTNULL||],[CalibrationInt|INTEGER|NULL||],[CalibrationText|VARCHAR|NULL||],[CalibrationDateTime|DATETIME|NULL||])      Select 'CalibrationInformation' AS [SQLTableName|NVARCHAR|NOTNULL||], [CalibrationInformationID],[CalibrationID],[CalibrationInformationTypeID],[CalibrationInt],[CalibrationText],[CalibrationDateTime] FROM CalibrationInformation   SELECT 'CalibrationInformation' AS [SQLTableName|NVARCHAR|NOTNULL||], [CalibrationInformationID|INTEGER|NOTNULL||SERVERKEY],[CalibrationID|INTEGER|NOTNULL||],[CalibrationInformationTypeID|INTEGER|NOTNULL||],[CalibrationInt|INTEGER|NULL||],[CalibrationText|VARCHAR|NULL||],[CalibrationDateTime|DATETIME|NULL||] FROM @CalibrationInformationTable
+	DECLARE @CalibrationInformationTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [CalibrationInformationID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[CalibrationID|INTEGER|NOTNULL||] INT NOT NULL ,[CalibrationInformationTypeID|INTEGER|NOTNULL||] INT NOT NULL ,[CalibrationInt|INTEGER|NULL||] INT NULL ,[CalibrationText|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[CalibrationDateTime|DATETIME|NULL||] DATETIME NULL ) INSERT INTO @CalibrationInformationTable ([SQLTableName|NVARCHAR|NOTNULL||], [CalibrationInformationID|INTEGER|NOTNULL||SERVERKEY],[CalibrationID|INTEGER|NOTNULL||],[CalibrationInformationTypeID|INTEGER|NOTNULL||],[CalibrationInt|INTEGER|NULL||],[CalibrationText|VARCHAR|NULL||],[CalibrationDateTime|DATETIME|NULL||])  Select 'CalibrationInformation' AS [SQLTableName|NVARCHAR|NOTNULL||], ci.[CalibrationInformationID],ci.[CalibrationID],ci.[CalibrationInformationTypeID],ci.[CalibrationInt],ci.[CalibrationText],ci.[CalibrationDateTime] FROM CalibrationInformation ci INNER JOIN @CalibrationTable c ON ci.CalibrationID=c.[CalibrationID|INTEGER|NOTNULL||SERVERKEY]  INNER JOIN CalibrationInformationType cit ON cit.CalibrationInformationTypeID=ci.CalibrationInformationTypeID AND cit.Description='Result' SELECT 'CalibrationInformation' AS [SQLTableName|NVARCHAR|NOTNULL||], [CalibrationInformationID|INTEGER|NOTNULL||SERVERKEY],[CalibrationID|INTEGER|NOTNULL||],[CalibrationInformationTypeID|INTEGER|NOTNULL||],[CalibrationInt|INTEGER|NULL||],[CalibrationText|VARCHAR|NULL||],[CalibrationDateTime|DATETIME|NULL||] FROM @CalibrationInformationTable
 	END
 
 	IF @StartTableNumber IS NULL OR (@StartTableNumber >= 3 AND @StartTableNumber <= 7) BEGIN
@@ -17492,7 +17499,7 @@ BEGIN
 	END
 
 	IF @StartTableNumber IS NULL OR (@StartTableNumber >= 14 AND @StartTableNumber <= 18) BEGIN
-	DECLARE @EquipmentAssignedTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [EquipmentAssignedID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[EquipmentID|INTEGER|NOTNULL||] INT NOT NULL ,[EmployeeID|INTEGER|NOTNULL||] INT NOT NULL ,[Assigned|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[Deleted|DATETIME|NULL||] DATETIME NULL ) INSERT INTO @EquipmentAssignedTable ([SQLTableName|NVARCHAR|NOTNULL||], [EquipmentAssignedID|INTEGER|NOTNULL||SERVERKEY],[EquipmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[Assigned|DATETIME|NOTNULL||],[Deleted|DATETIME|NULL||])      Select 'EquipmentAssigned' AS [SQLTableName|NVARCHAR|NOTNULL||], [EquipmentAssignedID],[EquipmentID],[EmployeeID],[Assigned],[Deleted] FROM EquipmentAssigned SELECT 'EquipmentAssigned' AS [SQLTableName|NVARCHAR|NOTNULL||], [EquipmentAssignedID|INTEGER|NOTNULL||SERVERKEY],[EquipmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[Assigned|DATETIME|NOTNULL||],[Deleted|DATETIME|NULL||] FROM @EquipmentAssignedTable
+	DECLARE @EquipmentAssignedTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [EquipmentAssignedID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[EquipmentID|INTEGER|NOTNULL||] INT NOT NULL ,[EmployeeID|INTEGER|NOTNULL||] INT NOT NULL ,[Assigned|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[Deleted|DATETIME|NULL||] DATETIME NULL ) INSERT INTO @EquipmentAssignedTable ([SQLTableName|NVARCHAR|NOTNULL||], [EquipmentAssignedID|INTEGER|NOTNULL||SERVERKEY],[EquipmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[Assigned|DATETIME|NOTNULL||],[Deleted|DATETIME|NULL||])      Select 'EquipmentAssigned' AS [SQLTableName|NVARCHAR|NOTNULL||], [EquipmentAssignedID],[EquipmentID],[EmployeeID],[Assigned],[Deleted] FROM EquipmentAssigned WHERE EmployeeID=@EmployeeID SELECT 'EquipmentAssigned' AS [SQLTableName|NVARCHAR|NOTNULL||], [EquipmentAssignedID|INTEGER|NOTNULL||SERVERKEY],[EquipmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[Assigned|DATETIME|NOTNULL||],[Deleted|DATETIME|NULL||] FROM @EquipmentAssignedTable
 	END
 
 	IF @StartTableNumber IS NULL OR (@StartTableNumber >= 15 AND @StartTableNumber <= 19) BEGIN
@@ -17647,6 +17654,7 @@ BEGIN
 
 	SET NOCOUNT OFF;
 END
+
 GO
 
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'mobile_Hazmat_v2.4.2.97_DataTransfer_StaticTables') < 1 
