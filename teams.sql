@@ -5592,76 +5592,6 @@ BEGIN
        
        SET NOCOUNT OFF;
 END
-
-
-If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'DeleteDuplicatedElement_ByJob_FromMobile') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[DeleteDuplicatedElement_ByJob_FromMobile] AS BEGIN SET NOCOUNT ON; END')
-End
-
-GO
-
-USE [TEAMS]
-GO
-/****** Object:  StoredProcedure [dbo].[DeleteDuplicatedElement_ByJob_FromMobile]    Script Date: 12/09/2018 11:40:10 ******/
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-ALTER PROCEDURE [dbo].[DeleteDuplicatedElement_ByJob_FromMobile]
-      @JobID INT
-AS
-BEGIN
-      SET NOCOUNT ON;
-
-	DECLARE @ElementSampleList TABLE (SampleId INT,retain_ElementID INT,ElementTypeID INT)
-	Insert into @ElementSampleList (SampleId,retain_ElementID,ElementTypeID)
-	SELECT s.SampleID, DeleteE.retain_ElementID, DeleteE.ElementTypeID
-	  FROM 
-		(Select JobID FROM Job WITH (NOLOCK) Where JobID=@JobID) j
-	  INNER JOIN JobEmployee je WITH (NOLOCK) ON je.JobID = j.JobID
-	  INNER JOIN Register r WITH (NOLOCK) ON r.JobEmployeeID = je.JobEmployeeID
-	  INNER JOIN Floorplan fp WITH (NOLOCK) ON fp.RegisterID = r.RegisterID
-	  INNER JOIN Room rm WITH (NOLOCK) ON fp.FloorplanID = rm.FloorplanID
-	  INNER JOIN Sample s WITH (NOLOCK) ON s.RoomID = rm.RoomID
-	  CROSS APPLY
-	  (
-			Select MIN(e.ElementID) 'retain_ElementID', e.ElementTypeID FROM Element e WITH (NOLOCK) Where e.SampleID=s.SampleID
-			GROUP BY e.SampleID,e.AirSampleID,e.ElementTypeID,e.ElementText, e.ElementDateTime,e.ElementIntID, e.ElementIntMeaningID, e.ElementIntMeaningExtendedID, e.ElementIntMeaningSubOptionID, e.RegisterID,e.AirTestID,e.RemovalID,e.ImportID
-			HAVING COUNT(e.ElementTypeID)>1
-	  ) DeleteE
-
-      Delete Element FROM  
-      Element INNER JOIN 
-      @ElementSampleList Main ON Element.SampleID=Main.SampleID AND Main.ElementTypeID=Element.ElementTypeID
-      Where Element.ElementID NOT IN (Main.retain_ElementID)
-      
-      
-      DECLARE @ElementRegisterList TABLE (RegisterID INT,retain_ElementID INT,ElementTypeID INT)
-	  Insert into @ElementRegisterList (RegisterID,retain_ElementID,ElementTypeID)
-      SELECT r.RegisterID, DeleteE.retain_ElementID, DeleteE.ElementTypeID
-                  FROM 
-                  (Select JobID FROM Job WITH (NOLOCK) Where JobID=@JobID) j
-                  INNER JOIN JobEmployee je WITH (NOLOCK) ON je.JobID = j.JobID
-                  INNER JOIN Register r WITH (NOLOCK) ON r.JobEmployeeID = je.JobEmployeeID
-                  CROSS APPLY
-                  (
-                        Select MIN(e.ElementID) 'retain_ElementID', e.ElementTypeID FROM Element e WITH (NOLOCK) Where e.RegisterID=r.RegisterID
-                        GROUP BY e.SampleID,e.AirSampleID,e.ElementTypeID,e.ElementText, e.ElementDateTime,e.ElementIntID, e.ElementIntMeaningID, e.ElementIntMeaningExtendedID, e.ElementIntMeaningSubOptionID, e.RegisterID,e.AirTestID,e.RemovalID,e.ImportID
-                        HAVING COUNT(e.ElementTypeID)>1
-                  ) DeleteE
-                  
-      Delete Element FROM  Element INNER JOIN 
-      @ElementRegisterList
-      Main ON Element.RegisterID=Main.RegisterID AND Main.ElementTypeID=Element.ElementTypeID
-      Where Element.ElementID NOT IN (Main.retain_ElementID)
- 
-      SET NOCOUNT OFF; 
-      
-END
-
 GO
 
 IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='Config') AND name='b__DisplayPortalLegSitesCheckedLastMonth') < 1
@@ -50988,5 +50918,69 @@ BEGIN
             main.Row_Num
       
     SET NOCOUNT OFF;
+END
+GO
+
+INSERT INTO LegionellaAssetCategory (LegionellaAssetCategoryID,Description,TabName,DefaultAssetCode,SortOrder,Deleted) SELECT 73,'Combination Boiler','Combination Boiler','OCB',66, GETDATE() WHERE (SELECT COUNT(*) FROM LegionellaAssetCategory WHERE LegionellaAssetCategoryID=73)=0
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'DeleteDuplicatedElement_ByJob_FromMobile') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[DeleteDuplicatedElement_ByJob_FromMobile] AS BEGIN SET NOCOUNT ON; END')
+End
+GO
+
+ALTER PROCEDURE [dbo].[DeleteDuplicatedElement_ByJob_FromMobile]
+      @JobID INT
+WITH RECOMPILE
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	DECLARE @NewJobID INT
+	SET @NewJobID = @JobID
+
+	DECLARE @ElementSampleList TABLE (SampleId INT,retain_ElementID INT,ElementTypeID INT)
+	Insert into @ElementSampleList (SampleId,retain_ElementID,ElementTypeID)
+	SELECT s.SampleID, DeleteE.retain_ElementID, DeleteE.ElementTypeID
+	FROM 
+	(Select JobID FROM Job WITH (NOLOCK) Where JobID=@NewJobID) j
+	INNER JOIN JobEmployee je WITH (NOLOCK) ON je.JobID = j.JobID
+	INNER JOIN Register r WITH (NOLOCK) ON r.JobEmployeeID = je.JobEmployeeID
+	INNER JOIN Floorplan fp WITH (NOLOCK) ON fp.RegisterID = r.RegisterID
+	INNER JOIN Room rm WITH (NOLOCK) ON fp.FloorplanID = rm.FloorplanID
+	INNER JOIN Sample s WITH (NOLOCK) ON s.RoomID = rm.RoomID
+	CROSS APPLY
+	(
+		Select MIN(e.ElementID) 'retain_ElementID', e.ElementTypeID FROM Element e WITH (NOLOCK) Where e.SampleID=s.SampleID
+		GROUP BY e.SampleID,e.AirSampleID,e.ElementTypeID,e.ElementText, e.ElementDateTime,e.ElementIntID, e.ElementIntMeaningID, e.ElementIntMeaningExtendedID, e.ElementIntMeaningSubOptionID, e.RegisterID,e.AirTestID,e.RemovalID,e.ImportID
+		HAVING COUNT(e.ElementTypeID)>1
+	) DeleteE
+
+    Delete Element FROM  
+    Element INNER JOIN 
+    @ElementSampleList Main ON Element.SampleID=Main.SampleID AND Main.ElementTypeID=Element.ElementTypeID
+    Where Element.ElementID NOT IN (Main.retain_ElementID)
+      
+      
+    DECLARE @ElementRegisterList TABLE (RegisterID INT,retain_ElementID INT,ElementTypeID INT)
+	Insert into @ElementRegisterList (RegisterID,retain_ElementID,ElementTypeID)
+    SELECT r.RegisterID, DeleteE.retain_ElementID, DeleteE.ElementTypeID
+                FROM 
+                (Select JobID FROM Job WITH (NOLOCK) Where JobID=@NewJobID) j
+                INNER JOIN JobEmployee je WITH (NOLOCK) ON je.JobID = j.JobID
+                INNER JOIN Register r WITH (NOLOCK) ON r.JobEmployeeID = je.JobEmployeeID
+                CROSS APPLY
+                (
+                    Select MIN(e.ElementID) 'retain_ElementID', e.ElementTypeID FROM Element e WITH (NOLOCK) Where e.RegisterID=r.RegisterID
+                    GROUP BY e.SampleID,e.AirSampleID,e.ElementTypeID,e.ElementText, e.ElementDateTime,e.ElementIntID, e.ElementIntMeaningID, e.ElementIntMeaningExtendedID, e.ElementIntMeaningSubOptionID, e.RegisterID,e.AirTestID,e.RemovalID,e.ImportID
+                    HAVING COUNT(e.ElementTypeID)>1
+                ) DeleteE
+                  
+    Delete Element FROM  Element INNER JOIN 
+    @ElementRegisterList
+    Main ON Element.RegisterID=Main.RegisterID AND Main.ElementTypeID=Element.ElementTypeID
+    Where Element.ElementID NOT IN (Main.retain_ElementID)
+ 
+    SET NOCOUNT OFF; 
 END
 GO
