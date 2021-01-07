@@ -3290,193 +3290,6 @@ SET NOCOUNT OFF;
 END
 GO
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GetPortalLegionellaLogBookOutletsWithDueDates') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[GetPortalLegionellaLogBookOutletsWithDueDates] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-ALTER PROCEDURE [dbo].[GetPortalLegionellaLogBookOutletsWithDueDates]
-    @PortalUserID INT = NULL,
-    @ClientIDs VARCHAR(MAX) = NULL,
-    @ProjectGroupID INT = NULL,
-    @ProjectID INT = NULL,
-    @SiteIDs VARCHAR(MAX) = NULL,
-    @ThisMonthOnly BIT = 0
-AS
-BEGIN
-    SET NOCOUNT ON;
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
-
-    -- Set default variable values if not passed in.
-    SELECT
-        @ClientIDs = NULLIF(LTRIM(RTRIM(@ClientIDs)), ''),
-        @ProjectGroupID = NULLIF(@ProjectGroupID, 0),
-        @ProjectID = NULLIF(@ProjectID, 0),
-        @SiteIDs = NULLIF(LTRIM(RTRIM(@SiteIDs)), ''),
-        @ThisMonthOnly = ISNULL(@ThisMonthOnly, 0)
-
-    -- If @ThisMonthOnly, get the data that is overdue or due this month.
-    -- Cast DATETIME to DATE. Add one day to the FinishDate - this will set @FinishDate as the next day but it will be at midnight.
-    DECLARE @FinishDate DATETIME
-    IF @ThisMonthOnly = 1
-    BEGIN
-        SET @FinishDate = DATEADD(MONTH, ((YEAR(GETDATE()) - 1900) * 12) + MONTH(GETDATE()), -1)
-    END
-
-    -- Get all Clients up front to reduce table scans on the Client table and only get the ones needed.
-    DECLARE @ClientIdData TABLE (ClientID INT PRIMARY KEY)
-    INSERT INTO @ClientIdData (ClientID)
-    SELECT LTRIM(RTRIM(s)) [ClientID]
-    FROM dbo.SplitString(@ClientIDs, ',')
-    WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL
-    GROUP BY s
-
-    -- Get all Sites up front to reduce table scans on the Site table and only get the ones needed.
-    DECLARE @SiteIdData TABLE (SiteID INT PRIMARY KEY)
-    INSERT INTO @SiteIdData (SiteID)
-    SELECT LTRIM(RTRIM(s)) [SiteID]
-    FROM dbo.SplitString(@SiteIDs, ',')
-    WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL
-    GROUP BY s
-
-    -- Get Legionella Outlets data up front to reduce table scans on the Legionella Outlet table.
-    DECLARE @LegionellaOutletData TABLE (SiteID INT NOT NULL, JobID INT NOT NULL, LegionellaID INT NOT NULL, LegGUID VARCHAR(MAX), LegGUIDVersion INT, DateApproved DATETIME NOT NULL, LegionellaLocationID INT NOT NULL, Location VARCHAR(MAX) NOT NULL, LocationGUID VARCHAR(MAX), LocationGUIDVersion INT, LegionellaOutletID INT NOT NULL, OutletSystemRef VARCHAR(8000), OutletGUID VARCHAR(MAX), OutletGUIDVersion INT, OutletEnabledCold BIT NOT NULL, OutletEnabledHot BIT NOT NULL, OutletEnabledMixed BIT NOT NULL, OutletEnabledMains BIT NOT NULL, OutletSentinelType INT NOT NULL)
-    INSERT INTO @LegionellaOutletData (SiteID, JobID, LegionellaID, LegGUID, LegGUIDVersion, DateApproved, LegionellaLocationID, Location, LocationGUID, LocationGUIDVersion, LegionellaOutletID, OutletSystemRef, OutletGUID, OutletGUIDVersion, OutletEnabledCold, OutletEnabledHot, OutletEnabledMixed, OutletEnabledMains, OutletSentinelType)
-    SELECT
-        j.SiteID,
-        j.JobID,
-        l.LegionellaID,
-        l.GUID [LegGUID],
-        l.GUIDVersion [LegGUIDVersion],
-        l.DateApproved,
-        ll.LegionellaLocationID,
-        ll.Location,
-        ll.GUID [LocationGUID],
-        ll.GUIDVersion [LocationGUIDVersion],
-        lo.LegionellaOutletID,
-        lo.SystemRef [OutletSystemRef],
-        lo.GUID [OutletGUID],
-        lo.GUIDVersion [OutletGUIDVersion],
-        lo.EnabledCold [OutletEnabledCold],
-        lo.EnabledHot [OutletEnabledHot],
-        lo.EnabledMixed [OutletEnabledMixed],
-        lo.EnabledMains [OutletEnabledMains],
-        CASE
-            WHEN lo.SentinelCold = 2 OR lo.SentinelHot = 2 OR lo.SentinelMixed = 2 OR lo.SentinelMains = 2 THEN 2
-            WHEN lo.SentinelCold = 1 OR lo.SentinelHot = 1 OR lo.SentinelMixed = 1 OR lo.SentinelMains = 1 THEN 1
-            ELSE 0
-        END [OutletSentinelType]
-    FROM
-		LegionellaOutletComputedData locd
-		INNER JOIN @ClientIdData c ON locd.ClientID = c.ClientID
-        INNER JOIN @SiteIdData si ON locd.SiteID = si.SiteID		
-		INNER JOIN LegionellaOutlet lo WITH (NOLOCK) ON locd.LegionellaOutletID = lo.LegionellaOutletID AND lo.Deleted IS NULL AND lo.DateRemoved IS NULL
-        INNER JOIN LegionellaLocation ll WITH (NOLOCK) ON locd.LegionellaLocationID = ll.LegionellaLocationID AND ll.Deleted IS NULL AND ll.DateRemoved IS NULL
-		INNER JOIN Legionella l WITH (NOLOCK) ON ll.LegionellaId = l.LegionellaId AND l.DateApproved IS NOT NULL        
-        INNER JOIN Job j WITH (NOLOCK) ON locd.JobId = j.JobID
-        INNER JOIN Quote q WITH (NOLOCK) ON j.JobID = q.JobID AND q.Rejected IS NULL
-        INNER JOIN Appointment a WITH (NOLOCK) ON q.QuoteID = a.QuoteID AND a.DateDeclined IS NULL        
-    GROUP BY
-        j.SiteID,
-        j.JobID,
-        l.LegionellaID,
-        l.GUID,
-        l.GUIDVersion,
-        l.DateApproved,
-        ll.LegionellaLocationID,
-        ll.Location,
-        ll.GUID,
-        ll.GUIDVersion,
-        lo.LegionellaOutletID,
-        lo.SystemRef,
-        lo.GUID,
-        lo.GUIDVersion,
-        lo.EnabledCold,
-        lo.EnabledHot,
-        lo.EnabledMixed,
-        lo.EnabledMains,
-        lo.SentinelCold,
-        lo.SentinelHot,
-        lo.SentinelMixed,
-        lo.SentinelMains
-
-
-    -- Start the main SELECT.
-    SELECT
-        lo.SiteID,
-        lo.JobID,
-        lo.LegionellaID,
-        lo.DateApproved,
-        lo.LegionellaLocationID,
-        lo.Location,
-        lo.LegionellaOutletID,
-        lo.OutletSystemRef,
-        lo.OutletSentinelType,
-        lte.Recorded [LastTempTaken],
-        lt.DueDate [TemperatureNextDue],
-
-        -- Additional columns required by the automatic email feature.
-        CASE WHEN NULLIF(lo.Location, '') IS NOT NULL THEN LTRIM(RTRIM(lo.Location)) + ' ' ELSE '' END +
-        CASE WHEN NULLIF(lo.OutletSystemRef, '') IS NOT NULL THEN '(' + LTRIM(RTRIM(lo.OutletSystemRef)) + ')' ELSE '' END +
-        CASE WHEN lo.OutletSentinelType > 0 THEN ' Sentinel' ELSE '' END [OutletDescription],
-        ISNULL(dbo.FormatTeamsDate(lte.Recorded, 1), 'N/A') [LastTempTakenFormatted],
-        ISNULL(dbo.FormatTeamsDate(lt.DueDate, 1), 'N/A') [TemperatureNextDueFormatted]
-    FROM
-        (
-            SELECT
-                *
-            FROM
-                (
-                    SELECT -- Get each Legionella Outlet record with the max GUID.
-                        lo.SiteID,
-                        lo.JobID,
-                        lo.LegionellaID,
-                        lo.LegGUID,
-                        lo.LegGUIDVersion,
-                        lo.DateApproved,
-                        lo.LegionellaLocationID,
-                        lo.Location,
-                        lo.LocationGUID,
-                        lo.LocationGUIDVersion,
-                        lo.LegionellaOutletID,
-                        lo.OutletSystemRef,
-                        lo.OutletGUID,
-                        lo.OutletGUIDVersion,
-                        lo.OutletEnabledCold,
-                        lo.OutletEnabledHot,
-                        lo.OutletEnabledMixed,
-                        lo.OutletEnabledMains,
-                        lo.OutletSentinelType,
-                        ROW_NUMBER() OVER (PARTITION BY ISNULL(lo.OutletGUID, NEWID()) ORDER BY lo.OutletGUIDVersion DESC) [RowID]
-                    FROM @LegionellaOutletData lo
-                ) lo
-            WHERE lo.RowID = 1
-        ) lo
-        LEFT JOIN LegionellaAssetOutletTaskAutoInsert laotai WITH (NOLOCK) ON lo.OutletSentinelType = laotai.LegionellaOutletSentinel AND laotai.Deleted IS NULL
-        LEFT JOIN LegionellaTask lt WITH (NOLOCK) ON lo.LegionellaOutletID = lt.LegionellaOutletID AND laotai.LegionellaTaskAutoInsertID = lt.LegionellaTaskAutoInsertID AND lt.Deleted IS NULL -- There should only be one Task per Outlet with a Due Date. Created via mobileTEAMS but updated via the Portal front end.
-        LEFT JOIN ( -- Get the latest Task Event for the Due Date task. This stores each Task Due Date, wheras the actual Task record just stores the latest Due Date.
-            SELECT
-                lte.LegionellaTaskEventID,
-                lte.LegionellaTaskID,
-                lte.Recorded,
-                ROW_NUMBER() OVER (PARTITION BY lte.LegionellaTaskID ORDER BY lte.Recorded DESC) [RowID]
-            FROM LegionellaTaskEvent lte
-            WHERE lte.Deleted IS NULL
-        ) lte ON lt.LegionellaTaskID = lte.LegionellaTaskID AND lte.RowID = 1
-    WHERE
-        CASE WHEN @ThisMonthOnly = 1
-            THEN CASE WHEN lt.DueDate < @FinishDate THEN 1 ELSE 0 END
-            ELSE 1
-        END = 1
-    ORDER BY
-        lo.OutletSystemRef,
-        lo.Location
-
-    SET NOCOUNT OFF;
-END
-GO
-
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GetPortalLegionellaLogBookTasks') < 1 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[GetPortalLegionellaLogBookTasks] AS BEGIN SET NOCOUNT ON; END')
 END
@@ -12503,257 +12316,6 @@ BEGIN
 END
 GO
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GetPortalSitesForSearch') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[GetPortalSitesForSearch] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-ALTER PROCEDURE [dbo].[GetPortalSitesForSearch]
-    @PortalUserID INT,
-    @ClientIDs VARCHAR(MAX),
-    @ProjectGroupID INT,
-    @ProjectID INT,
-    @SiteIDs VARCHAR(MAX),
-    @AddressSearchString VARCHAR(200),
-    @RoomName VARCHAR(50)
-/**********************************************************************
-** Overview: Gets Sites when performing a Search. We find the Sites based upon the Address or the Room Name.
-**
-** PLEASE NOTE: Please use SVN as a Change Log.
-**********************************************************************/
-WITH RECOMPILE
-AS
-BEGIN
-    SET NOCOUNT ON;
-
-
-    -- Set default variable values if not passed in.
-    SELECT
-        @ClientIDs = NULLIF(LTRIM(RTRIM(@ClientIDs)), ''),
-        @ProjectGroupID = NULLIF(@ProjectGroupID, 0),
-        @ProjectID = NULLIF(@ProjectID, 0),
-        @SiteIDs = NULLIF(LTRIM(RTRIM(@SiteIDs)), ''),
-        @AddressSearchString = NULLIF(LTRIM(RTRIM(@AddressSearchString)), ''),
-        @RoomName = NULLIF(LTRIM(RTRIM(@RoomName)), '')
-
-    -- Get the assigned Client and Site data up front to reduce table scans on the Client/Site table.
-    DECLARE @ClientSiteData TABLE (ClientID INT, SiteID INT)
-
-    IF @SiteIDs IS NOT NULL
-    BEGIN -- Restriction of Sites.
-        INSERT INTO @ClientSiteData (ClientID, SiteID)
-        SELECT
-            c.ClientID,
-            si.SiteID
-        FROM
-            (
-                SELECT LTRIM(RTRIM(s)) [ClientID] FROM dbo.SplitString(@ClientIDs, ',') WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL GROUP BY s
-            ) c
-            INNER JOIN ClientSite cs WITH (NOLOCK) ON c.ClientID = cs.ClientID
-            INNER JOIN Site si WITH (NOLOCK) ON cs.SiteID = si.SiteID
-            INNER JOIN (
-                SELECT LTRIM(RTRIM(s)) [SiteID] FROM dbo.SplitString(@SiteIDs, ',') WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL GROUP BY s
-            ) sis ON si.SiteID = sis.SiteID
-            LEFT JOIN ProjectSite ps WITH (NOLOCK) ON si.SiteID = ps.SiteID
-            LEFT JOIN Project p WITH (NOLOCK) ON ps.ProjectID = p.ProjectID
-        WHERE
-            si.Deleted IS NULL
-                AND
-            si.InactiveSite = 0
-                AND
-            ( -- Project Filter.
-                (
-                    @ProjectGroupID IS NULL
-                        AND
-                    @ProjectID IS NULL
-                )
-                    OR
-                (
-                    p.Deleted IS NULL
-                        AND
-                    (
-                        p.ProjectGroupID = @ProjectGroupID
-                            OR
-                        p.ProjectID = @ProjectID
-                    )
-                )
-            )
-    END
-    ELSE
-    BEGIN -- No restriction of Sites.
-        INSERT INTO @ClientSiteData (ClientID, SiteID)
-        SELECT
-            c.ClientID,
-            si.SiteID
-        FROM
-            (
-                SELECT LTRIM(RTRIM(s)) [ClientID] FROM dbo.SplitString(@ClientIDs, ',') WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL GROUP BY s
-            ) c
-            INNER JOIN ClientSite cs WITH (NOLOCK) ON c.ClientID = cs.ClientID
-            INNER JOIN Site si WITH (NOLOCK) ON cs.SiteID = si.SiteID
-            LEFT JOIN ProjectSite ps WITH (NOLOCK) ON si.SiteID = ps.SiteID
-            LEFT JOIN Project p WITH (NOLOCK) ON ps.ProjectID = p.ProjectID
-        WHERE
-            si.Deleted IS NULL
-                AND
-            si.InactiveSite = 0
-                AND
-            ( -- Project Filter.
-                (
-                    @ProjectGroupID IS NULL
-                        AND
-                    @ProjectID IS NULL
-                )
-                    OR
-                (
-                    p.Deleted IS NULL
-                        AND
-                    (
-                        p.ProjectGroupID = @ProjectGroupID
-                            OR
-                        p.ProjectID = @ProjectID
-                    )
-                )
-            )
-    END
-
-    -- Get Sites for the Search string(s) passed in. Get Sites by Address matching, followed by Room Name matching.
-    DECLARE @SitesForSearchData TABLE (IsRoom BIT NOT NULL, SiteID INT NOT NULL PRIMARY KEY, Address VARCHAR(200) NOT NULL, Postcode VARCHAR(15) NOT NULL, UPRN VARCHAR(50), SurveyExists BIT NOT NULL, RoomID INT, RoomDescription VARCHAR(50), RoomCode VARCHAR(MAX), RoomGUID VARCHAR(50), RoomGUIDVersion INT)
-
-    IF @AddressSearchString IS NOT NULL -- Address matching.
-    BEGIN
-        INSERT INTO @SitesForSearchData (IsRoom, SiteID, Address, Postcode, UPRN, SurveyExists, RoomID, RoomDescription, RoomCode, RoomGUID, RoomGUIDVersion)
-        SELECT
-            0 [IsRoom],
-            si.SiteID,
-            si.Address,
-            si.Postcode,
-            si.UPRN,
-            CASE WHEN EXISTS(
-                SELECT 1
-                FROM
-                    Job _j WITH (NOLOCK)
-                    INNER JOIN Quote _q WITH (NOLOCK) ON _j.JobID = _q.JobID AND _q.Rejected IS NULL
-                    INNER JOIN Appointment _a WITH (NOLOCK) ON _q.QuoteID = _a.QuoteID AND _a.DateDeclined IS NULL
-                    INNER JOIN JobEmployee _je WITH (NOLOCK) ON _j.JobID = _je.JobID
-                    INNER JOIN Register _r WITH (NOLOCK) ON _je.JobEmployeeID = _r.JobEmployeeID AND _r.DateApproved IS NOT NULL
-                    INNER JOIN Survey _su WITH (NOLOCK) ON _r.SurveyID = _su.SurveyID
-                WHERE
-                    _j.SiteID = si.SiteID
-                        AND
-                    _j.Cancelled IS NULL
-            )
-                THEN 1
-                ELSE 0
-            END [SurveyExists],
-            NULL [RoomID],
-            NULL [RoomDescription],
-            NULL [RoomCode],
-            NULL [RoomGUID],
-            NULL [RoomGUIDVersion]
-        FROM
-            @ClientSiteData csd
-            INNER JOIN Site si WITH (NOLOCK) ON csd.SiteID = si.SiteID
-            OUTER APPLY
-            (
-                SELECT TOP 1
-                    j.JobID,
-                    j.ClientOrderNo
-                FROM
-                    Job j WITH (NOLOCK)
-                WHERE
-                    j.ClientID = csd.ClientID
-                        AND
-                    j.SiteID = si.SiteID
-                        AND
-                    j.Cancelled IS NULL
-                        AND
-                    j.Approved IS NOT NULL
-                ORDER BY
-                    j.Approved DESC
-            ) j
-        WHERE
-            (si.Address LIKE '%' + @AddressSearchString + '%')
-                OR
-            (si.PostCode LIKE '%' + @AddressSearchString + '%')
-                OR
-            (si.Address + ', ' + ISNULL(si.Postcode, '') LIKE '%' + @AddressSearchString + '%')
-                OR
-            (si.UPRN = @AddressSearchString)
-                OR
-            (j.ClientOrderNo = @AddressSearchString)
-        GROUP BY
-            si.SiteID,
-            si.Address,
-            si.Postcode,
-            si.UPRN
-        ORDER BY
-            si.SiteID,
-            si.Address,
-            si.Postcode
-    END
-
-    IF @RoomName IS NOT NULL -- Room Name matching.
-    BEGIN
-        INSERT INTO @SitesForSearchData (IsRoom, SiteID, Address, Postcode, UPRN, SurveyExists, RoomID, RoomDescription, RoomCode, RoomGUID, RoomGUIDVersion)
-        SELECT
-            1 [IsRoom],
-            si.SiteID,
-            si.Address,
-            si.Postcode,
-            si.UPRN,
-            1 [SurveyExists],
-            MAX(rm.RoomID) [RoomID],
-            MAX(RTRIM(rm.Description)) [RoomDescription],
-            MAX(NULLIF(rm.RoomCode, '')) [RoomCode],
-            MAX(rm.GUID) [RoomGUID],
-            MAX(rm.GUIDVersion) [RoomGUIDVersion]
-        FROM
-            @ClientSiteData csd
-            INNER JOIN Site si WITH (NOLOCK) ON csd.SiteID = si.SiteID
-            INNER JOIN Job j WITH (NOLOCK) ON si.SiteID = j.SiteID AND j.Cancelled IS NULL
-            INNER JOIN Quote q WITH (NOLOCK) ON j.JobID = q.JobID AND q.Rejected IS NULL
-            LEFT JOIN Appointment a WITH (NOLOCK) ON q.QuoteID = a.QuoteID
-            INNER JOIN JobEmployee je WITH (NOLOCK) ON j.JobID = je.JobID
-            INNER JOIN Register r WITH (NOLOCK) ON je.JobEmployeeID = r.JobEmployeeID AND r.DateApproved IS NOT NULL
-            INNER JOIN Floorplan f WITH (NOLOCK) ON r.RegisterID = f.RegisterID
-            INNER JOIN Room rm WITH (NOLOCK) ON f.FloorplanID = rm.FloorplanID
-        WHERE
-            si.SiteID NOT IN (SELECT SiteID FROM @SitesForSearchData)
-                AND
-            a.DateDeclined IS NULL
-                AND
-            (
-                RTRIM(rm.Description) LIKE '%' + @RoomName + '%'
-                    OR
-                ISNULL(rm.RoomCode, '') LIKE '%' + @RoomName + '%'
-            )
-        GROUP BY
-            si.SiteID,
-            si.Address,
-            si.Postcode,
-            si.UPRN
-        ORDER BY
-            si.SiteID,
-            si.Address,
-            si.Postcode
-    END
-
-    -- Start the main SELECT.
-    SELECT *
-    FROM @SitesForSearchData sfsd
-    ORDER BY
-        sfsd.IsRoom,
-        sfsd.Address,
-        sfsd.Postcode,
-        sfsd.RoomDescription,
-        sfsd.RoomCode
-
-
-    SET NOCOUNT OFF;
-END
-GO
-
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GetSites') < 1 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[GetSites] AS BEGIN SET NOCOUNT ON; END')
 END
@@ -14871,7 +14433,7 @@ BEGIN
     END
 
     -- Get all Surveys Data up front to reduce the main SELECT table scans.
-    DECLARE @SurveyData TABLE (IsSiteDocument BIT NOT NULL, JobID INT, JobNo INT, ClientOrderNo VARCHAR(50), Created DATETIME NOT NULL, LastNoteCreated DATETIME, FileName VARCHAR(100), ReportVersions INT NOT NULL, ScopeOfWork VARCHAR(MAX), ProjectID INT, Project VARCHAR(50), ProjectGroup VARCHAR(100), SiteID INT NOT NULL, Address VARCHAR(200) NOT NULL, Postcode VARCHAR(10) NOT NULL, UPRN VARCHAR(50), DateApproved DATETIME, PhotoID INT, SurveyStartDate DATETIME NOT NULL, SurveyFinishDate DATETIME, SurveyTypeID INT, SurveyType VARCHAR(100), SiteDocumentID INT, ImportID INT)
+    DECLARE @SurveyData TABLE (IsSiteDocument BIT NOT NULL, JobID INT, JobNo INT, ClientOrderNo VARCHAR(50), Created DATETIME NOT NULL, LastNoteCreated DATETIME, FileName VARCHAR(100), ReportVersions INT NOT NULL, ScopeOfWork VARCHAR(MAX), ProjectID INT, Project VARCHAR(50), ProjectGroup VARCHAR(100), SiteID INT NOT NULL, Address VARCHAR(200) NOT NULL, Postcode VARCHAR(15) NOT NULL, UPRN VARCHAR(50), DateApproved DATETIME, PhotoID INT, SurveyStartDate DATETIME NOT NULL, SurveyFinishDate DATETIME, SurveyTypeID INT, SurveyType VARCHAR(100), SiteDocumentID INT, ImportID INT)
 
     -- Get normal TEAMS Surveys first.
     IF @LocGetSiteDocuments <> 1
@@ -15391,3 +14953,502 @@ BEGIN
     SET NOCOUNT OFF;
 END
 GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GetPortalSitesForSearch') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[GetPortalSitesForSearch] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+ALTER PROCEDURE [dbo].[GetPortalSitesForSearch]
+    @PortalUserID INT,
+    @ClientIDs VARCHAR(MAX),
+    @ProjectGroupID INT,
+    @ProjectID INT,
+    @SiteIDs VARCHAR(MAX),
+    @AddressSearchString VARCHAR(200),
+    @RoomName VARCHAR(50)
+/**********************************************************************
+** Overview: Gets Sites when performing a Search. We find the Sites based upon the Address or the Room Name.
+**
+** PLEASE NOTE: Please use SVN as a Change Log.
+**********************************************************************/
+WITH RECOMPILE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+
+    -- Set default variable values if not passed in.
+    SELECT
+        @ClientIDs = NULLIF(LTRIM(RTRIM(@ClientIDs)), ''),
+        @ProjectGroupID = NULLIF(@ProjectGroupID, 0),
+        @ProjectID = NULLIF(@ProjectID, 0),
+        @SiteIDs = NULLIF(LTRIM(RTRIM(@SiteIDs)), ''),
+        @AddressSearchString = NULLIF(@AddressSearchString, ''),
+		--@AddressSearchString = NULLIF(LTRIM(RTRIM(@AddressSearchString)), ''),
+        @RoomName = NULLIF(@RoomName, '')
+		--@RoomName = NULLIF(LTRIM(RTRIM(@RoomName)), '')
+
+    -- Get the assigned Client and Site data up front to reduce table scans on the Client/Site table.
+    DECLARE @ClientSiteData TABLE (ClientID INT, SiteID INT)
+
+    IF @SiteIDs IS NOT NULL
+    BEGIN -- Restriction of Sites.
+        INSERT INTO @ClientSiteData (ClientID, SiteID)
+        SELECT
+            c.ClientID,
+            si.SiteID
+        FROM
+            (
+                SELECT LTRIM(RTRIM(s)) [ClientID] FROM dbo.SplitString(@ClientIDs, ',') WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL GROUP BY s
+            ) c
+            INNER JOIN ClientSite cs WITH (NOLOCK) ON c.ClientID = cs.ClientID
+            INNER JOIN Site si WITH (NOLOCK) ON cs.SiteID = si.SiteID
+            INNER JOIN (
+                SELECT LTRIM(RTRIM(s)) [SiteID] FROM dbo.SplitString(@SiteIDs, ',') WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL GROUP BY s
+            ) sis ON si.SiteID = sis.SiteID
+            LEFT JOIN ProjectSite ps WITH (NOLOCK) ON si.SiteID = ps.SiteID
+            LEFT JOIN Project p WITH (NOLOCK) ON ps.ProjectID = p.ProjectID
+        WHERE
+            si.Deleted IS NULL
+                AND
+            si.InactiveSite = 0
+                AND
+            ( -- Project Filter.
+                (
+                    @ProjectGroupID IS NULL
+                        AND
+                    @ProjectID IS NULL
+                )
+                    OR
+                (
+                    p.Deleted IS NULL
+                        AND
+                    (
+                        p.ProjectGroupID = @ProjectGroupID
+                            OR
+                        p.ProjectID = @ProjectID
+                    )
+                )
+            )
+    END
+    ELSE
+    BEGIN -- No restriction of Sites.
+        INSERT INTO @ClientSiteData (ClientID, SiteID)
+        SELECT
+            c.ClientID,
+            si.SiteID
+        FROM
+            (
+                SELECT LTRIM(RTRIM(s)) [ClientID] FROM dbo.SplitString(@ClientIDs, ',') WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL GROUP BY s
+            ) c
+            INNER JOIN ClientSite cs WITH (NOLOCK) ON c.ClientID = cs.ClientID
+            INNER JOIN Site si WITH (NOLOCK) ON cs.SiteID = si.SiteID
+            LEFT JOIN ProjectSite ps WITH (NOLOCK) ON si.SiteID = ps.SiteID
+            LEFT JOIN Project p WITH (NOLOCK) ON ps.ProjectID = p.ProjectID
+        WHERE
+            si.Deleted IS NULL
+                AND
+            si.InactiveSite = 0
+                AND
+            ( -- Project Filter.
+                (
+                    @ProjectGroupID IS NULL
+                        AND
+                    @ProjectID IS NULL
+                )
+                    OR
+                (
+                    p.Deleted IS NULL
+                        AND
+                    (
+                        p.ProjectGroupID = @ProjectGroupID
+                            OR
+                        p.ProjectID = @ProjectID
+                    )
+                )
+            )
+    END
+
+    -- Get Sites for the Search string(s) passed in. Get Sites by Address matching, followed by Room Name matching.
+    DECLARE @SitesForSearchData TABLE (IsRoom BIT NOT NULL, SiteID INT NOT NULL PRIMARY KEY, Address VARCHAR(200) NOT NULL, Postcode VARCHAR(15) NOT NULL, UPRN VARCHAR(50), SurveyExists BIT NOT NULL, RoomID INT, RoomDescription VARCHAR(50), RoomCode VARCHAR(MAX), RoomGUID VARCHAR(50), RoomGUIDVersion INT)
+
+    IF @AddressSearchString IS NOT NULL -- Address matching.
+    BEGIN
+        INSERT INTO @SitesForSearchData (IsRoom, SiteID, Address, Postcode, UPRN, SurveyExists, RoomID, RoomDescription, RoomCode, RoomGUID, RoomGUIDVersion)
+        SELECT
+            0 [IsRoom],
+            si.SiteID,
+            si.Address,
+            si.Postcode,
+            si.UPRN,
+            CASE WHEN EXISTS(
+                SELECT 1
+                FROM
+                    Job _j WITH (NOLOCK)
+                    INNER JOIN Quote _q WITH (NOLOCK) ON _j.JobID = _q.JobID AND _q.Rejected IS NULL
+                    INNER JOIN Appointment _a WITH (NOLOCK) ON _q.QuoteID = _a.QuoteID AND _a.DateDeclined IS NULL
+                    INNER JOIN JobEmployee _je WITH (NOLOCK) ON _j.JobID = _je.JobID
+                    INNER JOIN Register _r WITH (NOLOCK) ON _je.JobEmployeeID = _r.JobEmployeeID AND _r.DateApproved IS NOT NULL
+                    INNER JOIN Survey _su WITH (NOLOCK) ON _r.SurveyID = _su.SurveyID
+                WHERE
+                    _j.SiteID = si.SiteID
+                        AND
+                    _j.Cancelled IS NULL
+            )
+                THEN 1
+                ELSE 0
+            END [SurveyExists],
+            NULL [RoomID],
+            NULL [RoomDescription],
+            NULL [RoomCode],
+            NULL [RoomGUID],
+            NULL [RoomGUIDVersion]
+        FROM
+            @ClientSiteData csd
+            INNER JOIN Site si WITH (NOLOCK) ON csd.SiteID = si.SiteID
+            OUTER APPLY
+            (
+                SELECT TOP 1
+                    j.JobID,
+                    j.ClientOrderNo
+                FROM
+                    Job j WITH (NOLOCK)
+                WHERE
+                    j.ClientID = csd.ClientID
+                        AND
+                    j.SiteID = si.SiteID
+                        AND
+                    j.Cancelled IS NULL
+                        AND
+                    j.Approved IS NOT NULL
+                ORDER BY
+                    j.Approved DESC
+            ) j
+        WHERE
+            (si.Address LIKE '%' + @AddressSearchString + '%')
+                OR
+            (si.PostCode LIKE '%' + @AddressSearchString + '%')
+                OR
+            (si.Address + ', ' + ISNULL(si.Postcode, '') LIKE '%' + @AddressSearchString + '%')
+                OR
+            (si.UPRN = @AddressSearchString)
+                OR
+            (j.ClientOrderNo = @AddressSearchString)
+        GROUP BY
+            si.SiteID,
+            si.Address,
+            si.Postcode,
+            si.UPRN
+        ORDER BY
+            si.SiteID,
+            si.Address,
+            si.Postcode
+    END
+
+    IF @RoomName IS NOT NULL -- Room Name matching.
+    BEGIN
+
+		-- Exact match
+        INSERT INTO @SitesForSearchData (IsRoom, SiteID, Address, Postcode, UPRN, SurveyExists, RoomID, RoomDescription, RoomCode, RoomGUID, RoomGUIDVersion)
+        SELECT
+            1 [IsRoom],
+            si.SiteID,
+            si.Address,
+            si.Postcode,
+            si.UPRN,
+            1 [SurveyExists],
+            MAX(rm.RoomID) [RoomID],
+            MAX(RTRIM(rm.Description)) [RoomDescription],
+            MAX(NULLIF(rm.RoomCode, '')) [RoomCode],
+            MAX(rm.GUID) [RoomGUID],
+            MAX(rm.GUIDVersion) [RoomGUIDVersion]
+        FROM
+            @ClientSiteData csd
+            INNER JOIN Site si WITH (NOLOCK) ON csd.SiteID = si.SiteID
+            INNER JOIN Job j WITH (NOLOCK) ON si.SiteID = j.SiteID AND j.Cancelled IS NULL
+            INNER JOIN Quote q WITH (NOLOCK) ON j.JobID = q.JobID AND q.Rejected IS NULL
+            LEFT JOIN Appointment a WITH (NOLOCK) ON q.QuoteID = a.QuoteID
+            INNER JOIN JobEmployee je WITH (NOLOCK) ON j.JobID = je.JobID
+            INNER JOIN Register r WITH (NOLOCK) ON je.JobEmployeeID = r.JobEmployeeID AND r.DateApproved IS NOT NULL
+            INNER JOIN Floorplan f WITH (NOLOCK) ON r.RegisterID = f.RegisterID
+            INNER JOIN Room rm WITH (NOLOCK) ON f.FloorplanID = rm.FloorplanID
+        WHERE
+            si.SiteID NOT IN (SELECT SiteID FROM @SitesForSearchData)
+                AND
+            a.DateDeclined IS NULL
+                AND
+            (
+                RTRIM(rm.Description) LIKE '%' + @RoomName + ' %'
+					OR
+				RTRIM(rm.Description) LIKE '%' + LTRIM(RTRIM(@RoomName))
+                    OR
+                ISNULL(rm.RoomCode, '') LIKE '%' + @RoomName + ' %'
+					OR
+				ISNULL(rm.RoomCode, '') LIKE '%' + LTRIM(RTRIM(@RoomName))
+            )
+        GROUP BY
+            si.SiteID,
+            si.Address,
+            si.Postcode,
+            si.UPRN
+        ORDER BY
+            si.SiteID,
+            si.Address,
+            si.Postcode
+
+		-- "Contains" match
+        INSERT INTO @SitesForSearchData (IsRoom, SiteID, Address, Postcode, UPRN, SurveyExists, RoomID, RoomDescription, RoomCode, RoomGUID, RoomGUIDVersion)
+        SELECT
+            1 [IsRoom],
+            si.SiteID,
+            si.Address,
+            si.Postcode,
+            si.UPRN,
+            1 [SurveyExists],
+            MAX(rm.RoomID) [RoomID],
+            MAX(RTRIM(rm.Description)) [RoomDescription],
+            MAX(NULLIF(rm.RoomCode, '')) [RoomCode],
+            MAX(rm.GUID) [RoomGUID],
+            MAX(rm.GUIDVersion) [RoomGUIDVersion]
+        FROM
+            @ClientSiteData csd
+            INNER JOIN Site si WITH (NOLOCK) ON csd.SiteID = si.SiteID
+            INNER JOIN Job j WITH (NOLOCK) ON si.SiteID = j.SiteID AND j.Cancelled IS NULL
+            INNER JOIN Quote q WITH (NOLOCK) ON j.JobID = q.JobID AND q.Rejected IS NULL
+            LEFT JOIN Appointment a WITH (NOLOCK) ON q.QuoteID = a.QuoteID
+            INNER JOIN JobEmployee je WITH (NOLOCK) ON j.JobID = je.JobID
+            INNER JOIN Register r WITH (NOLOCK) ON je.JobEmployeeID = r.JobEmployeeID AND r.DateApproved IS NOT NULL
+            INNER JOIN Floorplan f WITH (NOLOCK) ON r.RegisterID = f.RegisterID
+            INNER JOIN Room rm WITH (NOLOCK) ON f.FloorplanID = rm.FloorplanID
+        WHERE
+            si.SiteID NOT IN (SELECT SiteID FROM @SitesForSearchData)
+                AND
+            a.DateDeclined IS NULL
+                AND
+            (
+                RTRIM(rm.Description) LIKE '%' + @RoomName + '%'
+                    OR
+                ISNULL(rm.RoomCode, '') LIKE '%' + @RoomName + '%'
+            )
+        GROUP BY
+            si.SiteID,
+            si.Address,
+            si.Postcode,
+            si.UPRN
+        ORDER BY
+            si.SiteID,
+            si.Address,
+            si.Postcode
+    END
+
+    -- Start the main SELECT.
+    SELECT *
+    FROM @SitesForSearchData sfsd
+    ORDER BY
+        sfsd.IsRoom,
+        sfsd.Address,
+        sfsd.Postcode,
+        sfsd.RoomDescription,
+        sfsd.RoomCode
+
+    SET NOCOUNT OFF;
+END
+GO
+
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GetPortalLegionellaLogBookOutletsWithDueDates') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[GetPortalLegionellaLogBookOutletsWithDueDates] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+
+ALTER PROCEDURE [dbo].[GetPortalLegionellaLogBookOutletsWithDueDates]
+    @PortalUserID INT = NULL,
+    @ClientIDs VARCHAR(MAX) = NULL,
+    @ProjectGroupID INT = NULL,
+    @ProjectID INT = NULL,
+    @SiteIDs VARCHAR(MAX) = NULL,
+    @ThisMonthOnly BIT = 0
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+
+    -- Set default variable values if not passed in.
+    SELECT
+        @ClientIDs = NULLIF(LTRIM(RTRIM(@ClientIDs)), ''),
+        @ProjectGroupID = NULLIF(@ProjectGroupID, 0),
+        @ProjectID = NULLIF(@ProjectID, 0),
+        @SiteIDs = NULLIF(LTRIM(RTRIM(@SiteIDs)), ''),
+        @ThisMonthOnly = ISNULL(@ThisMonthOnly, 0)
+
+    -- If @ThisMonthOnly, get the data that is overdue or due this month.
+    -- Cast DATETIME to DATE. Add one day to the FinishDate - this will set @FinishDate as the next day but it will be at midnight.
+    DECLARE @FinishDate DATETIME
+    IF @ThisMonthOnly = 1
+    BEGIN
+        SET @FinishDate = DATEADD(MONTH, ((YEAR(GETDATE()) - 1900) * 12) + MONTH(GETDATE()), -1)
+    END
+
+    -- Get all Clients up front to reduce table scans on the Client table and only get the ones needed.
+    DECLARE @ClientIdData TABLE (ClientID INT PRIMARY KEY)
+    INSERT INTO @ClientIdData (ClientID)
+    SELECT LTRIM(RTRIM(s)) [ClientID]
+    FROM dbo.SplitString(@ClientIDs, ',')
+    WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL
+    GROUP BY s
+
+    -- Get all Sites up front to reduce table scans on the Site table and only get the ones needed.
+    DECLARE @SiteIdData TABLE (SiteID INT PRIMARY KEY)
+    INSERT INTO @SiteIdData (SiteID)
+    SELECT LTRIM(RTRIM(s)) [SiteID]
+    FROM dbo.SplitString(@SiteIDs, ',')
+    WHERE NULLIF(LTRIM(RTRIM(s)), '') IS NOT NULL
+    GROUP BY s
+
+    -- Get Legionella Outlets data up front to reduce table scans on the Legionella Outlet table.
+    DECLARE @LegionellaOutletData TABLE (SiteID INT NOT NULL, JobID INT NOT NULL, LegionellaID INT NOT NULL, LegGUID VARCHAR(MAX), LegGUIDVersion INT, DateApproved DATETIME NOT NULL, LegionellaLocationID INT NOT NULL, Location VARCHAR(MAX) NOT NULL, LocationGUID VARCHAR(MAX), LocationGUIDVersion INT, LegionellaOutletID INT NOT NULL, OutletSystemRef VARCHAR(8000), OutletGUID VARCHAR(MAX), OutletGUIDVersion INT, OutletEnabledCold BIT NOT NULL, OutletEnabledHot BIT NOT NULL, OutletEnabledMixed BIT NOT NULL, OutletEnabledMains BIT NOT NULL, OutletSentinelType INT NOT NULL, OutletCategoryId int)
+    INSERT INTO @LegionellaOutletData (SiteID, JobID, LegionellaID, LegGUID, LegGUIDVersion, DateApproved, LegionellaLocationID, Location, LocationGUID, LocationGUIDVersion, LegionellaOutletID, OutletSystemRef, OutletGUID, OutletGUIDVersion, OutletEnabledCold, OutletEnabledHot, OutletEnabledMixed, OutletEnabledMains, OutletSentinelType,OutletCategoryId)
+    SELECT
+        j.SiteID,
+        j.JobID,
+        l.LegionellaID,
+        l.GUID [LegGUID],
+        l.GUIDVersion [LegGUIDVersion],
+        l.DateApproved,
+        ll.LegionellaLocationID,
+        ll.Location,
+        ll.GUID [LocationGUID],
+        ll.GUIDVersion [LocationGUIDVersion],
+        lo.LegionellaOutletID,
+        lo.SystemRef [OutletSystemRef],
+        lo.GUID [OutletGUID],
+        lo.GUIDVersion [OutletGUIDVersion],
+        lo.EnabledCold [OutletEnabledCold],
+        lo.EnabledHot [OutletEnabledHot],
+        lo.EnabledMixed [OutletEnabledMixed],
+        lo.EnabledMains [OutletEnabledMains],
+        CASE
+            WHEN lo.SentinelCold = 2 OR lo.SentinelHot = 2 OR lo.SentinelMixed = 2 OR lo.SentinelMains = 2 THEN 2
+            WHEN lo.SentinelCold = 1 OR lo.SentinelHot = 1 OR lo.SentinelMixed = 1 OR lo.SentinelMains = 1 THEN 1
+            ELSE 0
+        END [OutletSentinelType],
+		lo.LegionellaOutletCategoryID
+    FROM
+		LegionellaOutletComputedData locd
+		INNER JOIN @ClientIdData c ON locd.ClientID = c.ClientID
+        INNER JOIN @SiteIdData si ON locd.SiteID = si.SiteID		
+		INNER JOIN LegionellaOutlet lo WITH (NOLOCK) ON locd.LegionellaOutletID = lo.LegionellaOutletID AND lo.Deleted IS NULL AND lo.DateRemoved IS NULL
+        INNER JOIN LegionellaLocation ll WITH (NOLOCK) ON locd.LegionellaLocationID = ll.LegionellaLocationID AND ll.Deleted IS NULL AND ll.DateRemoved IS NULL
+		INNER JOIN Legionella l WITH (NOLOCK) ON ll.LegionellaId = l.LegionellaId AND l.DateApproved IS NOT NULL        
+        INNER JOIN Job j WITH (NOLOCK) ON locd.JobId = j.JobID
+        INNER JOIN Quote q WITH (NOLOCK) ON j.JobID = q.JobID AND q.Rejected IS NULL
+        INNER JOIN Appointment a WITH (NOLOCK) ON q.QuoteID = a.QuoteID AND a.DateDeclined IS NULL        
+    GROUP BY
+        j.SiteID,
+        j.JobID,
+        l.LegionellaID,
+        l.GUID,
+        l.GUIDVersion,
+        l.DateApproved,
+        ll.LegionellaLocationID,
+        ll.Location,
+        ll.GUID,
+        ll.GUIDVersion,
+        lo.LegionellaOutletID,
+        lo.SystemRef,
+        lo.GUID,
+        lo.GUIDVersion,
+        lo.EnabledCold,
+        lo.EnabledHot,
+        lo.EnabledMixed,
+        lo.EnabledMains,
+        lo.SentinelCold,
+        lo.SentinelHot,
+        lo.SentinelMixed,
+        lo.SentinelMains,
+		lo.LegionellaOutletCategoryID
+
+
+    -- Start the main SELECT.
+    SELECT 
+        lo.SiteID,
+        lo.JobID,
+        lo.LegionellaID,
+        lo.DateApproved,
+        lo.LegionellaLocationID,
+        lo.Location,
+        lo.LegionellaOutletID,
+        lo.OutletSystemRef,
+        lo.OutletSentinelType,
+        lte.Recorded [LastTempTaken],
+        lt.DueDate [TemperatureNextDue],
+
+        -- Additional columns required by the automatic email feature.
+        CASE WHEN NULLIF(lo.Location, '') IS NOT NULL THEN LTRIM(RTRIM(lo.Location)) + ' ' ELSE '' END +
+        CASE WHEN NULLIF(lo.OutletSystemRef, '') IS NOT NULL THEN '(' + LTRIM(RTRIM(lo.OutletSystemRef)) + ')' ELSE '' END +
+        CASE WHEN lo.OutletSentinelType > 0 THEN ' Sentinel' ELSE '' END [OutletDescription],
+        ISNULL(dbo.FormatTeamsDate(lte.Recorded, 1), 'N/A') [LastTempTakenFormatted],
+        ISNULL(dbo.FormatTeamsDate(lt.DueDate, 1), 'N/A') [TemperatureNextDueFormatted]
+    FROM
+        (
+            SELECT
+                *
+            FROM
+                (
+                    SELECT -- Get each Legionella Outlet record with the max GUID.
+                        lo.SiteID,
+                        lo.JobID,
+                        lo.LegionellaID,
+                        lo.LegGUID,
+                        lo.LegGUIDVersion,
+                        lo.DateApproved,
+                        lo.LegionellaLocationID,
+                        lo.Location,
+                        lo.LocationGUID,
+                        lo.LocationGUIDVersion,
+                        lo.LegionellaOutletID,
+                        lo.OutletSystemRef,
+                        lo.OutletGUID,
+                        lo.OutletGUIDVersion,
+                        lo.OutletEnabledCold,
+                        lo.OutletEnabledHot,
+                        lo.OutletEnabledMixed,
+                        lo.OutletEnabledMains,
+                        lo.OutletSentinelType,
+						lo.OutletCategoryId,
+                        ROW_NUMBER() OVER (PARTITION BY ISNULL(lo.OutletGUID, NEWID()) ORDER BY lo.OutletGUIDVersion DESC) [RowID]
+                    FROM @LegionellaOutletData lo
+                ) lo
+            WHERE lo.RowID = 1
+        ) lo
+        LEFT JOIN LegionellaAssetOutletTaskAutoInsert laotai WITH (NOLOCK) ON 
+				  lo.OutletSentinelType = laotai.LegionellaOutletSentinel 
+				  AND lo.OutletCategoryId = laotai.LegionellaOutletCategoryID
+				  AND laotai.Deleted IS NULL
+        LEFT JOIN LegionellaTask lt WITH (NOLOCK) ON lo.LegionellaOutletID = lt.LegionellaOutletID AND laotai.LegionellaTaskAutoInsertID = lt.LegionellaTaskAutoInsertID AND lt.Deleted IS NULL -- There should only be one Task per Outlet with a Due Date. Created via mobileTEAMS but updated via the Portal front end.
+        LEFT JOIN ( -- Get the latest Task Event for the Due Date task. This stores each Task Due Date, wheras the actual Task record just stores the latest Due Date.
+            SELECT
+                lte.LegionellaTaskEventID,
+                lte.LegionellaTaskID,
+                lte.Recorded,
+                ROW_NUMBER() OVER (PARTITION BY lte.LegionellaTaskID ORDER BY lte.Recorded DESC) [RowID]
+            FROM LegionellaTaskEvent lte
+            WHERE lte.Deleted IS NULL
+        ) lte ON lt.LegionellaTaskID = lte.LegionellaTaskID AND lte.RowID = 1
+    WHERE
+        CASE WHEN @ThisMonthOnly = 1
+            THEN CASE WHEN lt.DueDate < @FinishDate THEN 1 ELSE 0 END
+            ELSE 1
+        END = 1
+    ORDER BY
+        lo.OutletSystemRef,
+        lo.Location
+
+    SET NOCOUNT OFF;
+END
+GO
+
+

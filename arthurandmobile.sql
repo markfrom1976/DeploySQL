@@ -16087,8 +16087,6 @@ SET QUOTED_IDENTIFIER ON
 GO
 
 
-
-
 ALTER PROC [dbo].[mobile_Legionella_v1.4.0.81_DataTransfer_MonitoringData]
 (
       @JobID INT
@@ -16105,7 +16103,7 @@ BEGIN
   12790,12791,12792,12793,12794,12795,12796,12797,12798,12799,12800,12801,12802,12803,12804,12805,12806,12807,12808,12809,12810,12811,12812,12898,12813,12814,
   12815,12816,12817,12818,12819,12820,12821,12822,12823,12824,12825,12826,12828,12829,12830,12831,12832,12833,12834,12835,12836,12837,12838,12840,12841,12842,
   12843,12844,12845,12846,12848,12849,12850,12851,12852,12853,12854,12855,12856,12857,12858,12859,12860,12861,12862,12863,12864,12865,12866,12867,12868,12869,
-  12870,12871,12872,12873,12874,12875,12876,12877,12878,12879,12880,12881,12882,12883,12884,12885,12886,12887,12888,12889,12890,12891,12892,12894,12895,12896,12897,12899,12900,12940,12900,12946,12984'
+  12870,12871,12872,12873,12874,12875,12876,12877,12878,12879,12880,12881,12882,12883,12884,12885,12886,12887,12888,12889,12890,12891,12892,12894,12895,12896,12897,12899,12900,12940,12900,12946,1298413989,14923'
   */
   DECLARE @IncludeDataCollectionAndTasks INT = 1
 
@@ -16161,12 +16159,9 @@ BEGIN
 
     --SELECT @RestrictedLegionellaAssetCategoryID
     
-    INSERT INTO @LegionellaGUIDED (LegionellaID, LegionellaTypeID, LegionellaGUID, LegionellaGUIDVersion, LegionellaIdentifier, LegionellaAssetCategoryID, LegionellaAssetID, LegionellaAssetGUID, LegionellaAssetGUIDVersion, LegionellaAssetIdentifier, LegionellaLocationID, LegionellaLocationGUID, LegionellaLocationGUIDVersion, LegionellaLocationIdentifier, LegionellaOutletID, LegionellaOutletGUID, LegionellaOutletGUIDVersion, LegionellaOutletIdentifier)
+    INSERT INTO @LegionellaGUIDED (LegionellaID, LegionellaTypeID, LegionellaGUID, LegionellaGUIDVersion, LegionellaIdentifier)
     Select 
-      l.LegionellaID,ISNULL(null/*this will come from the Legionella record eventually*/,al.LegionellaTypeID),l.GUID [LegionellaGUID],l.GUIDVersion [LegionellaGUIDVersion], ROW_NUMBER() OVER (PARTITION BY l.GUID ORDER BY l.GUIDVersion DESC) [LegionellaIdentifier], 
-      la.LegionellaAssetCategoryID, la.LegionellaAssetID, la.GUID [LegionellaAssetGUID], la.GUIDVersion [LegionellaAssetGUIDVersion], ROW_NUMBER() OVER (PARTITION BY la.GUID ORDER BY la.GUIDVersion DESC) [LegionellaAssetIdentifier], 
-      ll.LegionellaLocationID, ll.GUID [LegionellaLocationGUID], ll.GUIDVersion [LegionellaLocationGUIDVersion], ROW_NUMBER() OVER (PARTITION BY ll.GUID ORDER BY ll.GUIDVersion DESC) [LegionellaIdentifier], 
-      lo.LegionellaOutletID, lo.GUID [LegionellaOutletGUID], lo.GUIDVersion [LegionellaOutletGUIDVersion], ROW_NUMBER() OVER (PARTITION BY lo.GUID ORDER BY lo.GUIDVersion DESC) [LegionellaIdentifier]
+      l.LegionellaID,ISNULL(null/*this will come from the Legionella record eventually*/,al.LegionellaTypeID),l.GUID [LegionellaGUID],l.GUIDVersion [LegionellaGUIDVersion], ROW_NUMBER() OVER (PARTITION BY l.GUID ORDER BY l.GUIDVersion DESC) [LegionellaIdentifier]
     FROM
       Job j WITH (NOLOCK)
       
@@ -16176,56 +16171,101 @@ BEGIN
       
       INNER JOIN JobEmployee je WITH (NOLOCK) ON j.JobID=je.JobID
       INNER JOIN Legionella l WITH (NOLOCK) ON l.JobEmployeeID=je.JobEmployeeID
-      
-      LEFT OUTER JOIN LegionellaAsset la WITH (NOLOCK) ON l.LegionellaID = la.LegionellaID AND la.Deleted Is Null AND la.DateRemoved IS NULL
-      LEFT OUTER JOIN LegionellaLocation ll WITH (NOLOCK) ON l.LegionellaID = ll.LegionellaID AND ll.Deleted Is Null AND ll.DateRemoved IS NULL
-      LEFT OUTER JOIN LegionellaOutlet lo WITH (NOLOCK) ON ll.LegionellaLocationID = lo.LegionellaLocationID AND lo.Deleted Is Null AND lo.DateRemoved IS NULL
-
-      OUTER APPLY
-        (
-        SELECT TOP 1
-          _lo.DateRemoved
-        FROM
-          LegionellaOutlet _lo
-        WHERE
-          _lo.GUID = lo.GUID
-        ORDER BY
-          _lo.GUIDVersion DESC
-        ) latestOutletRemoved
-        OUTER APPLY
-        (
-        SELECT TOP 1
-          _la.DateRemoved
-        FROM
-          LegionellaAsset _la
-        WHERE
-          _la.GUID = la.GUID
-        ORDER BY
-          _la.GUIDVersion DESC
-        ) latestAssetRemoved
-        OUTER APPLY
-        (
-        SELECT TOP 1
-          _ll.DateRemoved
-        FROM
-          LegionellaLocation _ll
-        WHERE
-          _ll.GUID = ll.GUID
-        ORDER BY
-          _ll.GUIDVersion DESC
-        ) latestLocationRemoved
-        WHERE
+    WHERE
         j.ClientID=@ClientID 
         AND 
         j.SiteID=@SiteID 
         AND 
-        j.Approved IS NOT NULL  
-        AND
-        latestOutletRemoved.DateRemoved IS NULL
-        AND
-        latestLocationRemoved.DateRemoved IS NULL
-        AND
-        latestAssetRemoved.DateRemoved IS NULL
+        j.Approved IS NOT NULL
+
+	
+    INSERT INTO @LegionellaGUIDED (LegionellaID, LegionellaTypeID, LegionellaGUID, LegionellaGUIDVersion, LegionellaIdentifier, LegionellaAssetCategoryID, LegionellaAssetID, LegionellaAssetGUID, LegionellaAssetGUIDVersion, LegionellaAssetIdentifier)
+	SELECT
+		a.LegionellaID, a.LegionellaTypeID, a.LegionellaGUID, a.LegionellaGUIDVersion, a.LegionellaIdentifier, a.LegionellaAssetCategoryID, a.LegionellaAssetID, a.LegionellaAssetGUID, a.LegionellaAssetGUIDVersion, a.LegionellaAssetIdentifier
+	FROM
+		(
+			Select 
+			  l.LegionellaID,ISNULL(null/*this will come from the Legionella record eventually*/,leg.LegionellaTypeID) [LegionellaTypeID],l.GUID [LegionellaGUID],l.GUIDVersion [LegionellaGUIDVersion], leg.LegionellaIdentifier [LegionellaIdentifier], 
+			  la.LegionellaAssetCategoryID, la.LegionellaAssetID, la.GUID [LegionellaAssetGUID], la.GUIDVersion [LegionellaAssetGUIDVersion], ROW_NUMBER() OVER (PARTITION BY la.GUID ORDER BY la.GUIDVersion DESC, la.LegionellaID DESC) [LegionellaAssetIdentifier]
+			  , la.DateRemoved
+			FROM
+			(
+				SELECT
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier
+				FROM
+					@LegionellaGUIDED
+				WHERE
+					LegionellaID IS NOT NULL	
+				GROUP BY
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier
+			) leg
+			INNER JOIN Legionella l WITH (NOLOCK) ON l.LegionellaID=leg.LegionellaID
+			INNER JOIN LegionellaAsset la WITH (NOLOCK) ON l.LegionellaID = la.LegionellaID AND la.Deleted Is Null-- AND la.DateRemoved IS NULL
+		) a
+	WHERE
+		a.[LegionellaAssetIdentifier] = 1 AND a.DateRemoved IS NULL
+
+    INSERT INTO @LegionellaGUIDED (LegionellaID, LegionellaTypeID, LegionellaGUID, LegionellaGUIDVersion, LegionellaIdentifier, LegionellaLocationID, LegionellaLocationGUID, LegionellaLocationGUIDVersion, LegionellaLocationIdentifier)
+    Select 
+		a.LegionellaID, a.LegionellaTypeID, a.LegionellaGUID, a.LegionellaGUIDVersion, a.LegionellaIdentifier, a.LegionellaLocationID, a.LegionellaLocationGUID, a.LegionellaLocationGUIDVersion, a.LegionellaLocationIdentifier
+    FROM
+		(
+			Select 
+			  l.LegionellaID,ISNULL(null/*this will come from the Legionella record eventually*/,leg.LegionellaTypeID) [LegionellaTypeID],l.GUID [LegionellaGUID],l.GUIDVersion [LegionellaGUIDVersion], leg.LegionellaIdentifier [LegionellaIdentifier], 
+			  ll.LegionellaLocationID, ll.GUID [LegionellaLocationGUID], ll.GUIDVersion [LegionellaLocationGUIDVersion], ROW_NUMBER() OVER (PARTITION BY ll.GUID ORDER BY ll.GUIDVersion DESC, ll.LegionellaID DESC) [LegionellaLocationIdentifier], 
+			  ll.DateRemoved
+			FROM
+			(
+				SELECT
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier
+				FROM
+					@LegionellaGUIDED
+				WHERE
+					LegionellaID IS NOT NULL	
+				GROUP BY
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier
+			) leg
+			INNER JOIN Legionella l WITH (NOLOCK) ON l.LegionellaID=leg.LegionellaID
+			INNER JOIN LegionellaLocation ll WITH (NOLOCK) ON l.LegionellaID = ll.LegionellaID AND ll.Deleted Is Null-- AND ll.DateRemoved IS NULL
+		) a
+	WHERE
+		a.LegionellaLocationIdentifier = 1 AND a.DateRemoved IS NULL	
+
+    INSERT INTO @LegionellaGUIDED (LegionellaID, LegionellaTypeID, LegionellaGUID, LegionellaGUIDVersion, LegionellaIdentifier, LegionellaLocationID, LegionellaLocationGUID, LegionellaLocationGUIDVersion, LegionellaLocationIdentifier,LegionellaOutletID, LegionellaOutletGUID, LegionellaOutletGUIDVersion, LegionellaOutletIdentifier)
+    Select 
+		a.LegionellaID, a.LegionellaTypeID, a.LegionellaGUID, a.LegionellaGUIDVersion, a.LegionellaIdentifier, a.LegionellaLocationID, a.LegionellaLocationGUID, a.LegionellaLocationGUIDVersion, a.LegionellaLocationIdentifier, a.LegionellaOutletID, a.LegionellaOutletGUID, a.LegionellaOutletGUIDVersion, a.LegionellaOutletIdentifier
+    FROM
+		(
+			Select 
+			  l.LegionellaID,ISNULL(null/*this will come from the Legionella record eventually*/,leg.LegionellaTypeID) [LegionellaTypeID],l.GUID [LegionellaGUID],l.GUIDVersion [LegionellaGUIDVersion], leg.LegionellaIdentifier [LegionellaIdentifier], 
+			  leg.LegionellaLocationID, leg.LegionellaLocationGUID, leg.LegionellaLocationGUIDVersion, leg.LegionellaLocationIdentifier,
+			  lo.LegionellaOutletID, lo.GUID [LegionellaOutletGUID], lo.GUIDVersion [LegionellaOutletGUIDVersion], ROW_NUMBER() OVER (PARTITION BY lo.GUID ORDER BY lo.GUIDVersion DESC, ll.LegionellaID DESC) [LegionellaOutletIdentifier],
+			  lo.DateRemoved
+			FROM
+			(
+				SELECT
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier, LegionellaLocationID, LegionellaLocationGUID, LegionellaLocationGUIDVersion, LegionellaLocationIdentifier
+				FROM
+					@LegionellaGUIDED
+				WHERE
+					LegionellaID IS NOT NULL	
+				GROUP BY
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier, LegionellaLocationID, LegionellaLocationGUID, LegionellaLocationGUIDVersion, LegionellaLocationIdentifier
+			) leg
+			INNER JOIN Legionella l WITH (NOLOCK) ON l.LegionellaID=leg.LegionellaID
+			INNER JOIN LegionellaLocation ll WITH (NOLOCK) ON l.LegionellaID = ll.LegionellaID AND leg.LegionellaLocationID=ll.LegionellaLocationID
+			INNER JOIN LegionellaOutlet lo WITH (NOLOCK) ON ll.LegionellaLocationID = lo.LegionellaLocationID AND lo.Deleted Is Null --AND lo.DateRemoved IS NULL
+		) a
+	WHERE
+		a.LegionellaOutletIdentifier = 1 AND a.DateRemoved IS NULL	
+
+	/*
+	, 
+      la.LegionellaAssetCategoryID, la.LegionellaAssetID, la.GUID [LegionellaAssetGUID], la.GUIDVersion [LegionellaAssetGUIDVersion], ROW_NUMBER() OVER (PARTITION BY la.GUID ORDER BY la.GUIDVersion DESC) [LegionellaAssetIdentifier], 
+      ll.LegionellaLocationID, ll.GUID [LegionellaLocationGUID], ll.GUIDVersion [LegionellaLocationGUIDVersion], ROW_NUMBER() OVER (PARTITION BY ll.GUID ORDER BY ll.GUIDVersion DESC) [LegionellaIdentifier], 
+      lo.LegionellaOutletID, lo.GUID [LegionellaOutletGUID], lo.GUIDVersion [LegionellaOutletGUIDVersion], ROW_NUMBER() OVER (PARTITION BY lo.GUID ORDER BY lo.GUIDVersion DESC) [LegionellaIdentifier]
+	*/
+
         
     DECLARE @Legionella_Data TABLE (LegionellaID INT, LegionellaTypeID INT, LegionellaGUID VARCHAR(MAX), LegionellaGUIDVersion INT)
     Insert into @Legionella_Data (LegionellaID,LegionellaTypeID,LegionellaGUID,LegionellaGUIDVersion) Select LegionellaID,LegionellaTypeID,LegionellaGUID,LegionellaGUIDVersion FROM @LegionellaGUIDED lguid Where lguid.LegionellaIdentifier=1
@@ -16904,6 +16944,9 @@ BEGIN
 
 SET NOCOUNT OFF;
 END
+
+
+
 GO
 
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'mobile_Surveying_v2.4.2.72_DataTransfer_StaticTables') < 1 
@@ -17197,162 +17240,6 @@ BEGIN
   IF @StartTableNumber IS NULL OR (@StartTableNumber >= 50 AND @StartTableNumber <= 54) BEGIN
   DECLARE @EmployeeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [EmployeeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[FullName|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Surveyor|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[AirTester|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[Approver|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[Administrator|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[Deleted|DATETIME|NULL||] DATETIME NULL ,[SortOrder|INTEGER|NOTNULL||] INT NOT NULL DEFAULT ((0)),[Manager|BIT|NULL||] BIT NULL ,[MobilePin|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL DEFAULT ('0000'),[Position|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[BranchOfficeID|INTEGER|NOTNULL||] INT NOT NULL )  INSERT INTO @EmployeeTable ([SQLTableName|NVARCHAR|NOTNULL||], [EmployeeID|INTEGER|NOTNULL||SERVERKEY],[FullName|VARCHAR|NOTNULL||],[Surveyor|BIT|NOTNULL||],[AirTester|BIT|NOTNULL||],[Approver|BIT|NOTNULL||],[Administrator|BIT|NOTNULL||],[Deleted|DATETIME|NULL||],[SortOrder|INTEGER|NOTNULL||],[Manager|BIT|NULL||],[MobilePin|VARCHAR|NOTNULL||],[Position|VARCHAR|NULL||],[BranchOfficeID|INTEGER|NOTNULL||])  Select 'Employee' AS [SQLTableName|NVARCHAR|NOTNULL||], [EmployeeID],[FullName],[Surveyor],[AirTester],[Approver],[Administrator],[Deleted],[SortOrder],[Manager],[MobilePin],[Position],[BranchOfficeID] FROM Employee SELECT 'Employee' AS [SQLTableName|NVARCHAR|NOTNULL||], [EmployeeID|INTEGER|NOTNULL||SERVERKEY],[FullName|VARCHAR|NOTNULL||],[Surveyor|BIT|NOTNULL||],[AirTester|BIT|NOTNULL||],[Approver|BIT|NOTNULL||],[Administrator|BIT|NOTNULL||],[Deleted|DATETIME|NULL||],[SortOrder|INTEGER|NOTNULL||],[Manager|BIT|NULL||],[MobilePin|VARCHAR|NOTNULL||],[Position|VARCHAR|NULL||],[BranchOfficeID|INTEGER|NOTNULL||] FROM @EmployeeTable
   END
-
-  SET NOCOUNT OFF;
-END
-GO
-
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'mobile_Surveying_v3.2020.10.1_DataTransfer_JobQuoteAppointment') < 1 
-BEGIN
-  EXEC('CREATE PROCEDURE [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_JobQuoteAppointment] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-USE [TEAMS]
-GO
-
-/****** Object:  StoredProcedure [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_JobQuoteAppointment]    Script Date: 30/10/2020 11:32:38 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-ALTER PROC [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_JobQuoteAppointment]
-(
-  @SystemName nvarchar(MAX),
-  @Version nvarchar(MAX),
-  @EmployeeID INT,
-  @AppointmentWindowDate DATETIME = NULL,
-  @QuoteList VARCHAR(MAX) = '',
-  @ExtraClientIds VARCHAR(MAX) = '',
-  @ExtraSiteIds VARCHAR(MAX) = '',
-  @DeviceGuid uniqueidentifier = NULL,
-  @App VARCHAR(50) = NULL,
-  @Platform VARCHAR(50) = NULL
-)
-AS
-BEGIN
-  SET NOCOUNT ON;
-  
-  SET @AppointmentWindowDate = ISNULL(@AppointmentWindowDate,GETDATE())
-  
-  DECLARE @JobQuoteAppointmentIDList TABLE (ClientID INT, SiteID INT,JobID INT, QuoteID INT, AppointmentID INT)
-  INSERT INTO @JobQuoteAppointmentIDList (ClientID,SiteID,JobID,QuoteID,AppointmentID)
-  SELECT 
-    q.ClientID,
-    q.SiteID,
-    j.JobID,
-    q.QuoteID,
-    a.AppointmentID
-  FROM 
-    Appointment a
-    INNER JOIN AppointmentEmployee ae ON a.AppointmentID = ae.AppointmentID 
-    LEFT OUTER JOIN Quote q ON q.QuoteID=a.QuoteID
-    LEFT OUTER JOIN Site si ON q.SiteID = si.SiteID
-    LEFT OUTER JOIN Client c ON c.ClientID = q.ClientID
-    LEFT OUTER JOIN Project p ON a.ProjectID = p.ProjectID 
-    LEFT OUTER JOIN Job j ON q.JobID = j.JobID
-  WHERE 
-    @AppointmentWindowDate BETWEEN DATEADD(DAY,-6, a.StartTime) AND DATEADD(DAY, 3, a.EndTime)
-      AND 
-    ae.EmployeeID=@EmployeeID
-      AND 
-    a.DateDeclined IS NULL
-
-  INSERT INTO @JobQuoteAppointmentIDList (ClientID)
-  SELECT
-    a.ClientID
-  FROM
-  (
-    SELECT 
-      ClientID
-    FROM
-      ClientSpecificElement
-    UNION
-    SELECT
-      s [ClientID]
-    FROM
-      dbo.SplitString(@ExtraClientIds,',')
-  ) a
-  GROUP BY
-    a.ClientID
-
-/*
-  ORIGINAL
-  DECLARE @ClientTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [ClientID|INTEGER|NOTNULL] INT NOT NULL ,[Email|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[Telephone|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[Fax|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[MainContact|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[EnterpriseServerCode|VARCHAR|NULL] VARCHAR(MAX) NULL )  INSERT INTO @ClientTable ([ClientID|INTEGER|NOTNULL],[Email|VARCHAR|NOTNULL],[Telephone|VARCHAR|NOTNULL],[Fax|VARCHAR|NOTNULL],[MainContact|VARCHAR|NOTNULL],[EnterpriseServerCode|VARCHAR|NULL]) Select c.[ClientID],c.[Email],c.[Telephone],c.[Fax],c.[MainContact],c.[EnterpriseServerCode] FROM Client c WITH (NOLOCK) INNER JOIN (SELECT ClientID FROM @JobQuoteAppointmentIDList WHERE ClientID IS NOT NULL GROUP BY ClientID) jqa ON c.ClientID=jqa.ClientID SELECT [ClientID|INTEGER|NOTNULL],[Email|VARCHAR|NOTNULL],[Telephone|VARCHAR|NOTNULL],[Fax|VARCHAR|NOTNULL],[MainContact|VARCHAR|NOTNULL],[EnterpriseServerCode|VARCHAR|NULL] FROM @ClientTable
-  DECLARE @SiteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [SiteID|INTEGER|NOTNULL] INT NOT NULL ,[Telephone|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[Contact|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[UPRN|VARCHAR|NULL] VARCHAR(MAX) NULL ,[ClientOrderNumber|VARCHAR|NULL] VARCHAR(MAX) NULL ,[TEAMSUPRN|VARCHAR|NULL] VARCHAR(MAX) NULL )  INSERT INTO @SiteTable ([SiteID|INTEGER|NOTNULL],[Telephone|VARCHAR|NOTNULL],[Contact|VARCHAR|NOTNULL],[UPRN|VARCHAR|NULL],[ClientOrderNumber|VARCHAR|NULL],[TEAMSUPRN|VARCHAR|NULL]) Select si.[SiteID],si.[Telephone],si.[Contact],si.[UPRN],si.[ClientOrderNumber],si.[TEAMSUPRN] FROM Site si WITH (NOLOCK) INNER JOIN (SELECT SiteID FROM @JobQuoteAppointmentIDList WHERE SiteID IS NOT NULL GROUP BY SiteID) jqa ON si.SiteID=jqa.SiteID SELECT [SiteID|INTEGER|NOTNULL],[Telephone|VARCHAR|NOTNULL],[Contact|VARCHAR|NOTNULL],[UPRN|VARCHAR|NULL],[ClientOrderNumber|VARCHAR|NULL],[TEAMSUPRN|VARCHAR|NULL] FROM @SiteTable
-  DECLARE @AppointmentTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentID|INTEGER|NOTNULL] INT NOT NULL ,[AppointmentTypeID|INTEGER|NOTNULL] INT NOT NULL ,[ClientID|INTEGER|NULL] INT NULL ,[SiteID|INTEGER|NULL] INT NULL ,[StartTime|DATETIME|NOTNULL] DATETIME NOT NULL ,[EndTime|DATETIME|NOTNULL] DATETIME NOT NULL ,[Notes|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[ClientOrderNo|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[DateCreated|DATETIME|NOTNULL] DATETIME NOT NULL DEFAULT (getdate()),[QuoteID|INTEGER|NULL] INT NULL ,[DateConfirmed|DATETIME|NULL] DATETIME NULL ,[DateDeclined|DATETIME|NULL] DATETIME NULL ,[AppointmentCategoryID|INTEGER|NULL] INT NULL DEFAULT (NULL),[ProjectAppointmentId|INTEGER|NULL] INT NULL ,[AppointmentGroupId|INTEGER|NULL] INT NULL ,[BranchOfficeID|INTEGER|NOTNULL] INT NOT NULL DEFAULT ((0))) INSERT INTO @AppointmentTable ([AppointmentID|INTEGER|NOTNULL],[AppointmentTypeID|INTEGER|NOTNULL],[ClientID|INTEGER|NULL],[SiteID|INTEGER|NULL],[StartTime|DATETIME|NOTNULL],[EndTime|DATETIME|NOTNULL],[Notes|VARCHAR|NOTNULL],[ClientOrderNo|VARCHAR|NOTNULL],[DateCreated|DATETIME|NOTNULL],[QuoteID|INTEGER|NULL],[DateConfirmed|DATETIME|NULL],[DateDeclined|DATETIME|NULL],[AppointmentCategoryID|INTEGER|NULL],[ProjectAppointmentId|INTEGER|NULL],[AppointmentGroupId|INTEGER|NULL],[BranchOfficeID|INTEGER|NOTNULL]) Select a.[AppointmentID],a.[AppointmentTypeID],a.[ClientID],a.[SiteID],a.[StartTime],a.[EndTime],a.[Notes],a.[ClientOrderNo],a.[DateCreated],a.[QuoteID],a.[DateConfirmed],a.[DateDeclined],a.[AppointmentCategoryID],a.[ProjectAppointmentId],a.[AppointmentGroupId],a.[BranchOfficeID] FROM Appointment a WITH (NOLOCK) INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID SELECT [AppointmentID|INTEGER|NOTNULL],[AppointmentTypeID|INTEGER|NOTNULL],[ClientID|INTEGER|NULL],[SiteID|INTEGER|NULL],[StartTime|DATETIME|NOTNULL],[EndTime|DATETIME|NOTNULL],[Notes|VARCHAR|NOTNULL],[ClientOrderNo|VARCHAR|NOTNULL],[DateCreated|DATETIME|NOTNULL],[QuoteID|INTEGER|NULL],[DateConfirmed|DATETIME|NULL],[DateDeclined|DATETIME|NULL],[AppointmentCategoryID|INTEGER|NULL],[ProjectAppointmentId|INTEGER|NULL],[AppointmentGroupId|INTEGER|NULL],[BranchOfficeID|INTEGER|NOTNULL] FROM @AppointmentTable
-  DECLARE @JobTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [JobID|INTEGER|NOTNULL] INT NOT NULL ,[JobNo|INTEGER|NOTNULL] INT NOT NULL ,[ClientID|INTEGER|NOTNULL] INT NOT NULL ,[SiteID|INTEGER|NULL] INT NULL ,[ClientOrderNo|VARCHAR|NULL] VARCHAR(MAX) NULL ,[Created|DATETIME|NOTNULL] DATETIME NOT NULL DEFAULT (getdate()),[ProjectManagerID|INTEGER|NULL] INT NULL) INSERT INTO @JobTable ([JobID|INTEGER|NOTNULL],[JobNo|INTEGER|NOTNULL],[ClientID|INTEGER|NOTNULL],[SiteID|INTEGER|NULL],[ClientOrderNo|VARCHAR|NULL],[Created|DATETIME|NOTNULL],[ProjectManagerID|INTEGER|NULL]) Select j.[JobID],j.[JobNo],j.[ClientID],j.[SiteID],j.[ClientOrderNo],j.[Created],j.[ProjectManagerID] FROM Job j WITH (NOLOCK) INNER JOIN (SELECT JobID FROM @JobQuoteAppointmentIDList WHERE JobID IS NOT NULL GROUP BY JobID) jqa ON j.JobID = jqa.JobID SELECT [JobID|INTEGER|NOTNULL],[JobNo|INTEGER|NOTNULL],[ClientID|INTEGER|NOTNULL],[SiteID|INTEGER|NULL],[ClientOrderNo|VARCHAR|NULL],[Created|DATETIME|NOTNULL],[ProjectManagerID|INTEGER|NULL] FROM @JobTable
-  DECLARE @QuoteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteID|INTEGER|NOTNULL] INT NOT NULL ,[QuoteTypeID|INTEGER|NULL] INT NULL ,[QuoteNo|INTEGER|NOTNULL] INT NOT NULL ,[ScopeOfWork|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL DEFAULT (''),[Status|VARCHAR|NULL] VARCHAR(MAX) NULL ,[Created|DATETIME|NOTNULL] DATETIME NOT NULL DEFAULT (getdate()),[Accepted|DATETIME|NULL] DATETIME NULL ,[JobID|INTEGER|NULL] INT NULL ,[Rejected|DATETIME|NULL] DATETIME NULL ,[Exclusions|VARCHAR|NULL] VARCHAR(MAX) NULL ) INSERT INTO @QuoteTable ([QuoteID|INTEGER|NOTNULL],[QuoteTypeID|INTEGER|NULL],[QuoteNo|INTEGER|NOTNULL],[ScopeOfWork|VARCHAR|NOTNULL],[Status|VARCHAR|NULL],[Created|DATETIME|NOTNULL],[Accepted|DATETIME|NULL],[JobID|INTEGER|NULL],[Rejected|DATETIME|NULL],[Exclusions|VARCHAR|NULL]) Select q.[QuoteID],q.[QuoteTypeID],q.[QuoteNo],q.[ScopeOfWork],q.[Status],q.[Created],q.[Accepted],q.[JobID],q.[Rejected],q.[Exclusions] FROM Quote q WITH (NOLOCK) INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) jqa ON q.QuoteID=jqa.QuoteID  SELECT [QuoteID|INTEGER|NOTNULL],[QuoteTypeID|INTEGER|NULL],[QuoteNo|INTEGER|NOTNULL],[ScopeOfWork|VARCHAR|NOTNULL],[Status|VARCHAR|NULL],[Created|DATETIME|NOTNULL],[Accepted|DATETIME|NULL],[JobID|INTEGER|NULL],[Rejected|DATETIME|NULL],[Exclusions|VARCHAR|NULL] FROM @QuoteTable
-*/
-/*
-  --Select c.[ClientID],c.[Email],c.[Telephone],c.[Fax],c.[MainContact],c.[EnterpriseServerCode] FROM Client c WITH (NOLOCK) INNER JOIN (SELECT ClientID FROM @JobQuoteAppointmentIDList WHERE ClientID IS NOT NULL GROUP BY ClientID) jqa ON c.ClientID=jqa.ClientID
-  --Select si.[SiteID],si.[Telephone],si.[Contact],si.[UPRN],si.[ClientOrderNumber],si.[TEAMSUPRN] FROM Site si WITH (NOLOCK) INNER JOIN (SELECT SiteID FROM @JobQuoteAppointmentIDList WHERE SiteID IS NOT NULL GROUP BY SiteID) jqa ON si.SiteID=jqa.SiteID
-  --Select a.[AppointmentID],a.[AppointmentTypeID],a.[ClientID],a.[SiteID],a.[StartTime],a.[EndTime],a.[Notes],a.[ClientOrderNo],a.[DateCreated],a.[QuoteID],a.[DateConfirmed],a.[DateDeclined],a.[AppointmentCategoryID],a.[ProjectAppointmentId],a.[AppointmentGroupId],a.[BranchOfficeID] FROM Appointment a WITH (NOLOCK) INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID 
-  --Select j.[JobID],j.[JobNo],j.[ClientID],j.[SiteID],j.[ClientOrderNo],j.[Created],j.[ProjectManagerID] FROM Job j WITH (NOLOCK) INNER JOIN (SELECT JobID FROM @JobQuoteAppointmentIDList WHERE JobID IS NOT NULL GROUP BY JobID) jqa ON j.JobID = jqa.JobID
-  --Select q.[QuoteID],q.[QuoteTypeID],q.[QuoteNo],q.[ScopeOfWork],q.[Status],q.[Created],q.[Accepted],q.[JobID],q.[Rejected],q.[Exclusions] FROM Quote q WITH (NOLOCK) INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) jqa ON q.QuoteID=jqa.QuoteID
-*/
-  --DECLARE @AppointmentSurveyTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL,[SurveyTypeID|INTEGER|NOTNULL||] INT NOT NULL,[PropertyTypeID|INTEGER|NOTNULL||] INT NOT NULL,[DueDate|DATETIME|NULL||] DATETIME NULL)  INSERT INTO @AppointmentSurveyTable ([AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NULL||]) Select asu.[AppointmentSurveyID],asu.[AppointmentID],asu.[SurveyTypeID],asu.[PropertyTypeID],asu.[DueDate] FROM AppointmentSurvey asu WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=asu.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NULL||] FROM @AppointmentSurveyTable GROUP BY [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NULL||]
-  DECLARE @AppointmentSurveyTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL,[SurveyTypeID|INTEGER|NOTNULL||] INT NOT NULL,[PropertyTypeID|INTEGER|NOTNULL||] INT NOT NULL,[DueDate|DATETIME|NOTNULL||] DATETIME NOT NULL) INSERT INTO @AppointmentSurveyTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NOTNULL||]) Select 'AppointmentSurvey' AS [TableName], asu.[AppointmentSurveyID],asu.[AppointmentID],asu.[SurveyTypeID],asu.[PropertyTypeID], ISNULL(asu.[DueDate], GETDATE()) [DueDate] FROM AppointmentSurvey asu WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=asu.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NOTNULL||] FROM @AppointmentSurveyTable GROUP BY [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NOTNULL||]
-  /*
-  DECLARE @AppointmentAirMonitoringTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentAirMonitoringID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL ,[NumberOfPumps|INTEGER|NOTNULL||] INT NOT NULL,[RemovalContractorID|INTEGER|NOTNULL||] INT NOT NULL,[SampleResultID|INTEGER|NULL||] INT NULL)  INSERT INTO @AppointmentAirMonitoringTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentAirMonitoringID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[NumberOfPumps|INTEGER|NOTNULL||],[RemovalContractorID|INTEGER|NOTNULL||],[SampleResultID|INTEGER|NULL||]) Select 'AppointmentAirMonitoring' AS [TableName], aam.[AppointmentAirMonitoringID],aam.[AppointmentID],aam.[NumberOfPumps],aam.[RemovalContractorID],aam.SampleResultID FROM AppointmentAirMonitoring aam WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=aam.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentAirMonitoringID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[NumberOfPumps|INTEGER|NOTNULL||],[RemovalContractorID|INTEGER|NOTNULL||],[SampleResultID|INTEGER|NULL||] FROM @AppointmentAirMonitoringTable
-  DECLARE @AppointmentAirMonitoringTypeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentAirMonitoringTypeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentAirMonitoringID|INTEGER|NOTNULL||] INT NOT NULL ,[AirTestTypeID|INTEGER|NOTNULL||] INT NOT NULL) INSERT INTO @AppointmentAirMonitoringTypeTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentAirMonitoringTypeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentAirMonitoringID|INTEGER|NOTNULL||],[AirTestTypeID|INTEGER|NOTNULL||]) Select 'AppointmentAirMonitoringType' AS [TableName], aamt.[AppointmentAirMonitoringTypeID],aamt.[AppointmentAirMonitoringID],aamt.[AirTestTypeID] FROM AppointmentAirMonitoringType aamt WITH (NOLOCK) INNER JOIN AppointmentAirMonitoring aam WITH (NOLOCK) ON aamt.AppointmentAirMonitoringID=aam.AppointmentAirMonitoringID INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=aam.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentAirMonitoringTypeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentAirMonitoringID|INTEGER|NOTNULL||],[AirTestTypeID|INTEGER|NOTNULL||] FROM @AppointmentAirMonitoringTypeTable
-  DECLARE @AppointmentAirMonitoringSampleClassificationTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentAirMonitoringSampleClassificationID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentAirMonitoringID|INTEGER|NOTNULL||] INT NOT NULL ,[SampleClassificationID|INTEGER|NOTNULL||] INT NOT NULL)  INSERT INTO @AppointmentAirMonitoringSampleClassificationTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentAirMonitoringSampleClassificationID|INTEGER|NOTNULL||SERVERKEY],[AppointmentAirMonitoringID|INTEGER|NOTNULL||],[SampleClassificationID|INTEGER|NOTNULL||]) Select 'AppointmentAirMonitoringSampleClassification' AS [TableName], aamsc.[AppointmentAirMonitoringSampleClassificationID],aamsc.[AppointmentAirMonitoringID],aamsc.[SampleClassificationID] FROM AppointmentAirMonitoringSampleClassification aamsc WITH (NOLOCK) INNER JOIN AppointmentAirMonitoring aam  WITH (NOLOCK) ON aamsc.AppointmentAirMonitoringID=aam.AppointmentAirMonitoringID INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=aam.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentAirMonitoringSampleClassificationID|INTEGER|NOTNULL||SERVERKEY],[AppointmentAirMonitoringID|INTEGER|NOTNULL||],[SampleClassificationID|INTEGER|NOTNULL||] FROM @AppointmentAirMonitoringSampleClassificationTable
-  */
-
-  --------------------------------------------------------
-  -- Clients - PJL: I split these up so I could read them!
-  DECLARE @ClientTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [ClientID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[ClientName|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[ClientAddress|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL  ,[Email|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Telephone|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Fax|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[MainContact|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[EnterpriseServerCode|VARCHAR|NULL||] VARCHAR(MAX) NULL,[EnterpriseAuthEnc|VARCHAR|NULL||] VARCHAR(MAX) NULL )  
-  
-  INSERT INTO @ClientTable ([SQLTableName|NVARCHAR|NOTNULL||], [ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||]) 
-    Select 
-      'Client' AS [TableName], c.[ClientID],c.[Client],c.[Address],c.[Email],c.[Telephone],c.[Fax],c.[MainContact],c.[EnterpriseServerCode], c.[EnterpriseAuthEnc]
-    FROM 
-      Client c WITH (NOLOCK) 
-      INNER JOIN (
-        SELECT ClientID FROM @JobQuoteAppointmentIDList WHERE ClientID IS NOT NULL GROUP BY ClientID
-      ) jqa ON c.ClientID=jqa.ClientID      
-      
-  INSERT INTO @ClientTable ([SQLTableName|NVARCHAR|NOTNULL||], [ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||]) 
-    Select 
-      'Client' AS [TableName], c.[ClientID],c.[Client],c.[Address],c.[Email],c.[Telephone],c.[Fax],c.[MainContact],c.[EnterpriseServerCode], c.[EnterpriseAuthEnc]
-    FROM 
-      Client c WITH (NOLOCK) 
-      INNER JOIN (
-        SELECT ClientID FROM StandardPhraseCategoryClient WHERE ClientID IS NOT NULL GROUP BY ClientID 
-      ) spcc ON c.ClientID=spcc.ClientID      
-
-  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||] FROM @ClientTable GROUP BY [SQLTableName|NVARCHAR|NOTNULL||],[ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||]
-  --------------------------------------------------------
-  
-
-  --------------------------------------------------------
-  -- Sites - PJL: I split these up so I could read them!
-  DECLARE @SiteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [SiteID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[SiteAddress|VARCHAR|NOTNULL||] VARCHAR(MAX), [Telephone|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Contact|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[UPRN|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[ClientOrderNumber|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[TEAMSUPRN|VARCHAR|NULL||] VARCHAR(MAX) NULL )
-
-  INSERT INTO @SiteTable ([SQLTableName|NVARCHAR|NOTNULL||], [SiteID|INTEGER|NOTNULL||SERVERKEY],[SiteAddress|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Contact|VARCHAR|NOTNULL||],[UPRN|VARCHAR|NULL||],[ClientOrderNumber|VARCHAR|NULL||],[TEAMSUPRN|VARCHAR|NULL||]) 
-    Select 
-      'Site' AS [TableName], si.[SiteID],si.[Address] + ', ' + si.[Postcode] [SiteAddress],si.[Telephone],si.[Contact],si.[UPRN],si.[ClientOrderNumber],si.[TEAMSUPRN] 
-    FROM 
-      Site si WITH (NOLOCK) 
-      INNER JOIN (
-        SELECT SiteID FROM @JobQuoteAppointmentIDList WHERE SiteID IS NOT NULL GROUP BY SiteID UNION SELECT s [SiteID] FROM dbo.SplitString(@ExtraSiteIds,',')
-      ) jqa ON si.SiteID=jqa.SiteID 
-
-  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[SiteID|INTEGER|NOTNULL||SERVERKEY],[SiteAddress|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Contact|VARCHAR|NOTNULL||],[UPRN|VARCHAR|NULL||],[ClientOrderNumber|VARCHAR|NULL||],[TEAMSUPRN|VARCHAR|NULL||]
-  , dbo.get_SiteHighestRegisterItemNo([SiteID|INTEGER|NOTNULL||SERVERKEY]) [SiteHighestRegisterItemNo|VARCHAR|INT||] 
-  FROM @SiteTable
-  --------------------------------------------------------
-
-  DECLARE @AppointmentTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[AppointmentTypeID|INTEGER|NOTNULL||] INT NOT NULL ,[ClientID|INTEGER|NULL|Client|] INT NULL ,[SiteID|INTEGER|NULL|Site|] INT NULL ,[StartTime|DATETIME|NOTNULL||] DATETIME NOT NULL ,[EndTime|DATETIME|NOTNULL||] DATETIME NOT NULL ,[Notes|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[ClientOrderNo|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[DateCreated|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[QuoteID|INTEGER|NULL||] INT NULL ,[DateConfirmed|DATETIME|NULL||] DATETIME NULL ,[DateDeclined|DATETIME|NULL||] DATETIME NULL ,[AppointmentCategoryID|INTEGER|NULL||] INT NULL DEFAULT (NULL),[ProjectAppointmentId|INTEGER|NULL||] INT NULL ,[AppointmentGroupId|INTEGER|NULL||] INT NULL ,[BranchOfficeID|INTEGER|NOTNULL||] INT NOT NULL DEFAULT ((0)), [SiteAlert|VARCHAR|NULL||] VARCHAR(MAX)) INSERT INTO @AppointmentTable ([SQLTableName|NVARCHAR|NOTNULL||],[AppointmentID|INTEGER|NOTNULL||SERVERKEY],[AppointmentTypeID|INTEGER|NOTNULL||],[ClientID|INTEGER|NULL|Client|],[SiteID|INTEGER|NULL|Site|],[StartTime|DATETIME|NOTNULL||],[EndTime|DATETIME|NOTNULL||],[Notes|VARCHAR|NOTNULL||],[ClientOrderNo|VARCHAR|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[QuoteID|INTEGER|NULL||],[DateConfirmed|DATETIME|NULL||],[DateDeclined|DATETIME|NULL||],[AppointmentCategoryID|INTEGER|NULL||],[ProjectAppointmentId|INTEGER|NULL||],[AppointmentGroupId|INTEGER|NULL||],[BranchOfficeID|INTEGER|NOTNULL||],[SiteAlert|VARCHAR|NULL||]) Select 'Appointment' AS [TableName], a.[AppointmentID],a.[AppointmentTypeID],a.[ClientID],a.[SiteID],a.[StartTime],a.[EndTime],a.[Notes],a.[ClientOrderNo],a.[DateCreated],a.[QuoteID],a.[DateConfirmed],a.[DateDeclined],a.[AppointmentCategoryID],a.[ProjectAppointmentId],a.[AppointmentGroupId],a.[BranchOfficeID], cs.SiteAlerts FROM Appointment a WITH (NOLOCK) LEFT OUTER JOIN Site si WITH (NOLOCK) ON a.SiteID=si.SiteID LEFT OUTER JOIN ClientSite cs WITH (NOLOCK) ON si.SiteID = cs.SiteID AND cs.ClientID=a.ClientID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentID|INTEGER|NOTNULL||SERVERKEY],[AppointmentTypeID|INTEGER|NOTNULL||],[ClientID|INTEGER|NULL|Client|],[SiteID|INTEGER|NULL|Site|],[StartTime|DATETIME|NOTNULL||],[EndTime|DATETIME|NOTNULL||],[Notes|VARCHAR|NOTNULL||],[ClientOrderNo|VARCHAR|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[QuoteID|INTEGER|NULL||],[DateConfirmed|DATETIME|NULL||],[DateDeclined|DATETIME|NULL||],[AppointmentCategoryID|INTEGER|NULL||],[ProjectAppointmentId|INTEGER|NULL||],[AppointmentGroupId|INTEGER|NULL||],[BranchOfficeID|INTEGER|NOTNULL||],[SiteAlert|VARCHAR|NULL||] FROM @AppointmentTable
-  DECLARE @AppointmentEmployeeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL ,[EmployeeID|INTEGER|NULL||] INT NULL)  INSERT INTO @AppointmentEmployeeTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NULL||]) Select 'AppointmentEmployee' AS [TableName], ae.[AppointmentEmployeeID],ae.[AppointmentID],ae.[EmployeeID] FROM AppointmentEmployee ae WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=ae.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID WHERE ae.EmployeeID=@EmployeeID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NULL||] FROM @AppointmentEmployeeTable
-  DECLARE @JobTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL,  [JobID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL, [JobNo|INTEGER|NOTNULL||] INT NOT NULL, [ClientID|INTEGER|NOTNULL|Client|] INT NOT NULL, [SiteID|INTEGER|NULL|Site|] INT NULL, [ClientOrderNo|VARCHAR|NULL||] VARCHAR(MAX) NULL, [Created|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT ( getdate() ), [ProjectManagerID|INTEGER|NULL||] INT NULL, [HasSiteData|INTEGER|NULL||] INT NULL, [Notes|VARCHAR|NULL||] VARCHAR(MAX), [SiteAlert|VARCHAR|NULL||] VARCHAR(MAX) ) INSERT INTO @JobTable ([SQLTableName|NVARCHAR|NOTNULL||], [JobID|INTEGER|NOTNULL||SERVERKEY], [JobNo|INTEGER|NOTNULL||], [ClientID|INTEGER|NOTNULL|Client|], [SiteID|INTEGER|NULL|Site|], [ClientOrderNo|VARCHAR|NULL||], [Created|DATETIME|NOTNULL||], [ProjectManagerID|INTEGER|NULL||], [HasSiteData|INTEGER|NULL||], [Notes|VARCHAR|NULL||], [SiteAlert|VARCHAR|NULL||] ) Select 'Job' AS [TableName], j.[JobID], j.[JobNo], j.[ClientID], j.[SiteID], j.[ClientOrderNo], j.[Created], j.[ProjectManagerID], CASE WHEN sd.DataCount > 0 THEN 1 END [HasSiteData], ( SELECT top 1 a.Notes FROM @JobQuoteAppointmentIDList jqal INNER JOIN Appointment a WITH (NOLOCK) ON jqal.AppointmentID = a.AppointmentID WHERE jqal.JobID = j.JobID ), cs.SiteAlerts FROM Job j WITH (NOLOCK) INNER JOIN ( SELECT JobID FROM @JobQuoteAppointmentIDList WHERE JobID IS NOT NULL GROUP BY JobID ) jqa ON j.JobID = jqa.JobID OUTER APPLY ( SELECT COUNT(*) [DataCount] FROM Site subSi WITH (NOLOCK) INNER JOIN Job subJ WITH (NOLOCK) ON subSi.SiteID = subJ.SiteID INNER JOIN JobEmployee subje WITH (NOLOCK) ON subje.JobID = subj.JobID INNER JOIN Register subr WITH (NOLOCK) ON subje.JobEmployeeID = subr.JobEmployeeID INNER JOIN Floorplan subfp WITH (NOLOCK) ON subfp.RegisterID = subr.RegisterID WHERE subSi.SiteID = j.SiteID ) sd INNER JOIN Site si WITH (NOLOCK) ON j.SiteID = si.SiteID INNER JOIN ClientSite cs WITH (NOLOCK) ON si.SiteID = cs.SiteID AND cs.ClientID=j.ClientID SELECT [SQLTableName|NVARCHAR|NOTNULL||], [JobID|INTEGER|NOTNULL||SERVERKEY], [JobNo|INTEGER|NOTNULL||], [ClientID|INTEGER|NOTNULL|Client|], [SiteID|INTEGER|NULL|Site|], [ClientOrderNo|VARCHAR|NULL||], [Created|DATETIME|NOTNULL||], [ProjectManagerID|INTEGER|NULL||], [HasSiteData|INTEGER|NULL||], [Notes|VARCHAR|NULL||], [SiteAlert|VARCHAR|NULL||] FROM @JobTable
-  DECLARE @QuoteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteTypeID|INTEGER|NULL||] INT NULL ,[QuoteNo|INTEGER|NOTNULL||] INT NOT NULL ,[ScopeOfWork|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL DEFAULT (''),[Status|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[Created|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[Accepted|DATETIME|NULL||] DATETIME NULL ,[JobID|INTEGER|NULL|Job|] INT NULL ,[Rejected|DATETIME|NULL||] DATETIME NULL ,[Exclusions|VARCHAR|NULL||] VARCHAR(MAX) NULL ) INSERT INTO @QuoteTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteID|INTEGER|NOTNULL||SERVERKEY],[QuoteTypeID|INTEGER|NULL||],[QuoteNo|INTEGER|NOTNULL||],[ScopeOfWork|VARCHAR|NOTNULL||],[Status|VARCHAR|NULL||],[Created|DATETIME|NOTNULL||],[Accepted|DATETIME|NULL||],[JobID|INTEGER|NULL|Job|],[Rejected|DATETIME|NULL||],[Exclusions|VARCHAR|NULL||]) Select 'Quote' AS [TableName], q.[QuoteID],q.[QuoteTypeID],q.[QuoteNo],q.[ScopeOfWork],q.[Status],q.[Created],q.[Accepted],q.[JobID],q.[Rejected],q.[Exclusions] FROM Quote q WITH (NOLOCK) INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) jqa ON q.QuoteID=jqa.QuoteID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteID|INTEGER|NOTNULL||SERVERKEY],[QuoteTypeID|INTEGER|NULL||],[QuoteNo|INTEGER|NOTNULL||],[ScopeOfWork|VARCHAR|NOTNULL||],[Status|VARCHAR|NULL||],[Created|DATETIME|NOTNULL||],[Accepted|DATETIME|NULL||],[JobID|INTEGER|NULL|Job|],[Rejected|DATETIME|NULL||],[Exclusions|VARCHAR|NULL||] FROM @QuoteTable
-  DECLARE @QuoteEmployeeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteID|INTEGER|NOTNULL||] INT NOT NULL ,[EmployeeID|INTEGER|NOTNULL||] INT NOT NULL ,[ScheduledStart|DATETIME|NULL||] DATETIME NULL ,[ScheduledFinish|DATETIME|NULL||] DATETIME NULL ,[ActualStart|DATETIME|NULL||] DATETIME NULL ,[ActualFinish|DATETIME|NULL||] DATETIME NULL ) INSERT INTO @QuoteEmployeeTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY],[QuoteID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[ScheduledStart|DATETIME|NULL||],[ScheduledFinish|DATETIME|NULL||],[ActualStart|DATETIME|NULL||],[ActualFinish|DATETIME|NULL||]) Select 'QuoteEmployee' AS [TableName], qe.[QuoteEmployeeID],qe.[QuoteID],qe.[EmployeeID],qe.[ScheduledStart],qe.[ScheduledFinish],qe.[ActualStart],qe.[ActualFinish] FROM QuoteEmployee qe INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) q ON qe.QuoteID=q.QuoteID AND qe.EmployeeID>0 SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY],[QuoteID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[ScheduledStart|DATETIME|NULL||],[ScheduledFinish|DATETIME|NULL||],[ActualStart|DATETIME|NULL||],[ActualFinish|DATETIME|NULL||] FROM @QuoteEmployeeTable
-  DECLARE @QuoteVisitTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteVisitID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteVisitTypeID|INTEGER|NOTNULL||] INT NOT NULL ,[QuoteEmployeeID|INTEGER|NULL||] INT NULL ,[QuoteVisitStart|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[QuoteVisitFinish|DATETIME|NULL||] DATETIME NULL ,[Notes|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[PhotoID|INTEGER|NULL||] INT NULL ,[SystemName|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Closed|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[Finished|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[SignatureID|INTEGER|NULL||] INT NULL ,[_QuoteVisitConsumableMarkup|DECIMAL|NULL||] DECIMAL(38,38) NULL ,[_QuoteVisitEquipmentMarkup|DECIMAL|NULL||] DECIMAL(38,38) NULL ,[_QuoteVisitLabourMarkup|DECIMAL|NULL||] DECIMAL(38,38) NULL )  INSERT INTO @QuoteVisitTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteVisitID|INTEGER|NOTNULL||SERVERKEY],[QuoteVisitTypeID|INTEGER|NOTNULL||],[QuoteEmployeeID|INTEGER|NULL||],[QuoteVisitStart|DATETIME|NOTNULL||],[QuoteVisitFinish|DATETIME|NULL||],[Notes|VARCHAR|NULL||],[PhotoID|INTEGER|NULL||],[SystemName|VARCHAR|NOTNULL||],[Closed|BIT|NOTNULL||],[Finished|BIT|NOTNULL||],[SignatureID|INTEGER|NULL||],[_QuoteVisitConsumableMarkup|DECIMAL|NULL||],[_QuoteVisitEquipmentMarkup|DECIMAL|NULL||],[_QuoteVisitLabourMarkup|DECIMAL|NULL||]) Select 'QuoteVisit' AS [TableName], qv.[QuoteVisitID],qv.[QuoteVisitTypeID],qv.[QuoteEmployeeID],qv.[QuoteVisitStart],qv.[QuoteVisitFinish],qv.[Notes],qv.[PhotoID],qv.[SystemName],qv.[Closed],qv.[Finished],qv.[SignatureID],qv.[_QuoteVisitConsumableMarkup],qv.[_QuoteVisitEquipmentMarkup],qv.[_QuoteVisitLabourMarkup] FROM QuoteVisit qv INNER JOIN @QuoteEmployeeTable qet ON qet.[QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY]=qv.QuoteEmployeeID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteVisitID|INTEGER|NOTNULL||SERVERKEY],[QuoteVisitTypeID|INTEGER|NOTNULL||],[QuoteEmployeeID|INTEGER|NULL||],[QuoteVisitStart|DATETIME|NOTNULL||],[QuoteVisitFinish|DATETIME|NULL||],[Notes|VARCHAR|NULL||],[PhotoID|INTEGER|NULL||],[SystemName|VARCHAR|NOTNULL||],[Closed|BIT|NOTNULL||],[Finished|BIT|NOTNULL||],[SignatureID|INTEGER|NULL||],[_QuoteVisitConsumableMarkup|DECIMAL|NULL||],[_QuoteVisitEquipmentMarkup|DECIMAL|NULL||],[_QuoteVisitLabourMarkup|DECIMAL|NULL||] FROM @QuoteVisitTable
-  DECLARE @DataCollectionTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [DataCollectionID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[DataCollectionQuestionID|INTEGER|NOTNULL||] INT NOT NULL ,[DataText|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[DataInt|INTEGER|NULL||] INT NULL ,[DataCollectionQuestionOptionOrInsertID|INTEGER|NULL||] INT NULL ,[Deleted|DATETIME|NULL||] DATETIME NULL ,[QuoteVisitID|INTEGER|NULL||] INT NULL ,[DataCollectionCategoryTypeID|INTEGER|NOTNULL||] INT NOT NULL ) INSERT INTO @DataCollectionTable ([SQLTableName|NVARCHAR|NOTNULL||], [DataCollectionID|INTEGER|NOTNULL||SERVERKEY],[DataCollectionQuestionID|INTEGER|NOTNULL||],[DataText|VARCHAR|NULL||],[DataInt|INTEGER|NULL||],[DataCollectionQuestionOptionOrInsertID|INTEGER|NULL||],[Deleted|DATETIME|NULL||],[QuoteVisitID|INTEGER|NULL||],[DataCollectionCategoryTypeID|INTEGER|NOTNULL||]) Select 'DataCollection' AS [TableName], dc.[DataCollectionID],dc.[DataCollectionQuestionID],dc.[DataText],dc.[DataInt],dc.[DataCollectionQuestionOptionOrInsertID],dc.[Deleted],dc.[QuoteVisitID],dc.[DataCollectionCategoryTypeID] FROM DataCollection  dc INNER JOIN @QuoteVisitTable qvt ON dc.QuoteVisitID=qvt.[QuoteVisitID|INTEGER|NOTNULL||SERVERKEY] SELECT [SQLTableName|NVARCHAR|NOTNULL||],[DataCollectionID|INTEGER|NOTNULL||SERVERKEY],[DataCollectionQuestionID|INTEGER|NOTNULL||],[DataText|VARCHAR|NULL||],[DataInt|INTEGER|NULL||],[DataCollectionQuestionOptionOrInsertID|INTEGER|NULL||],[Deleted|DATETIME|NULL||],[QuoteVisitID|INTEGER|NULL||],[DataCollectionCategoryTypeID|INTEGER|NOTNULL||] FROM @DataCollectionTable
-
 
   SET NOCOUNT OFF;
 END
@@ -18805,13 +18692,1035 @@ BEGIN
 END
 GO
 
+ALTER PROC [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_JobQuoteAppointment]
+(
+  @SystemName nvarchar(MAX),
+  @Version nvarchar(MAX),
+  @EmployeeID INT,
+  @AppointmentWindowDate DATETIME = NULL,
+  @QuoteList VARCHAR(MAX) = '',
+  @ExtraClientIds VARCHAR(MAX) = '',
+  @ExtraSiteIds VARCHAR(MAX) = '',
+  @DeviceGuid uniqueidentifier = NULL,
+  @App VARCHAR(50) = NULL,
+  @Platform VARCHAR(50) = NULL
+)
+AS
+BEGIN
+  SET NOCOUNT ON;
+  
+  SET @AppointmentWindowDate = ISNULL(@AppointmentWindowDate,GETDATE())
+  
+  DECLARE @JobQuoteAppointmentIDList TABLE (ClientID INT, SiteID INT,JobID INT, QuoteID INT, AppointmentID INT)
+  INSERT INTO @JobQuoteAppointmentIDList (ClientID,SiteID,JobID,QuoteID,AppointmentID)
+  SELECT 
+    q.ClientID,
+    q.SiteID,
+    j.JobID,
+    q.QuoteID,
+    a.AppointmentID
+  FROM 
+    Appointment a
+    INNER JOIN AppointmentEmployee ae ON a.AppointmentID = ae.AppointmentID 
+    LEFT OUTER JOIN Quote q ON q.QuoteID=a.QuoteID
+    LEFT OUTER JOIN Site si ON q.SiteID = si.SiteID
+    LEFT OUTER JOIN Client c ON c.ClientID = q.ClientID
+    LEFT OUTER JOIN Project p ON a.ProjectID = p.ProjectID 
+    LEFT OUTER JOIN Job j ON q.JobID = j.JobID
+  WHERE 
+    @AppointmentWindowDate BETWEEN DATEADD(DAY,-6, a.StartTime) AND DATEADD(DAY, 3, a.EndTime)
+      AND 
+    ae.EmployeeID=@EmployeeID
+      AND 
+    a.DateDeclined IS NULL
+
+  INSERT INTO @JobQuoteAppointmentIDList (ClientID)
+  SELECT
+    a.ClientID
+  FROM
+  (
+    SELECT 
+      ClientID
+    FROM
+      ClientSpecificElement
+    UNION
+    SELECT
+      s [ClientID]
+    FROM
+      dbo.SplitString(@ExtraClientIds,',')
+  ) a
+  GROUP BY
+    a.ClientID
+
+/*
+  ORIGINAL
+  DECLARE @ClientTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [ClientID|INTEGER|NOTNULL] INT NOT NULL ,[Email|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[Telephone|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[Fax|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[MainContact|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[EnterpriseServerCode|VARCHAR|NULL] VARCHAR(MAX) NULL )  INSERT INTO @ClientTable ([ClientID|INTEGER|NOTNULL],[Email|VARCHAR|NOTNULL],[Telephone|VARCHAR|NOTNULL],[Fax|VARCHAR|NOTNULL],[MainContact|VARCHAR|NOTNULL],[EnterpriseServerCode|VARCHAR|NULL]) Select c.[ClientID],c.[Email],c.[Telephone],c.[Fax],c.[MainContact],c.[EnterpriseServerCode] FROM Client c WITH (NOLOCK) INNER JOIN (SELECT ClientID FROM @JobQuoteAppointmentIDList WHERE ClientID IS NOT NULL GROUP BY ClientID) jqa ON c.ClientID=jqa.ClientID SELECT [ClientID|INTEGER|NOTNULL],[Email|VARCHAR|NOTNULL],[Telephone|VARCHAR|NOTNULL],[Fax|VARCHAR|NOTNULL],[MainContact|VARCHAR|NOTNULL],[EnterpriseServerCode|VARCHAR|NULL] FROM @ClientTable
+  DECLARE @SiteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [SiteID|INTEGER|NOTNULL] INT NOT NULL ,[Telephone|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[Contact|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[UPRN|VARCHAR|NULL] VARCHAR(MAX) NULL ,[ClientOrderNumber|VARCHAR|NULL] VARCHAR(MAX) NULL ,[TEAMSUPRN|VARCHAR|NULL] VARCHAR(MAX) NULL )  INSERT INTO @SiteTable ([SiteID|INTEGER|NOTNULL],[Telephone|VARCHAR|NOTNULL],[Contact|VARCHAR|NOTNULL],[UPRN|VARCHAR|NULL],[ClientOrderNumber|VARCHAR|NULL],[TEAMSUPRN|VARCHAR|NULL]) Select si.[SiteID],si.[Telephone],si.[Contact],si.[UPRN],si.[ClientOrderNumber],si.[TEAMSUPRN] FROM Site si WITH (NOLOCK) INNER JOIN (SELECT SiteID FROM @JobQuoteAppointmentIDList WHERE SiteID IS NOT NULL GROUP BY SiteID) jqa ON si.SiteID=jqa.SiteID SELECT [SiteID|INTEGER|NOTNULL],[Telephone|VARCHAR|NOTNULL],[Contact|VARCHAR|NOTNULL],[UPRN|VARCHAR|NULL],[ClientOrderNumber|VARCHAR|NULL],[TEAMSUPRN|VARCHAR|NULL] FROM @SiteTable
+  DECLARE @AppointmentTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentID|INTEGER|NOTNULL] INT NOT NULL ,[AppointmentTypeID|INTEGER|NOTNULL] INT NOT NULL ,[ClientID|INTEGER|NULL] INT NULL ,[SiteID|INTEGER|NULL] INT NULL ,[StartTime|DATETIME|NOTNULL] DATETIME NOT NULL ,[EndTime|DATETIME|NOTNULL] DATETIME NOT NULL ,[Notes|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[ClientOrderNo|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL ,[DateCreated|DATETIME|NOTNULL] DATETIME NOT NULL DEFAULT (getdate()),[QuoteID|INTEGER|NULL] INT NULL ,[DateConfirmed|DATETIME|NULL] DATETIME NULL ,[DateDeclined|DATETIME|NULL] DATETIME NULL ,[AppointmentCategoryID|INTEGER|NULL] INT NULL DEFAULT (NULL),[ProjectAppointmentId|INTEGER|NULL] INT NULL ,[AppointmentGroupId|INTEGER|NULL] INT NULL ,[BranchOfficeID|INTEGER|NOTNULL] INT NOT NULL DEFAULT ((0))) INSERT INTO @AppointmentTable ([AppointmentID|INTEGER|NOTNULL],[AppointmentTypeID|INTEGER|NOTNULL],[ClientID|INTEGER|NULL],[SiteID|INTEGER|NULL],[StartTime|DATETIME|NOTNULL],[EndTime|DATETIME|NOTNULL],[Notes|VARCHAR|NOTNULL],[ClientOrderNo|VARCHAR|NOTNULL],[DateCreated|DATETIME|NOTNULL],[QuoteID|INTEGER|NULL],[DateConfirmed|DATETIME|NULL],[DateDeclined|DATETIME|NULL],[AppointmentCategoryID|INTEGER|NULL],[ProjectAppointmentId|INTEGER|NULL],[AppointmentGroupId|INTEGER|NULL],[BranchOfficeID|INTEGER|NOTNULL]) Select a.[AppointmentID],a.[AppointmentTypeID],a.[ClientID],a.[SiteID],a.[StartTime],a.[EndTime],a.[Notes],a.[ClientOrderNo],a.[DateCreated],a.[QuoteID],a.[DateConfirmed],a.[DateDeclined],a.[AppointmentCategoryID],a.[ProjectAppointmentId],a.[AppointmentGroupId],a.[BranchOfficeID] FROM Appointment a WITH (NOLOCK) INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID SELECT [AppointmentID|INTEGER|NOTNULL],[AppointmentTypeID|INTEGER|NOTNULL],[ClientID|INTEGER|NULL],[SiteID|INTEGER|NULL],[StartTime|DATETIME|NOTNULL],[EndTime|DATETIME|NOTNULL],[Notes|VARCHAR|NOTNULL],[ClientOrderNo|VARCHAR|NOTNULL],[DateCreated|DATETIME|NOTNULL],[QuoteID|INTEGER|NULL],[DateConfirmed|DATETIME|NULL],[DateDeclined|DATETIME|NULL],[AppointmentCategoryID|INTEGER|NULL],[ProjectAppointmentId|INTEGER|NULL],[AppointmentGroupId|INTEGER|NULL],[BranchOfficeID|INTEGER|NOTNULL] FROM @AppointmentTable
+  DECLARE @JobTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [JobID|INTEGER|NOTNULL] INT NOT NULL ,[JobNo|INTEGER|NOTNULL] INT NOT NULL ,[ClientID|INTEGER|NOTNULL] INT NOT NULL ,[SiteID|INTEGER|NULL] INT NULL ,[ClientOrderNo|VARCHAR|NULL] VARCHAR(MAX) NULL ,[Created|DATETIME|NOTNULL] DATETIME NOT NULL DEFAULT (getdate()),[ProjectManagerID|INTEGER|NULL] INT NULL) INSERT INTO @JobTable ([JobID|INTEGER|NOTNULL],[JobNo|INTEGER|NOTNULL],[ClientID|INTEGER|NOTNULL],[SiteID|INTEGER|NULL],[ClientOrderNo|VARCHAR|NULL],[Created|DATETIME|NOTNULL],[ProjectManagerID|INTEGER|NULL]) Select j.[JobID],j.[JobNo],j.[ClientID],j.[SiteID],j.[ClientOrderNo],j.[Created],j.[ProjectManagerID] FROM Job j WITH (NOLOCK) INNER JOIN (SELECT JobID FROM @JobQuoteAppointmentIDList WHERE JobID IS NOT NULL GROUP BY JobID) jqa ON j.JobID = jqa.JobID SELECT [JobID|INTEGER|NOTNULL],[JobNo|INTEGER|NOTNULL],[ClientID|INTEGER|NOTNULL],[SiteID|INTEGER|NULL],[ClientOrderNo|VARCHAR|NULL],[Created|DATETIME|NOTNULL],[ProjectManagerID|INTEGER|NULL] FROM @JobTable
+  DECLARE @QuoteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteID|INTEGER|NOTNULL] INT NOT NULL ,[QuoteTypeID|INTEGER|NULL] INT NULL ,[QuoteNo|INTEGER|NOTNULL] INT NOT NULL ,[ScopeOfWork|VARCHAR|NOTNULL] VARCHAR(MAX) NOT NULL DEFAULT (''),[Status|VARCHAR|NULL] VARCHAR(MAX) NULL ,[Created|DATETIME|NOTNULL] DATETIME NOT NULL DEFAULT (getdate()),[Accepted|DATETIME|NULL] DATETIME NULL ,[JobID|INTEGER|NULL] INT NULL ,[Rejected|DATETIME|NULL] DATETIME NULL ,[Exclusions|VARCHAR|NULL] VARCHAR(MAX) NULL ) INSERT INTO @QuoteTable ([QuoteID|INTEGER|NOTNULL],[QuoteTypeID|INTEGER|NULL],[QuoteNo|INTEGER|NOTNULL],[ScopeOfWork|VARCHAR|NOTNULL],[Status|VARCHAR|NULL],[Created|DATETIME|NOTNULL],[Accepted|DATETIME|NULL],[JobID|INTEGER|NULL],[Rejected|DATETIME|NULL],[Exclusions|VARCHAR|NULL]) Select q.[QuoteID],q.[QuoteTypeID],q.[QuoteNo],q.[ScopeOfWork],q.[Status],q.[Created],q.[Accepted],q.[JobID],q.[Rejected],q.[Exclusions] FROM Quote q WITH (NOLOCK) INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) jqa ON q.QuoteID=jqa.QuoteID  SELECT [QuoteID|INTEGER|NOTNULL],[QuoteTypeID|INTEGER|NULL],[QuoteNo|INTEGER|NOTNULL],[ScopeOfWork|VARCHAR|NOTNULL],[Status|VARCHAR|NULL],[Created|DATETIME|NOTNULL],[Accepted|DATETIME|NULL],[JobID|INTEGER|NULL],[Rejected|DATETIME|NULL],[Exclusions|VARCHAR|NULL] FROM @QuoteTable
+*/
+/*
+  --Select c.[ClientID],c.[Email],c.[Telephone],c.[Fax],c.[MainContact],c.[EnterpriseServerCode] FROM Client c WITH (NOLOCK) INNER JOIN (SELECT ClientID FROM @JobQuoteAppointmentIDList WHERE ClientID IS NOT NULL GROUP BY ClientID) jqa ON c.ClientID=jqa.ClientID
+  --Select si.[SiteID],si.[Telephone],si.[Contact],si.[UPRN],si.[ClientOrderNumber],si.[TEAMSUPRN] FROM Site si WITH (NOLOCK) INNER JOIN (SELECT SiteID FROM @JobQuoteAppointmentIDList WHERE SiteID IS NOT NULL GROUP BY SiteID) jqa ON si.SiteID=jqa.SiteID
+  --Select a.[AppointmentID],a.[AppointmentTypeID],a.[ClientID],a.[SiteID],a.[StartTime],a.[EndTime],a.[Notes],a.[ClientOrderNo],a.[DateCreated],a.[QuoteID],a.[DateConfirmed],a.[DateDeclined],a.[AppointmentCategoryID],a.[ProjectAppointmentId],a.[AppointmentGroupId],a.[BranchOfficeID] FROM Appointment a WITH (NOLOCK) INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID 
+  --Select j.[JobID],j.[JobNo],j.[ClientID],j.[SiteID],j.[ClientOrderNo],j.[Created],j.[ProjectManagerID] FROM Job j WITH (NOLOCK) INNER JOIN (SELECT JobID FROM @JobQuoteAppointmentIDList WHERE JobID IS NOT NULL GROUP BY JobID) jqa ON j.JobID = jqa.JobID
+  --Select q.[QuoteID],q.[QuoteTypeID],q.[QuoteNo],q.[ScopeOfWork],q.[Status],q.[Created],q.[Accepted],q.[JobID],q.[Rejected],q.[Exclusions] FROM Quote q WITH (NOLOCK) INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) jqa ON q.QuoteID=jqa.QuoteID
+*/
+  --DECLARE @AppointmentSurveyTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL,[SurveyTypeID|INTEGER|NOTNULL||] INT NOT NULL,[PropertyTypeID|INTEGER|NOTNULL||] INT NOT NULL,[DueDate|DATETIME|NULL||] DATETIME NULL)  INSERT INTO @AppointmentSurveyTable ([AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NULL||]) Select asu.[AppointmentSurveyID],asu.[AppointmentID],asu.[SurveyTypeID],asu.[PropertyTypeID],asu.[DueDate] FROM AppointmentSurvey asu WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=asu.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NULL||] FROM @AppointmentSurveyTable GROUP BY [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NULL||]
+  DECLARE @AppointmentSurveyTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL,[SurveyTypeID|INTEGER|NOTNULL||] INT NOT NULL,[PropertyTypeID|INTEGER|NOTNULL||] INT NOT NULL,[DueDate|DATETIME|NOTNULL||] DATETIME NOT NULL) INSERT INTO @AppointmentSurveyTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NOTNULL||]) Select 'AppointmentSurvey' AS [TableName], asu.[AppointmentSurveyID],asu.[AppointmentID],asu.[SurveyTypeID],asu.[PropertyTypeID], ISNULL(asu.[DueDate], GETDATE()) [DueDate] FROM AppointmentSurvey asu WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=asu.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NOTNULL||] FROM @AppointmentSurveyTable GROUP BY [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentSurveyID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[SurveyTypeID|INTEGER|NOTNULL||],[PropertyTypeID|INTEGER|NOTNULL||],[DueDate|DATETIME|NOTNULL||]
+  /*
+  DECLARE @AppointmentAirMonitoringTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentAirMonitoringID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL ,[NumberOfPumps|INTEGER|NOTNULL||] INT NOT NULL,[RemovalContractorID|INTEGER|NOTNULL||] INT NOT NULL,[SampleResultID|INTEGER|NULL||] INT NULL)  INSERT INTO @AppointmentAirMonitoringTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentAirMonitoringID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[NumberOfPumps|INTEGER|NOTNULL||],[RemovalContractorID|INTEGER|NOTNULL||],[SampleResultID|INTEGER|NULL||]) Select 'AppointmentAirMonitoring' AS [TableName], aam.[AppointmentAirMonitoringID],aam.[AppointmentID],aam.[NumberOfPumps],aam.[RemovalContractorID],aam.SampleResultID FROM AppointmentAirMonitoring aam WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=aam.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentAirMonitoringID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[NumberOfPumps|INTEGER|NOTNULL||],[RemovalContractorID|INTEGER|NOTNULL||],[SampleResultID|INTEGER|NULL||] FROM @AppointmentAirMonitoringTable
+  DECLARE @AppointmentAirMonitoringTypeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentAirMonitoringTypeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentAirMonitoringID|INTEGER|NOTNULL||] INT NOT NULL ,[AirTestTypeID|INTEGER|NOTNULL||] INT NOT NULL) INSERT INTO @AppointmentAirMonitoringTypeTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentAirMonitoringTypeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentAirMonitoringID|INTEGER|NOTNULL||],[AirTestTypeID|INTEGER|NOTNULL||]) Select 'AppointmentAirMonitoringType' AS [TableName], aamt.[AppointmentAirMonitoringTypeID],aamt.[AppointmentAirMonitoringID],aamt.[AirTestTypeID] FROM AppointmentAirMonitoringType aamt WITH (NOLOCK) INNER JOIN AppointmentAirMonitoring aam WITH (NOLOCK) ON aamt.AppointmentAirMonitoringID=aam.AppointmentAirMonitoringID INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=aam.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentAirMonitoringTypeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentAirMonitoringID|INTEGER|NOTNULL||],[AirTestTypeID|INTEGER|NOTNULL||] FROM @AppointmentAirMonitoringTypeTable
+  DECLARE @AppointmentAirMonitoringSampleClassificationTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentAirMonitoringSampleClassificationID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentAirMonitoringID|INTEGER|NOTNULL||] INT NOT NULL ,[SampleClassificationID|INTEGER|NOTNULL||] INT NOT NULL)  INSERT INTO @AppointmentAirMonitoringSampleClassificationTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentAirMonitoringSampleClassificationID|INTEGER|NOTNULL||SERVERKEY],[AppointmentAirMonitoringID|INTEGER|NOTNULL||],[SampleClassificationID|INTEGER|NOTNULL||]) Select 'AppointmentAirMonitoringSampleClassification' AS [TableName], aamsc.[AppointmentAirMonitoringSampleClassificationID],aamsc.[AppointmentAirMonitoringID],aamsc.[SampleClassificationID] FROM AppointmentAirMonitoringSampleClassification aamsc WITH (NOLOCK) INNER JOIN AppointmentAirMonitoring aam  WITH (NOLOCK) ON aamsc.AppointmentAirMonitoringID=aam.AppointmentAirMonitoringID INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=aam.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentAirMonitoringSampleClassificationID|INTEGER|NOTNULL||SERVERKEY],[AppointmentAirMonitoringID|INTEGER|NOTNULL||],[SampleClassificationID|INTEGER|NOTNULL||] FROM @AppointmentAirMonitoringSampleClassificationTable
+  */
+
+  --------------------------------------------------------
+  -- Clients - PJL: I split these up so I could read them!
+  DECLARE @ClientTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [ClientID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[ClientName|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[ClientAddress|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL  ,[Email|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Telephone|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Fax|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[MainContact|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[EnterpriseServerCode|VARCHAR|NULL||] VARCHAR(MAX) NULL,[EnterpriseAuthEnc|VARCHAR|NULL||] VARCHAR(MAX) NULL )  
+  
+  INSERT INTO @ClientTable ([SQLTableName|NVARCHAR|NOTNULL||], [ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||]) 
+    Select 
+      'Client' AS [TableName], c.[ClientID],c.[Client],c.[Address],c.[Email],c.[Telephone],c.[Fax],c.[MainContact],c.[EnterpriseServerCode], c.[EnterpriseAuthEnc]
+    FROM 
+      Client c WITH (NOLOCK) 
+      INNER JOIN (
+        SELECT ClientID FROM @JobQuoteAppointmentIDList WHERE ClientID IS NOT NULL GROUP BY ClientID
+      ) jqa ON c.ClientID=jqa.ClientID      
+      
+  INSERT INTO @ClientTable ([SQLTableName|NVARCHAR|NOTNULL||], [ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||]) 
+    Select 
+      'Client' AS [TableName], c.[ClientID],c.[Client],c.[Address],c.[Email],c.[Telephone],c.[Fax],c.[MainContact],c.[EnterpriseServerCode], c.[EnterpriseAuthEnc]
+    FROM 
+      Client c WITH (NOLOCK) 
+      INNER JOIN (
+        SELECT ClientID FROM StandardPhraseCategoryClient WHERE ClientID IS NOT NULL GROUP BY ClientID 
+      ) spcc ON c.ClientID=spcc.ClientID      
+
+  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||] FROM @ClientTable GROUP BY [SQLTableName|NVARCHAR|NOTNULL||],[ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||]
+  --------------------------------------------------------
+
+
+  --------------------------------------------------------
+  -- Sites - PJL: I split these up so I could read them!
+  DECLARE @SiteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [SiteID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[SiteAddress|VARCHAR|NOTNULL||] VARCHAR(MAX), [Telephone|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Contact|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[UPRN|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[ClientOrderNumber|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[TEAMSUPRN|VARCHAR|NULL||] VARCHAR(MAX) NULL )
+
+  INSERT INTO @SiteTable ([SQLTableName|NVARCHAR|NOTNULL||], [SiteID|INTEGER|NOTNULL||SERVERKEY],[SiteAddress|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Contact|VARCHAR|NOTNULL||],[UPRN|VARCHAR|NULL||],[ClientOrderNumber|VARCHAR|NULL||],[TEAMSUPRN|VARCHAR|NULL||]) 
+    Select 
+      'Site' AS [TableName], si.[SiteID],si.[Address] + ', ' + si.[Postcode] [SiteAddress],si.[Telephone],si.[Contact],si.[UPRN],si.[ClientOrderNumber],si.[TEAMSUPRN] 
+    FROM 
+      Site si WITH (NOLOCK) 
+      INNER JOIN (
+        SELECT SiteID FROM @JobQuoteAppointmentIDList WHERE SiteID IS NOT NULL GROUP BY SiteID UNION SELECT s [SiteID] FROM dbo.SplitString(@ExtraSiteIds,',')
+      ) jqa ON si.SiteID=jqa.SiteID 
+
+  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[SiteID|INTEGER|NOTNULL||SERVERKEY],[SiteAddress|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Contact|VARCHAR|NOTNULL||],[UPRN|VARCHAR|NULL||],[ClientOrderNumber|VARCHAR|NULL||],[TEAMSUPRN|VARCHAR|NULL||]
+  , dbo.get_SiteHighestRegisterItemNo([SiteID|INTEGER|NOTNULL||SERVERKEY]) [SiteHighestRegisterItemNo|VARCHAR|INT||] 
+  FROM @SiteTable
+  --------------------------------------------------------
+
+
+  -- Temporrary hack to enable DTS for certain companies
+  DECLARE @CompanyName NVARCHAR(50)
+  SET @CompanyName = (SELECT TOP 1 s__CompanyName FROM Config)
+  
+  -- Remove this IF/END around these tables once we open DTS up to all companies  
+  IF @CompanyName = 'Pennington Choices' OR
+	 (@CompanyName = 'G&L Consultancy Ltd' AND @EmployeeID IN (2,66)) OR
+	 (@CompanyName = 'Environtec' AND @EmployeeID IN (1,998)) BEGIN
+  	  DECLARE @AppointmentTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[AppointmentTypeID|INTEGER|NOTNULL||] INT NOT NULL ,[ClientID|INTEGER|NULL|Client|] INT NULL ,[SiteID|INTEGER|NULL|Site|] INT NULL ,[StartTime|DATETIME|NOTNULL||] DATETIME NOT NULL ,[EndTime|DATETIME|NOTNULL||] DATETIME NOT NULL ,[Notes|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[ClientOrderNo|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[DateCreated|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[QuoteID|INTEGER|NULL||] INT NULL ,[DateConfirmed|DATETIME|NULL||] DATETIME NULL ,[DateDeclined|DATETIME|NULL||] DATETIME NULL ,[AppointmentCategoryID|INTEGER|NULL||] INT NULL DEFAULT (NULL),[ProjectAppointmentId|INTEGER|NULL||] INT NULL ,[AppointmentGroupId|INTEGER|NULL||] INT NULL ,[BranchOfficeID|INTEGER|NOTNULL||] INT NOT NULL DEFAULT ((0)), [SiteAlert|VARCHAR|NULL||] VARCHAR(MAX)) INSERT INTO @AppointmentTable ([SQLTableName|NVARCHAR|NOTNULL||],[AppointmentID|INTEGER|NOTNULL||SERVERKEY],[AppointmentTypeID|INTEGER|NOTNULL||],[ClientID|INTEGER|NULL|Client|],[SiteID|INTEGER|NULL|Site|],[StartTime|DATETIME|NOTNULL||],[EndTime|DATETIME|NOTNULL||],[Notes|VARCHAR|NOTNULL||],[ClientOrderNo|VARCHAR|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[QuoteID|INTEGER|NULL||],[DateConfirmed|DATETIME|NULL||],[DateDeclined|DATETIME|NULL||],[AppointmentCategoryID|INTEGER|NULL||],[ProjectAppointmentId|INTEGER|NULL||],[AppointmentGroupId|INTEGER|NULL||],[BranchOfficeID|INTEGER|NOTNULL||],[SiteAlert|VARCHAR|NULL||]) Select 'Appointment' AS [TableName], a.[AppointmentID],a.[AppointmentTypeID],a.[ClientID],a.[SiteID],a.[StartTime],a.[EndTime],a.[Notes],a.[ClientOrderNo],a.[DateCreated],a.[QuoteID],a.[DateConfirmed],a.[DateDeclined],a.[AppointmentCategoryID],a.[ProjectAppointmentId],a.[AppointmentGroupId],a.[BranchOfficeID], cs.SiteAlerts FROM Appointment a WITH (NOLOCK) LEFT OUTER JOIN Site si WITH (NOLOCK) ON a.SiteID=si.SiteID LEFT OUTER JOIN ClientSite cs WITH (NOLOCK) ON si.SiteID = cs.SiteID AND cs.ClientID=a.ClientID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentID|INTEGER|NOTNULL||SERVERKEY],[AppointmentTypeID|INTEGER|NOTNULL||],[ClientID|INTEGER|NULL|Client|],[SiteID|INTEGER|NULL|Site|],[StartTime|DATETIME|NOTNULL||],[EndTime|DATETIME|NOTNULL||],[Notes|VARCHAR|NOTNULL||],[ClientOrderNo|VARCHAR|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[QuoteID|INTEGER|NULL||],[DateConfirmed|DATETIME|NULL||],[DateDeclined|DATETIME|NULL||],[AppointmentCategoryID|INTEGER|NULL||],[ProjectAppointmentId|INTEGER|NULL||],[AppointmentGroupId|INTEGER|NULL||],[BranchOfficeID|INTEGER|NOTNULL||],[SiteAlert|VARCHAR|NULL||] FROM @AppointmentTable
+	  DECLARE @AppointmentEmployeeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL ,[EmployeeID|INTEGER|NULL||] INT NULL)  INSERT INTO @AppointmentEmployeeTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NULL||]) Select 'AppointmentEmployee' AS [TableName], ae.[AppointmentEmployeeID],ae.[AppointmentID],ae.[EmployeeID] FROM AppointmentEmployee ae WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=ae.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID WHERE ae.EmployeeID=@EmployeeID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NULL||] FROM @AppointmentEmployeeTable
+	  DECLARE @JobTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL,  [JobID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL, [JobNo|INTEGER|NOTNULL||] INT NOT NULL, [ClientID|INTEGER|NOTNULL|Client|] INT NOT NULL, [SiteID|INTEGER|NULL|Site|] INT NULL, [ClientOrderNo|VARCHAR|NULL||] VARCHAR(MAX) NULL, [Created|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT ( getdate() ), [ProjectManagerID|INTEGER|NULL||] INT NULL, [HasSiteData|INTEGER|NULL||] INT NULL, [Notes|VARCHAR|NULL||] VARCHAR(MAX), [SiteAlert|VARCHAR|NULL||] VARCHAR(MAX) ) INSERT INTO @JobTable ([SQLTableName|NVARCHAR|NOTNULL||], [JobID|INTEGER|NOTNULL||SERVERKEY], [JobNo|INTEGER|NOTNULL||], [ClientID|INTEGER|NOTNULL|Client|], [SiteID|INTEGER|NULL|Site|], [ClientOrderNo|VARCHAR|NULL||], [Created|DATETIME|NOTNULL||], [ProjectManagerID|INTEGER|NULL||], [HasSiteData|INTEGER|NULL||], [Notes|VARCHAR|NULL||], [SiteAlert|VARCHAR|NULL||] ) Select 'Job' AS [TableName], j.[JobID], j.[JobNo], j.[ClientID], j.[SiteID], j.[ClientOrderNo], j.[Created], j.[ProjectManagerID], CASE WHEN sd.DataCount > 0 THEN 1 END [HasSiteData], ( SELECT top 1 a.Notes FROM @JobQuoteAppointmentIDList jqal INNER JOIN Appointment a WITH (NOLOCK) ON jqal.AppointmentID = a.AppointmentID WHERE jqal.JobID = j.JobID ), cs.SiteAlerts FROM Job j WITH (NOLOCK) INNER JOIN ( SELECT JobID FROM @JobQuoteAppointmentIDList WHERE JobID IS NOT NULL GROUP BY JobID ) jqa ON j.JobID = jqa.JobID OUTER APPLY ( SELECT COUNT(*) [DataCount] FROM Site subSi WITH (NOLOCK) INNER JOIN Job subJ WITH (NOLOCK) ON subSi.SiteID = subJ.SiteID INNER JOIN JobEmployee subje WITH (NOLOCK) ON subje.JobID = subj.JobID INNER JOIN Register subr WITH (NOLOCK) ON subje.JobEmployeeID = subr.JobEmployeeID INNER JOIN Floorplan subfp WITH (NOLOCK) ON subfp.RegisterID = subr.RegisterID WHERE subSi.SiteID = j.SiteID ) sd INNER JOIN Site si WITH (NOLOCK) ON j.SiteID = si.SiteID INNER JOIN ClientSite cs WITH (NOLOCK) ON si.SiteID = cs.SiteID AND cs.ClientID=j.ClientID SELECT [SQLTableName|NVARCHAR|NOTNULL||], [JobID|INTEGER|NOTNULL||SERVERKEY], [JobNo|INTEGER|NOTNULL||], [ClientID|INTEGER|NOTNULL|Client|], [SiteID|INTEGER|NULL|Site|], [ClientOrderNo|VARCHAR|NULL||], [Created|DATETIME|NOTNULL||], [ProjectManagerID|INTEGER|NULL||], [HasSiteData|INTEGER|NULL||], [Notes|VARCHAR|NULL||], [SiteAlert|VARCHAR|NULL||] FROM @JobTable
+	  DECLARE @QuoteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteTypeID|INTEGER|NULL||] INT NULL ,[QuoteNo|INTEGER|NOTNULL||] INT NOT NULL ,[ScopeOfWork|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL DEFAULT (''),[Status|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[Created|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[Accepted|DATETIME|NULL||] DATETIME NULL ,[JobID|INTEGER|NULL|Job|] INT NULL ,[Rejected|DATETIME|NULL||] DATETIME NULL ,[Exclusions|VARCHAR|NULL||] VARCHAR(MAX) NULL ) INSERT INTO @QuoteTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteID|INTEGER|NOTNULL||SERVERKEY],[QuoteTypeID|INTEGER|NULL||],[QuoteNo|INTEGER|NOTNULL||],[ScopeOfWork|VARCHAR|NOTNULL||],[Status|VARCHAR|NULL||],[Created|DATETIME|NOTNULL||],[Accepted|DATETIME|NULL||],[JobID|INTEGER|NULL|Job|],[Rejected|DATETIME|NULL||],[Exclusions|VARCHAR|NULL||]) Select 'Quote' AS [TableName], q.[QuoteID],q.[QuoteTypeID],q.[QuoteNo],q.[ScopeOfWork],q.[Status],q.[Created],q.[Accepted],q.[JobID],q.[Rejected],q.[Exclusions] FROM Quote q WITH (NOLOCK) INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) jqa ON q.QuoteID=jqa.QuoteID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteID|INTEGER|NOTNULL||SERVERKEY],[QuoteTypeID|INTEGER|NULL||],[QuoteNo|INTEGER|NOTNULL||],[ScopeOfWork|VARCHAR|NOTNULL||],[Status|VARCHAR|NULL||],[Created|DATETIME|NOTNULL||],[Accepted|DATETIME|NULL||],[JobID|INTEGER|NULL|Job|],[Rejected|DATETIME|NULL||],[Exclusions|VARCHAR|NULL||] FROM @QuoteTable
+  END
+
+  DECLARE @QuoteEmployeeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteID|INTEGER|NOTNULL||] INT NOT NULL ,[EmployeeID|INTEGER|NOTNULL||] INT NOT NULL ,[ScheduledStart|DATETIME|NULL||] DATETIME NULL ,[ScheduledFinish|DATETIME|NULL||] DATETIME NULL ,[ActualStart|DATETIME|NULL||] DATETIME NULL ,[ActualFinish|DATETIME|NULL||] DATETIME NULL ) INSERT INTO @QuoteEmployeeTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY],[QuoteID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[ScheduledStart|DATETIME|NULL||],[ScheduledFinish|DATETIME|NULL||],[ActualStart|DATETIME|NULL||],[ActualFinish|DATETIME|NULL||]) Select 'QuoteEmployee' AS [TableName], qe.[QuoteEmployeeID],qe.[QuoteID],qe.[EmployeeID],qe.[ScheduledStart],qe.[ScheduledFinish],qe.[ActualStart],qe.[ActualFinish] FROM QuoteEmployee qe INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) q ON qe.QuoteID=q.QuoteID AND qe.EmployeeID>0 SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY],[QuoteID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[ScheduledStart|DATETIME|NULL||],[ScheduledFinish|DATETIME|NULL||],[ActualStart|DATETIME|NULL||],[ActualFinish|DATETIME|NULL||] FROM @QuoteEmployeeTable
+  DECLARE @QuoteVisitTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteVisitID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteVisitTypeID|INTEGER|NOTNULL||] INT NOT NULL ,[QuoteEmployeeID|INTEGER|NULL||] INT NULL ,[QuoteVisitStart|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[QuoteVisitFinish|DATETIME|NULL||] DATETIME NULL ,[Notes|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[PhotoID|INTEGER|NULL||] INT NULL ,[SystemName|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Closed|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[Finished|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[SignatureID|INTEGER|NULL||] INT NULL ,[_QuoteVisitConsumableMarkup|DECIMAL|NULL||] DECIMAL(38,38) NULL ,[_QuoteVisitEquipmentMarkup|DECIMAL|NULL||] DECIMAL(38,38) NULL ,[_QuoteVisitLabourMarkup|DECIMAL|NULL||] DECIMAL(38,38) NULL )  INSERT INTO @QuoteVisitTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteVisitID|INTEGER|NOTNULL||SERVERKEY],[QuoteVisitTypeID|INTEGER|NOTNULL||],[QuoteEmployeeID|INTEGER|NULL||],[QuoteVisitStart|DATETIME|NOTNULL||],[QuoteVisitFinish|DATETIME|NULL||],[Notes|VARCHAR|NULL||],[PhotoID|INTEGER|NULL||],[SystemName|VARCHAR|NOTNULL||],[Closed|BIT|NOTNULL||],[Finished|BIT|NOTNULL||],[SignatureID|INTEGER|NULL||],[_QuoteVisitConsumableMarkup|DECIMAL|NULL||],[_QuoteVisitEquipmentMarkup|DECIMAL|NULL||],[_QuoteVisitLabourMarkup|DECIMAL|NULL||]) Select 'QuoteVisit' AS [TableName], qv.[QuoteVisitID],qv.[QuoteVisitTypeID],qv.[QuoteEmployeeID],qv.[QuoteVisitStart],qv.[QuoteVisitFinish],qv.[Notes],qv.[PhotoID],qv.[SystemName],qv.[Closed],qv.[Finished],qv.[SignatureID],qv.[_QuoteVisitConsumableMarkup],qv.[_QuoteVisitEquipmentMarkup],qv.[_QuoteVisitLabourMarkup] FROM QuoteVisit qv INNER JOIN @QuoteEmployeeTable qet ON qet.[QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY]=qv.QuoteEmployeeID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteVisitID|INTEGER|NOTNULL||SERVERKEY],[QuoteVisitTypeID|INTEGER|NOTNULL||],[QuoteEmployeeID|INTEGER|NULL||],[QuoteVisitStart|DATETIME|NOTNULL||],[QuoteVisitFinish|DATETIME|NULL||],[Notes|VARCHAR|NULL||],[PhotoID|INTEGER|NULL||],[SystemName|VARCHAR|NOTNULL||],[Closed|BIT|NOTNULL||],[Finished|BIT|NOTNULL||],[SignatureID|INTEGER|NULL||],[_QuoteVisitConsumableMarkup|DECIMAL|NULL||],[_QuoteVisitEquipmentMarkup|DECIMAL|NULL||],[_QuoteVisitLabourMarkup|DECIMAL|NULL||] FROM @QuoteVisitTable
+  DECLARE @DataCollectionTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [DataCollectionID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[DataCollectionQuestionID|INTEGER|NOTNULL||] INT NOT NULL ,[DataText|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[DataInt|INTEGER|NULL||] INT NULL ,[DataCollectionQuestionOptionOrInsertID|INTEGER|NULL||] INT NULL ,[Deleted|DATETIME|NULL||] DATETIME NULL ,[QuoteVisitID|INTEGER|NULL||] INT NULL ,[DataCollectionCategoryTypeID|INTEGER|NOTNULL||] INT NOT NULL ) INSERT INTO @DataCollectionTable ([SQLTableName|NVARCHAR|NOTNULL||], [DataCollectionID|INTEGER|NOTNULL||SERVERKEY],[DataCollectionQuestionID|INTEGER|NOTNULL||],[DataText|VARCHAR|NULL||],[DataInt|INTEGER|NULL||],[DataCollectionQuestionOptionOrInsertID|INTEGER|NULL||],[Deleted|DATETIME|NULL||],[QuoteVisitID|INTEGER|NULL||],[DataCollectionCategoryTypeID|INTEGER|NOTNULL||]) Select 'DataCollection' AS [TableName], dc.[DataCollectionID],dc.[DataCollectionQuestionID],dc.[DataText],dc.[DataInt],dc.[DataCollectionQuestionOptionOrInsertID],dc.[Deleted],dc.[QuoteVisitID],dc.[DataCollectionCategoryTypeID] FROM DataCollection  dc INNER JOIN @QuoteVisitTable qvt ON dc.QuoteVisitID=qvt.[QuoteVisitID|INTEGER|NOTNULL||SERVERKEY] SELECT [SQLTableName|NVARCHAR|NOTNULL||],[DataCollectionID|INTEGER|NOTNULL||SERVERKEY],[DataCollectionQuestionID|INTEGER|NOTNULL||],[DataText|VARCHAR|NULL||],[DataInt|INTEGER|NULL||],[DataCollectionQuestionOptionOrInsertID|INTEGER|NULL||],[Deleted|DATETIME|NULL||],[QuoteVisitID|INTEGER|NULL||],[DataCollectionCategoryTypeID|INTEGER|NOTNULL||] FROM @DataCollectionTable
+
+  SET NOCOUNT OFF;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'P' AND name = 'mobile_Legionella_v1.4.0.81_DataTransfer_MonitoringData')
+BEGIN
+    EXEC('CREATE PROCEDURE [dbo].mobile_Legionella_v1.4.0.81_DataTransfer_MonitoringData] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
 
 USE [TEAMS]
 GO
-/****** Object:  StoredProcedure [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_JobQuoteAppointment]    Script Date: 12/11/2020 12:06:07 ******/
+/****** Object:  StoredProcedure [dbo].[mobile_Legionella_v1.4.0.81_DataTransfer_MonitoringData]    Script Date: 16/12/2020 10:32:55 ******/
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
+GO
+
+
+ALTER PROC [dbo].[mobile_Legionella_v1.4.0.81_DataTransfer_MonitoringData]
+(
+      @JobID INT
+)
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  /*
+  DECLARE @CachedJobIDList VARCHAR(MAX) = '12914,11718,12210,12534,12485,12606,12627,12628,12629,12631,12635,12661,12660,12680,12633, 12680, 12687, 12704,12682,12683,12689, 8688,9693,9709,9723,9739,9751,12452,12455,12456,12459,12460,12464,12467,12619,12639,12644,
+  12645,12646,12682,12683,12689,12714,12716,12717,12718,12721,12723,12724,12725,12726,12727,12728,12733,12735,12736
+  ,12737,8754,12736,12742,12744,12745,12746,12747,12748,12749,12750,12751,12752,12753,12754,12755,12756,12757,12759,12760,12761,
+  12762,12763,12764,12765,12766,12767,12768,12769,12772,12773,12774,12775,12777,12778,12779,12780,12782,12783,12784,12785,12786,12787,12788,12789,
+  12790,12791,12792,12793,12794,12795,12796,12797,12798,12799,12800,12801,12802,12803,12804,12805,12806,12807,12808,12809,12810,12811,12812,12898,12813,12814,
+  12815,12816,12817,12818,12819,12820,12821,12822,12823,12824,12825,12826,12828,12829,12830,12831,12832,12833,12834,12835,12836,12837,12838,12840,12841,12842,
+  12843,12844,12845,12846,12848,12849,12850,12851,12852,12853,12854,12855,12856,12857,12858,12859,12860,12861,12862,12863,12864,12865,12866,12867,12868,12869,
+  12870,12871,12872,12873,12874,12875,12876,12877,12878,12879,12880,12881,12882,12883,12884,12885,12886,12887,12888,12889,12890,12891,12892,12894,12895,12896,12897,12899,12900,12940,12900,12946,1298413989,14923'
+  */
+  DECLARE @IncludeDataCollectionAndTasks INT = 1
+
+  If ISNULL((SELECT MAX(lt.LegionellaMonitoringStructureOnly) FROM Job j INNER JOIN Quote q ON q.JobID=j.JobID INNER JOIN Appointment a ON a.QuoteID = q.QuoteID INNER JOIN AppointmentLegionella al ON a.AppointmentID=al.AppointmentID INNER JOIN LegionellaType lt ON al.LegionellaTypeID=lt.LegionellaTypeID WHERE j.JobID =  @JobID AND a.DateDeclined IS NULL GROUP BY lt.LegionellaMonitoringStructureOnly),0) = 1 BEGIN
+  SET @IncludeDataCollectionAndTasks = 0
+  END
+  
+  DECLARE @SiteID INT = (Select SiteID FROM Job Where JobID=@JobID)
+  DECLARE @ClientID INT = (Select ClientID FROM Job Where JobID=@JobID)
+  --Get @LegionellaTypeID
+  --Select * FROM LegionellaType
+  
+
+    DECLARE @ReinspectData TABLE  
+    (
+      TableName VARCHAR(MAX),TableCategoryID INT,TableID INT,ParentID INT,GUID VARCHAR(50),GUIDVersion INT,BuildingDesignation VARCHAR(MAX),
+      GeneralDescriptionOfSite VARCHAR(MAX), AreasNotAccessed VARCHAR(MAX), Notes VARCHAR(MAX),
+      SystemRef VARCHAR(MAX),Location VARCHAR(MAX),
+      SourceCold INT, SourceHot INT,SourceMains INT, SourceMixed INT,
+      SentinelCold INT, SentinelHot INT, SentinelMains INT, SentinelMixed INT,
+      EnabledCold INT, EnabledHot INT, EnabledMains INT, EnabledMixed INT,
+      [LowUseCold] INT, [LowUseHot] INT, [LowUseMains] INT, [LowUseMixed] INT,
+      LegionellaTaskAutoInsertID INT,LegionellaTaskAutoInsertTypeID INT, LegionellaTaskNo INT, LegionellaSectionID INT, 
+      LegionellaRiskCategoryID INT, RiskDescription VARCHAR(MAX), [Action] VARCHAR(MAX), LegionellaFrequencyCategoryID INT, LegionellaRiskRatingID INT, LegionellaPriorityRatingID INT, 
+      SortOrder INT, TaskDueDate DATETIME, AssetPhotoData IMAGE, AssetPhotoID INT
+    )
+
+  If @JobID IN (SELECT JobID FROM LegionellaMonitoringDataCacheJob) AND (SELECT COUNT(*) FROM LegionellaMonitoringDataCache WHERE @JobID = JobID) > 0 BEGIN
+
+    Insert into @ReinspectData (TableName,TableCategoryID,TableID,ParentID,GUID,GUIDVersion,BuildingDesignation,GeneralDescriptionOfSite,AreasNotAccessed,Notes,SystemRef,Location,[SourceCold],[SourceHot],[SourceMains],[SourceMixed],[SentinelCold],[SentinelHot],[SentinelMains],[SentinelMixed],[EnabledCold],[EnabledHot],[EnabledMains],[EnabledMixed],[LowUseCold],[LowUseHot],[LowUseMains],[LowUseMixed],LegionellaTaskAutoInsertID,LegionellaTaskAutoInsertTypeID,LegionellaTaskNo,LegionellaSectionID,LegionellaRiskCategoryID,RiskDescription,[Action],LegionellaFrequencyCategoryID,LegionellaRiskRatingID,LegionellaPriorityRatingID,SortOrder,TaskDueDate,AssetPhotoData,AssetPhotoID)
+    SELECT 
+      TableName,TableCategoryID,TableID,ParentID,GUID,GUIDVersion,BuildingDesignation,GeneralDescriptionOfSite,AreasNotAccessed,Notes,SystemRef,lmdc.Location,[SourceCold],[SourceHot],[SourceMains],[SourceMixed],[SentinelCold],[SentinelHot],[SentinelMains],[SentinelMixed],[EnabledCold],[EnabledHot],[EnabledMains],[EnabledMixed],[LowUseCold],[LowUseHot],[LowUseMains],[LowUseMixed],LegionellaTaskAutoInsertID,LegionellaTaskAutoInsertTypeID,LegionellaTaskNo,LegionellaSectionID,LegionellaRiskCategoryID,RiskDescription,[Action],LegionellaFrequencyCategoryID,LegionellaRiskRatingID,LegionellaPriorityRatingID,SortOrder,TaskDueDate,p.PhotoData [AssetPhotoData],lmdc.AssetPhotoID
+    FROM
+      LegionellaMonitoringDataCache lmdc
+      LEFT OUTER JOIN Photo p ON lmdc.AssetPhotoID = p.PhotoID
+    WHERE
+      JobID = @JobID
+  END
+  ELSE BEGIN
+
+    DECLARE @RestrictedLegionellaAssetCategoryID INT = (SELECT ISNULL((SELECT TOP 1 lt.LegionellaAssetCategoryID FROM Job j WITH (NOLOCK) INNER JOIN Quote q WITH (NOLOCK) ON j.JobID=q.JobID INNER JOIN Appointment a WITH (NOLOCK) ON a.QuoteID=q.QuoteID AND a.DateDeclined IS NULL INNER JOIN AppointmentLegionella al WITH (NOLOCK) ON al.AppointmentID=a.AppointmentID INNER JOIN LegionellaType lt WITH (NOLOCK) ON al.LegionellaTypeID=lt.LegionellaTypeID WHERE j.JobID = @JobID),0))
+
+    --SELECT lt.* FROM Job j WITH (NOLOCK) INNER JOIN Quote q WITH (NOLOCK) ON j.JobID=q.JobID INNER JOIN Appointment a WITH (NOLOCK) ON a.QuoteID=q.QuoteID AND a.DateDeclined IS NULL INNER JOIN AppointmentLegionella al WITH (NOLOCK) ON al.AppointmentID=a.AppointmentID INNER JOIN LegionellaType lt WITH (NOLOCK) ON al.LegionellaTypeID=lt.LegionellaTypeID WHERE j.JobID = @JobID
+
+    DECLARE @LegionellaGUIDED TABLE
+    (
+    LegionellaID INT, LegionellaTypeID INT, LegionellaGUID VARCHAR(MAX), LegionellaGUIDVersion INT, LegionellaIdentifier INT,
+    LegionellaAssetCategoryID INT,LegionellaAssetID INT, LegionellaAssetGUID VARCHAR(MAX), LegionellaAssetGUIDVersion INT, LegionellaAssetIdentifier INT,
+    LegionellaLocationID INT, LegionellaLocationGUID VARCHAR(MAX), LegionellaLocationGUIDVersion INT, LegionellaLocationIdentifier INT,
+    LegionellaOutletID INT, LegionellaOutletGUID VARCHAR(MAX), LegionellaOutletGUIDVersion INT, LegionellaOutletIdentifier INT,
+    LegionellaAssetPhotoData IMAGE
+    )
+
+    --SELECT @RestrictedLegionellaAssetCategoryID
+    
+    INSERT INTO @LegionellaGUIDED (LegionellaID, LegionellaTypeID, LegionellaGUID, LegionellaGUIDVersion, LegionellaIdentifier)
+    Select 
+      l.LegionellaID,ISNULL(null/*this will come from the Legionella record eventually*/,al.LegionellaTypeID),l.GUID [LegionellaGUID],l.GUIDVersion [LegionellaGUIDVersion], ROW_NUMBER() OVER (PARTITION BY l.GUID ORDER BY l.GUIDVersion DESC) [LegionellaIdentifier]
+    FROM
+      Job j WITH (NOLOCK)
+      
+      INNER JOIN Quote q WITH (NOLOCK) ON j.JobID=q.JobID
+      INNER JOIN Appointment a WITH (NOLOCK) ON a.QuoteID=q.QuoteID AND a.DateDeclined IS NULL
+      INNER JOIN AppointmentLegionella al WITH (NOLOCK) ON a.AppointmentID=al.AppointmentID
+      
+      INNER JOIN JobEmployee je WITH (NOLOCK) ON j.JobID=je.JobID
+      INNER JOIN Legionella l WITH (NOLOCK) ON l.JobEmployeeID=je.JobEmployeeID
+    WHERE
+        j.ClientID=@ClientID 
+        AND 
+        j.SiteID=@SiteID 
+        AND 
+        j.Approved IS NOT NULL
+
+	
+    INSERT INTO @LegionellaGUIDED (LegionellaID, LegionellaTypeID, LegionellaGUID, LegionellaGUIDVersion, LegionellaIdentifier, LegionellaAssetCategoryID, LegionellaAssetID, LegionellaAssetGUID, LegionellaAssetGUIDVersion, LegionellaAssetIdentifier)
+	SELECT
+		a.LegionellaID, a.LegionellaTypeID, a.LegionellaGUID, a.LegionellaGUIDVersion, a.LegionellaIdentifier, a.LegionellaAssetCategoryID, a.LegionellaAssetID, a.LegionellaAssetGUID, a.LegionellaAssetGUIDVersion, a.LegionellaAssetIdentifier
+	FROM
+		(
+			Select 
+			  l.LegionellaID,ISNULL(null/*this will come from the Legionella record eventually*/,leg.LegionellaTypeID) [LegionellaTypeID],l.GUID [LegionellaGUID],l.GUIDVersion [LegionellaGUIDVersion], leg.LegionellaIdentifier [LegionellaIdentifier], 
+			  la.LegionellaAssetCategoryID, la.LegionellaAssetID, la.GUID [LegionellaAssetGUID], la.GUIDVersion [LegionellaAssetGUIDVersion], ROW_NUMBER() OVER (PARTITION BY la.GUID ORDER BY la.GUIDVersion DESC, la.LegionellaID DESC) [LegionellaAssetIdentifier]
+			  , la.DateRemoved
+			FROM
+			(
+				SELECT
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier
+				FROM
+					@LegionellaGUIDED
+				WHERE
+					LegionellaID IS NOT NULL	
+				GROUP BY
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier
+			) leg
+			INNER JOIN Legionella l WITH (NOLOCK) ON l.LegionellaID=leg.LegionellaID
+			INNER JOIN LegionellaAsset la WITH (NOLOCK) ON l.LegionellaID = la.LegionellaID AND la.Deleted Is Null-- AND la.DateRemoved IS NULL
+		) a
+	WHERE
+		a.[LegionellaAssetIdentifier] = 1 AND a.DateRemoved IS NULL
+
+    INSERT INTO @LegionellaGUIDED (LegionellaID, LegionellaTypeID, LegionellaGUID, LegionellaGUIDVersion, LegionellaIdentifier, LegionellaLocationID, LegionellaLocationGUID, LegionellaLocationGUIDVersion, LegionellaLocationIdentifier)
+    Select 
+		a.LegionellaID, a.LegionellaTypeID, a.LegionellaGUID, a.LegionellaGUIDVersion, a.LegionellaIdentifier, a.LegionellaLocationID, a.LegionellaLocationGUID, a.LegionellaLocationGUIDVersion, a.LegionellaLocationIdentifier
+    FROM
+		(
+			Select 
+			  l.LegionellaID,ISNULL(null/*this will come from the Legionella record eventually*/,leg.LegionellaTypeID) [LegionellaTypeID],l.GUID [LegionellaGUID],l.GUIDVersion [LegionellaGUIDVersion], leg.LegionellaIdentifier [LegionellaIdentifier], 
+			  ll.LegionellaLocationID, ll.GUID [LegionellaLocationGUID], ll.GUIDVersion [LegionellaLocationGUIDVersion], ROW_NUMBER() OVER (PARTITION BY ll.GUID ORDER BY ll.GUIDVersion DESC, ll.LegionellaID DESC) [LegionellaLocationIdentifier], 
+			  ll.DateRemoved
+			FROM
+			(
+				SELECT
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier
+				FROM
+					@LegionellaGUIDED
+				WHERE
+					LegionellaID IS NOT NULL	
+				GROUP BY
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier
+			) leg
+			INNER JOIN Legionella l WITH (NOLOCK) ON l.LegionellaID=leg.LegionellaID
+			INNER JOIN LegionellaLocation ll WITH (NOLOCK) ON l.LegionellaID = ll.LegionellaID AND ll.Deleted Is Null-- AND ll.DateRemoved IS NULL
+		) a
+	WHERE
+		a.LegionellaLocationIdentifier = 1 AND a.DateRemoved IS NULL	
+
+    INSERT INTO @LegionellaGUIDED (LegionellaID, LegionellaTypeID, LegionellaGUID, LegionellaGUIDVersion, LegionellaIdentifier, LegionellaLocationID, LegionellaLocationGUID, LegionellaLocationGUIDVersion, LegionellaLocationIdentifier,LegionellaOutletID, LegionellaOutletGUID, LegionellaOutletGUIDVersion, LegionellaOutletIdentifier)
+    Select 
+		a.LegionellaID, a.LegionellaTypeID, a.LegionellaGUID, a.LegionellaGUIDVersion, a.LegionellaIdentifier, a.LegionellaLocationID, a.LegionellaLocationGUID, a.LegionellaLocationGUIDVersion, a.LegionellaLocationIdentifier, a.LegionellaOutletID, a.LegionellaOutletGUID, a.LegionellaOutletGUIDVersion, a.LegionellaOutletIdentifier
+    FROM
+		(
+			Select 
+			  l.LegionellaID,ISNULL(null/*this will come from the Legionella record eventually*/,leg.LegionellaTypeID) [LegionellaTypeID],l.GUID [LegionellaGUID],l.GUIDVersion [LegionellaGUIDVersion], leg.LegionellaIdentifier [LegionellaIdentifier], 
+			  leg.LegionellaLocationID, leg.LegionellaLocationGUID, leg.LegionellaLocationGUIDVersion, leg.LegionellaLocationIdentifier,
+			  lo.LegionellaOutletID, lo.GUID [LegionellaOutletGUID], lo.GUIDVersion [LegionellaOutletGUIDVersion], ROW_NUMBER() OVER (PARTITION BY lo.GUID ORDER BY lo.GUIDVersion DESC, ll.LegionellaID DESC) [LegionellaOutletIdentifier],
+			  lo.DateRemoved
+			FROM
+			(
+				SELECT
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier, LegionellaLocationID, LegionellaLocationGUID, LegionellaLocationGUIDVersion, LegionellaLocationIdentifier
+				FROM
+					@LegionellaGUIDED
+				WHERE
+					LegionellaID IS NOT NULL	
+				GROUP BY
+					LegionellaID, LegionellaTypeID, LegionellaIdentifier, LegionellaLocationID, LegionellaLocationGUID, LegionellaLocationGUIDVersion, LegionellaLocationIdentifier
+			) leg
+			INNER JOIN Legionella l WITH (NOLOCK) ON l.LegionellaID=leg.LegionellaID
+			INNER JOIN LegionellaLocation ll WITH (NOLOCK) ON l.LegionellaID = ll.LegionellaID AND leg.LegionellaLocationID=ll.LegionellaLocationID
+			INNER JOIN LegionellaOutlet lo WITH (NOLOCK) ON ll.LegionellaLocationID = lo.LegionellaLocationID AND lo.Deleted Is Null --AND lo.DateRemoved IS NULL
+		) a
+	WHERE
+		a.LegionellaOutletIdentifier = 1 AND a.DateRemoved IS NULL	
+
+	/*
+	, 
+      la.LegionellaAssetCategoryID, la.LegionellaAssetID, la.GUID [LegionellaAssetGUID], la.GUIDVersion [LegionellaAssetGUIDVersion], ROW_NUMBER() OVER (PARTITION BY la.GUID ORDER BY la.GUIDVersion DESC) [LegionellaAssetIdentifier], 
+      ll.LegionellaLocationID, ll.GUID [LegionellaLocationGUID], ll.GUIDVersion [LegionellaLocationGUIDVersion], ROW_NUMBER() OVER (PARTITION BY ll.GUID ORDER BY ll.GUIDVersion DESC) [LegionellaIdentifier], 
+      lo.LegionellaOutletID, lo.GUID [LegionellaOutletGUID], lo.GUIDVersion [LegionellaOutletGUIDVersion], ROW_NUMBER() OVER (PARTITION BY lo.GUID ORDER BY lo.GUIDVersion DESC) [LegionellaIdentifier]
+	*/
+
+        
+    DECLARE @Legionella_Data TABLE (LegionellaID INT, LegionellaTypeID INT, LegionellaGUID VARCHAR(MAX), LegionellaGUIDVersion INT)
+    Insert into @Legionella_Data (LegionellaID,LegionellaTypeID,LegionellaGUID,LegionellaGUIDVersion) Select LegionellaID,LegionellaTypeID,LegionellaGUID,LegionellaGUIDVersion FROM @LegionellaGUIDED lguid Where lguid.LegionellaIdentifier=1
+
+    DECLARE @LegionellaAsset_Data TABLE (LegionellaGUID VARCHAR(MAX), LegionellaAssetID INT, LegionellaAssetGUID VARCHAR(MAX), LegionellaAssetGUIDVersion INT)
+    Insert into @LegionellaAsset_data (LegionellaGUID,LegionellaAssetID,LegionellaAssetGUID,LegionellaAssetGUIDVersion) Select lguid.LegionellaGUID,lguid.LegionellaAssetID,lguid.LegionellaAssetGUID,lguid.LegionellaAssetGUIDVersion FROM @LegionellaGUIDED lguid Where lguid.LegionellaAssetIdentifier=1 AND (@RestrictedLegionellaAssetCategoryID = 0 OR lguid.LegionellaAssetCategoryID = CASE WHEN @RestrictedLegionellaAssetCategoryID = 3 THEN CASE WHEN lguid.LegionellaAssetCategoryID IN (4,5) THEN lguid.LegionellaAssetCategoryID ELSE @RestrictedLegionellaAssetCategoryID END ELSE @RestrictedLegionellaAssetCategoryID END)
+
+    DECLARE @LegionellaLocation_Data TABLE (LegionellaGUID VARCHAR(MAX), LegionellaLocationID INT, LegionellaLocationGUID VARCHAR(MAX), LegionellaLocationGUIDVersion INT)
+    Insert into @LegionellaLocation_Data (LegionellaGUID,LegionellaLocationID,LegionellaLocationGUID,LegionellaLocationGUIDVersion) Select lguid.LegionellaGUID,lguid.LegionellaLocationID,lguid.LegionellaLocationGUID,lguid.LegionellaLocationGUIDVersion FROM @LegionellaGUIDED lguid Where lguid.LegionellaLocationIdentifier=1 AND @RestrictedLegionellaAssetCategoryID = 0
+
+    DECLARE @LegionellaOutlet_Data TABLE (LegionellaLocationGUID VARCHAR(MAX), LegionellaOutletID INT, LegionellaOutletGUID VARCHAR(MAX), LegionellaOutletGUIDVersion INT)
+    Insert into @LegionellaOutlet_Data (LegionellaLocationGUID,LegionellaOutletID,LegionellaOutletGUID,LegionellaOutletGUIDVersion) Select lguid.LegionellaLocationGUID,lguid.LegionellaOutletID, lguid.LegionellaOutletGUID, lguid.LegionellaOutletGUIDVersion FROM @LegionellaGUIDED lguid Where lguid.LegionellaOutletIdentifier=1 AND @RestrictedLegionellaAssetCategoryID = 0
+
+    Insert into @ReinspectData (TableName,TableCategoryID,TableID,ParentID,GUID,GUIDVersion,BuildingDesignation,GeneralDescriptionOfSite,AreasNotAccessed,Notes,SystemRef,Location,[SourceCold],[SourceHot],[SourceMains],[SourceMixed],[SentinelCold],[SentinelHot],[SentinelMains],[SentinelMixed],[EnabledCold],[EnabledHot],[EnabledMains],[EnabledMixed],[LowUseCold],[LowUseHot],[LowUseMains],[LowUseMixed],LegionellaTaskAutoInsertID,LegionellaTaskAutoInsertTypeID,LegionellaTaskNo,LegionellaSectionID,LegionellaRiskCategoryID,RiskDescription,[Action],LegionellaFrequencyCategoryID,LegionellaRiskRatingID,LegionellaPriorityRatingID,SortOrder,TaskDueDate,AssetPhotoData,AssetPhotoID)
+    Select
+      main.TableName,
+      main.TableCategoryID,
+      main.TableID,
+      main.ParentID,
+      main.GUID,
+      main.GuidVersion,
+      main.BuildingDesignation,
+      main.GeneralDescriptionOfSite,
+      main.AreasNotAccessed,
+      main.Notes,
+      main.SystemRef,
+      main.Location,
+      main.SourceCold,
+      main.SourceHot,
+      main.SourceMains,
+      main.SourceMixed,
+      main.SentinelCold,
+      main.SentinelHot,
+      main.SentinelMains,
+      main.SentinelMixed,
+      main.EnabledCold,
+      main.EnabledHot,
+      main.EnabledMains,
+      main.EnabledMixed,
+      main.LowUseCold,
+      main.LowUseHot,
+      main.LowUseMains,
+      main.LowUseMixed,
+      main.[LegionellaTaskAutoInsertID],
+      main.[LegionellaTaskAutoInsertTypeID],
+      main.[LegionellaTaskNo],
+      main.[LegionellaSectionID], 
+      main.[LegionellaRiskCategoryID],
+      main.[RiskDescription],
+      main.[Action], 
+      main.[LegionellaFrequencyCategoryID],
+      main.[LegionellaRiskRatingID],
+      main.[LegionellaPriorityRatingID],
+      main.[SortOrder],
+    main.TaskDueDate [TaskDueDate],
+    p.PhotoData [AssetPhotoData],
+    p.PhotoID [AssetPhotoID]
+    FROM
+      (
+        Select 
+        'Legionella' [TableName],
+        NULL [TableCategoryID],
+        l.LegionellaID [TableID],
+        NULL [ParentID],
+        l.GUID [GUID],
+        l.GUIDVersion [GUIDVersion],
+        l.BuildingDesignation [BuildingDesignation],
+        l.GeneralDescriptionOfSite [GeneralDescriptionOfSite],
+      l.AreasNotAccessed [AreasNotAccessed],
+      l.Notes [Notes],
+        NULL [SystemRef],
+        NULL [Location],
+        NULL [SourceCold],
+        NULL [SourceHot],
+        NULL [SourceMains],
+        NULL [SourceMixed],
+        NULL [SentinelCold],
+        NULL [SentinelHot],
+        NULL [SentinelMains],
+        NULL [SentinelMixed],
+        NULL [EnabledCold],
+        NULL [EnabledHot],
+        NULL [EnabledMains],
+        NULL [EnabledMixed],
+        NULL [LowUseCold],
+        NULL [LowUseHot],
+        NULL [LowUseMains],
+        NULL [LowUseMixed],
+        NULL [LegionellaTaskAutoInsertID],
+        NULL [LegionellaTaskAutoInsertTypeID],
+        NULL [LegionellaTaskNo],
+        NULL [LegionellaSectionID], 
+        NULL [LegionellaRiskCategoryID],
+        NULL [RiskDescription],
+        NULL [Action], 
+        NULL [LegionellaFrequencyCategoryID],
+        NULL [LegionellaRiskRatingID],
+        NULL [LegionellaPriorityRatingID],
+        NULL [SortOrder],
+      NULL [TaskDueDate],
+      NULL [PhotoID]
+        FROM 
+        Legionella l WITH (NOLOCK)
+        INNER JOIN @Legionella_Data ld ON l.LegionellaID = ld.LegionellaID
+        INNER JOIN LegionellaType lt ON lt.LegionellaTypeID=ld.LegionellaTypeID /*Will need modification when crazy other column comes in*/
+      WHERE
+      lt.LegionellaAssetCategoryID IS NULL AND lt.LegionellaFrequencyCategoryID IS NULL
+        UNION
+        Select 
+        'LegionellaAsset' [TableName],
+        la.LegionellaAssetCategoryID [TableCategoryID],
+        la.LegionellaAssetID [TableID],
+        ld.LegionellaID [ParentID],
+        la.GUID [GUID],
+        la.GUIDVersion [GUIDVersion],
+        NULL [BuildingDesignation],
+        NULL [GeneralDescriptionOfSite],
+      NULL [AreasNotAccessed],
+      NULL [Notes],
+        la.SystemRef [SystemRef],
+        la.Location [Location],
+        NULL [SourceCold],
+        NULL [SourceHot],
+        NULL [SourceMains],
+        NULL [SourceMixed],
+        NULL [SentinelCold],
+        NULL [SentinelHot],
+        NULL [SentinelMains],
+        NULL [SentinelMixed],
+        NULL [EnabledCold],
+        NULL [EnabledHot],
+        NULL [EnabledMains],
+        NULL [EnabledMixed],
+        NULL [LowUseCold],
+        NULL [LowUseHot],
+        NULL [LowUseMains],
+        NULL [LowUseMixed],
+        NULL [LegionellaTaskAutoInsertID],
+        NULL [LegionellaTaskAutoInsertTypeID],
+        NULL [LegionellaTaskNo],
+        NULL [LegionellaSectionID], 
+        NULL [LegionellaRiskCategoryID],
+        NULL [RiskDescription],
+        NULL [Action], 
+        NULL [LegionellaFrequencyCategoryID],
+        NULL [LegionellaRiskRatingID],
+        NULL [LegionellaPriorityRatingID],
+        la.SortOrder [SortOrder],
+      NULL [TaskDueDate],
+      la.PhotoID [PhotoID]
+        FROM 
+        LegionellaAsset la WITH (NOLOCK)
+        INNER JOIN @LegionellaAsset_Data lad ON la.LegionellaAssetID=lad.LegionellaAssetID
+        INNER JOIN @Legionella_Data ld ON lad.LegionellaGUID=ld.LegionellaGUID          
+        WHERE la.Deleted Is Null                    
+      UNION
+        Select 
+        'LegionellaLocation' [TableName],
+        NULL [TableCategoryID],
+        ll.LegionellaLocationID [TableID],
+        ld.LegionellaID [ParentID],
+        ll.GUID [GUID],
+        ll.GUIDVersion [GUIDVersion],
+        NULL [BuildingDesignation],
+        NULL [GeneralDescriptionOfSite],
+      NULL [AreasNotAccessed],
+      NULL [Notes],
+        NULL [SystemRef],
+        ll.Location [Location],
+        NULL [SourceCold],
+        NULL [SourceHot],
+        NULL [SourceMains],
+        NULL [SourceMixed],
+        NULL [SentinelCold],
+        NULL [SentinelHot],
+        NULL [SentinelMains],
+        NULL [SentinelMixed],
+        NULL [EnabledCold],
+        NULL [EnabledHot],
+        NULL [EnabledMains],
+        NULL [EnabledMixed],
+        NULL [LowUseCold],
+        NULL [LowUseHot],
+        NULL [LowUseMains],
+        NULL [LowUseMixed],
+      NULL [LegionellaTaskAutoInsertID],
+        NULL [LegionellaTaskAutoInsertTypeID],
+        NULL [LegionellaTaskNo],
+        NULL [LegionellaSectionID], 
+        NULL [LegionellaRiskCategoryID],
+        NULL [RiskDescription],
+        NULL [Action], 
+        NULL [LegionellaFrequencyCategoryID],
+        NULL [LegionellaRiskRatingID],
+        NULL [LegionellaPriorityRatingID],
+        ll.SortOrder [SortOrder],
+      NULL [TaskDueDate],
+      NULL [PhotoID]
+        FROM 
+        LegionellaLocation ll WITH (NOLOCK)
+        INNER JOIN @LegionellaLocation_Data lld ON lld.LegionellaLocationID=ll.LegionellaLocationID
+        INNER JOIN @Legionella_Data ld ON lld.LegionellaGUID=ld.LegionellaGUID
+        WHERE ll.Deleted Is Null
+        UNION
+        Select 
+        'LegionellaOutlet' [TableName],
+        lo.LegionellaOutletCategoryID [TableCategoryID],
+        lo.LegionellaOutletID [TableID],
+        lld.LegionellaLocationID [ParentID],
+        lo.GUID [GUID],
+        lo.GUIDVersion [GUIDVersion],
+        NULL [BuildingDesignation],
+        NULL [GeneralDescriptionOfSite],
+      NULL [AreasNotAccessed],
+      NULL [Notes],
+        lo.SystemRef [SystemRef],
+        NULL [Location],
+        lo.SourceCold [SourceCold],
+        lo.SourceHot [SourceHot],
+        lo.SourceMains [SourceMains],
+        lo.SourceMixed [SourceMixed],
+        lo.SentinelCold [SentinelCold],
+        lo.SentinelHot [SentinelHot],
+        lo.SentinelMains [SentinelMains],
+        lo.SentinelMixed [SentinelMixed],
+        lo.EnabledCold [EnabledCold],
+        lo.EnabledHot [EnabledHot],
+        lo.EnabledMains [EnabledMains],
+        lo.EnabledMixed [EnabledMixed],
+        lo.LowUseCold [LowUseCold],
+      lo.LowUseHot [LowUseHot],
+      lo.LowUseMains [LowUseMains],
+      lo.LowUseMixed [LowUseMixed],
+        NULL [LegionellaTaskAutoInsertID],
+        NULL [LegionellaTaskAutoInsertTypeID],
+        NULL [LegionellaTaskNo],
+        NULL [LegionellaSectionID], 
+        NULL [LegionellaRiskCategoryID],
+        NULL [RiskDescription],
+        NULL [Action], 
+        NULL [LegionellaFrequencyCategoryID],
+        NULL [LegionellaRiskRatingID],
+        NULL [LegionellaPriorityRatingID],
+        NULL [SortOrder],
+      NULL [TaskDueDate],
+      NULL [PhotoID]
+        FROM 
+        LegionellaOutlet lo WITH (NOLOCK)
+      INNER JOIN @LegionellaOutlet_Data lod ON lod.LegionellaOutletID=lo.LegionellaOutletID
+      INNER JOIN @LegionellaLocation_Data lld ON lld.LegionellaLocationGUID=lod.LegionellaLocationGUID
+      WHERE lo.Deleted Is Null
+      ) main
+    LEFT OUTER JOIN Photo p WITH (NOLOCK) ON main.PhotoID = p.PhotoID AND main.TableName='LegionellaAsset'
+
+    Insert into @ReinspectData (TableName,TableCategoryID,TableID,ParentID,GUID,GUIDVersion,BuildingDesignation,GeneralDescriptionOfSite,AreasNotAccessed,Notes,SystemRef,Location,[SourceCold],[SourceHot],[SourceMains],[SourceMixed],[SentinelCold],[SentinelHot],[SentinelMains],[SentinelMixed],[EnabledCold],[EnabledHot],[EnabledMains],[EnabledMixed],[LowUseCold],[LowUseHot],[LowUseMains],[LowUseMixed],LegionellaTaskAutoInsertID,LegionellaTaskAutoInsertTypeID,LegionellaTaskNo,LegionellaSectionID,LegionellaRiskCategoryID,RiskDescription,[Action],LegionellaFrequencyCategoryID,LegionellaRiskRatingID,LegionellaPriorityRatingID,SortOrder,TaskDueDate)
+    Select
+    main.TableName,
+    main.TableCategoryID,
+    main.TableID,
+    main.ParentID,
+    main.GUID,
+    main.GuidVersion,
+    main.BuildingDesignation,
+    main.GeneralDescriptionOfSite [GeneralDescriptionOfSite],
+    main.AreasNotAccessed [AreasNotAccessed],
+    main.Notes [Notes],
+    main.SystemRef,
+    main.Location,
+    main.SourceCold,
+    main.SourceHot,
+    main.SourceMains,
+    main.SourceMixed,
+    main.SentinelCold,
+    main.SentinelHot,
+    main.SentinelMains,
+    main.SentinelMixed,
+    main.EnabledCold,
+    main.EnabledHot,
+    main.EnabledMains,
+    main.EnabledMixed,
+    main.LowUseCold,
+    main.LowUseHot,
+    main.LowUseMains,
+    main.LowUseMixed,
+    main.[LegionellaTaskAutoInsertID],
+    main.[LegionellaTaskAutoInsertTypeID],
+    main.[LegionellaTaskNo],
+    main.[LegionellaSectionID], 
+    main.[LegionellaRiskCategoryID],
+    main.[RiskDescription],
+    main.[Action], 
+    main.[LegionellaFrequencyCategoryID],
+    main.[LegionellaRiskRatingID],
+    main.[LegionellaPriorityRatingID],
+    main.[SortOrder],
+    main.TaskDueDate [TaskDueDate]
+    FROM
+    (
+    --now for the tasks!
+    Select 
+    'LegionellaTask_Outlet' [TableName],
+    NULL [TableCategoryID],
+    lt.LegionellaTaskID [TableID],
+    lto.TableID [ParentID],
+    lt.GUID [GUID],
+    lt.GUIDVersion [GUIDVersion],
+    NULL [BuildingDesignation],
+    NULL [GeneralDescriptionOfSite],
+    NULL [AreasNotAccessed],
+    NULL [Notes],
+    NULL [SystemRef],
+    NULL [Location],
+    NULL [SourceCold],
+    NULL [SourceHot],
+    NULL [SourceMains],
+    NULL [SourceMixed],
+    NULL [SentinelCold],
+    NULL [SentinelHot],
+    NULL [SentinelMains],
+    NULL [SentinelMixed],
+    NULL [EnabledCold],
+    NULL [EnabledHot],
+    NULL [EnabledMains],
+    NULL [EnabledMixed],
+    NULL [LowUseCold],
+    NULL [LowUseHot],
+    NULL [LowUseMains],
+    NULL [LowUseMixed],
+    lt.LegionellaTaskAutoInsertID [LegionellaTaskAutoInsertID],
+    lt.LegionellaTaskAutoInsertTypeID [LegionellaTaskAutoInsertTypeID],
+    lt.LegionellaTaskNo [LegionellaTaskNo],
+    lt.LegionellaSectionID [LegionellaSectionID], 
+    lt.LegionellaRiskCategoryID [LegionellaRiskCategoryID],
+    lt.RiskDescription [RiskDescription],
+    lt.[Action] [Action], 
+    lt.LegionellaFrequencyCategoryID [LegionellaFrequencyCategoryID],
+    lt.LegionellaRiskRatingID [LegionellaRiskRatingID],
+    lt.LegionellaPriorityRatingID [LegionellaPriorityRatingID],
+    lt.SortOrder [SortOrder],
+    lt.DueDate [TaskDueDate]
+    FROM 
+    LegionellaTask lt
+    INNER JOIN @ReinspectData lto ON lt.LegionellaOutletID=lto.TableID AND lto.TableName='LegionellaOutlet'
+    WHERE
+    lt.Deleted IS NULL
+    UNION
+    Select 
+    'LegionellaTask_Asset' [TableName],
+    NULL [TableCategoryID],
+    lt.LegionellaTaskID [TableID],
+    lta.TableID [ParentID],
+    lt.GUID [GUID],
+    lt.GUIDVersion [GUIDVersion],
+    NULL [BuildingDesignation],
+    NULL [GeneralDescriptionOfSite],
+    NULL [AreasNotAccessed],
+    NULL [Notes],
+    NULL [SystemRef],
+    NULL [Location],
+    NULL [SourceCold],
+    NULL [SourceHot],
+    NULL [SourceMains],
+    NULL [SourceMixed],
+    NULL [SentinelCold],
+    NULL [SentinelHot],
+    NULL [SentinelMains],
+    NULL [SentinelMixed],
+    NULL [EnabledCold],
+    NULL [EnabledHot],
+    NULL [EnabledMains],
+    NULL [EnabledMixed],
+    NULL [LowUseCold],
+    NULL [LowUseHot],
+    NULL [LowUseMains],
+    NULL [LowUseMixed],
+    lt.LegionellaTaskAutoInsertID [LegionellaTaskAutoInsertID],
+    lt.LegionellaTaskAutoInsertTypeID [LegionellaTaskAutoInsertTypeID],
+    lt.LegionellaTaskNo [LegionellaTaskNo],
+    lt.LegionellaSectionID [LegionellaSectionID], 
+    lt.LegionellaRiskCategoryID [LegionellaRiskCategoryID],
+    lt.RiskDescription [RiskDescription],
+    lt.[Action] [Action], 
+    lt.LegionellaFrequencyCategoryID [LegionellaFrequencyCategoryID],
+    lt.LegionellaRiskRatingID [LegionellaRiskRatingID],
+    lt.LegionellaPriorityRatingID [LegionellaPriorityRatingID],
+    lt.SortOrder [SortOrder],
+    lt.DueDate [TaskDueDate]
+    FROM 
+    LegionellaTask lt
+    INNER JOIN @ReinspectData lta ON lt.LegionellaAssetID=lta.TableID AND lta.TableName='LegionellaAsset'
+    WHERE
+    lt.Deleted IS NULL
+    UNION
+    Select 
+    'LegionellaTask_Location' [TableName],
+    NULL [TableCategoryID],
+    lt.LegionellaTaskID [TableID],
+    ltll.TableID [ParentID],
+    lt.GUID [GUID],
+    lt.GUIDVersion [GUIDVersion],
+    NULL [BuildingDesignation],
+    NULL [GeneralDescriptionOfSite],
+    NULL [AreasNotAccessed],
+    NULL [Notes],
+    NULL [SystemRef],
+    NULL [Location],
+    NULL [SourceCold],
+    NULL [SourceHot],
+    NULL [SourceMains],
+    NULL [SourceMixed],
+    NULL [SentinelCold],
+    NULL [SentinelHot],
+    NULL [SentinelMains],
+    NULL [SentinelMixed],
+    NULL [EnabledCold],
+    NULL [EnabledHot],
+    NULL [EnabledMains],
+    NULL [EnabledMixed],
+    NULL [LowUseCold],
+    NULL [LowUseHot],
+    NULL [LowUseMains],
+    NULL [LowUseMixed],
+    lt.LegionellaTaskAutoInsertID [LegionellaTaskAutoInsertID],
+    lt.LegionellaTaskAutoInsertTypeID [LegionellaTaskAutoInsertTypeID],
+    lt.LegionellaTaskNo [LegionellaTaskNo],
+    lt.LegionellaSectionID [LegionellaSectionID], 
+    lt.LegionellaRiskCategoryID [LegionellaRiskCategoryID],
+    lt.RiskDescription [RiskDescription],
+    lt.[Action] [Action], 
+    lt.LegionellaFrequencyCategoryID [LegionellaFrequencyCategoryID],
+    lt.LegionellaRiskRatingID [LegionellaRiskRatingID],
+    lt.LegionellaPriorityRatingID [LegionellaPriorityRatingID],
+    lt.SortOrder [SortOrder],
+    lt.DueDate [TaskDueDate]
+    FROM 
+    LegionellaTask lt
+    INNER JOIN @ReinspectData ltll ON lt.LegionellaLocationID=ltll.TableID AND ltll.TableName='LegionellaLocation'
+    WHERE
+    lt.Deleted IS NULL
+    UNION
+    Select 
+    'LegionellaTask_Legionella' [TableName],
+    lt.LegionellaSectionID [TableCategoryID],
+    lt.LegionellaTaskID [TableID],
+    ltl.TableID [ParentID],
+    lt.GUID [GUID],
+    lt.GUIDVersion [GUIDVersion],
+    NULL [BuildingDesignation],
+    NULL [GeneralDescriptionOfSite],
+    NULL [AreasNotAccessed],
+    NULL [Notes],
+    NULL [SystemRef],
+    NULL [Location],
+    NULL [SourceCold],
+    NULL [SourceHot],
+    NULL [SourceMains],
+    NULL [SourceMixed],
+    NULL [SentinelCold],
+    NULL [SentinelHot],
+    NULL [SentinelMains],
+    NULL [SentinelMixed],
+    NULL [EnabledCold],
+    NULL [EnabledHot],
+    NULL [EnabledMains],
+    NULL [EnabledMixed],
+    NULL [LowUseCold],
+    NULL [LowUseHot],
+    NULL [LowUseMains],
+    NULL [LowUseMixed],
+    lt.LegionellaTaskAutoInsertID [LegionellaTaskAutoInsertID],
+    lt.LegionellaTaskAutoInsertTypeID [LegionellaTaskAutoInsertTypeID],
+    lt.LegionellaTaskNo [LegionellaTaskNo],
+    lt.LegionellaSectionID [LegionellaSectionID], 
+    lt.LegionellaRiskCategoryID [LegionellaRiskCategoryID],
+    lt.RiskDescription [RiskDescription],
+    lt.[Action] [Action], 
+    lt.LegionellaFrequencyCategoryID [LegionellaFrequencyCategoryID],
+    lt.LegionellaRiskRatingID [LegionellaRiskRatingID],
+    lt.LegionellaPriorityRatingID [LegionellaPriorityRatingID],
+    lt.SortOrder [SortOrder],
+    lt.DueDate [TaskDueDate]
+    FROM 
+    LegionellaTask lt
+    INNER JOIN @ReinspectData ltl ON lt.LegionellaID=ltl.TableID AND ltl.TableName='Legionella'
+    WHERE
+    lt.Deleted IS NULL
+    ) main
+
+      
+    WHILE (SELECT COUNT(*) FROM @ReinspectData Where TableName='LegionellaAsset' AND GUID IS NULL) > 0
+    BEGIN
+      DECLARE @LegionellaAssetID INT = (Select top 1 TableID FROM @ReinspectData Where TableName='LegionellaAsset' AND GUID IS NULL)
+      UPDATE LegionellaAsset Set GUID=dbo.CreateGUID('000000000000','LegionellaAsset','TS'),GUIDVersion=1 Where LegionellaAssetID=@LegionellaAssetID
+      DECLARE @LegionellaAssetGUID VARCHAR(50) = (Select GUID FROM LegionellaAsset Where LegionellaAssetID=@LegionellaAssetID)
+      Update @ReinspectData Set GUID=@LegionellaAssetGUID,GUIDVersion=1 Where TableName='LegionellaAsset' AND TableID=@LegionellaAssetID
+    END
+      
+    WHILE (SELECT COUNT(*) FROM @ReinspectData Where TableName='LegionellaLocation' AND GUID IS NULL) > 0
+    BEGIN
+      DECLARE @LegionellaLocationID INT = (Select top 1 TableID FROM @ReinspectData Where TableName='LegionellaLocation' AND GUID IS NULL)
+      UPDATE LegionellaLocation Set GUID=dbo.CreateGUID('000000000000','LegionellaLocation','TS'),GUIDVersion=1 Where LegionellaLocationID=@LegionellaLocationID
+      DECLARE @LegionellaLocationGUID VARCHAR(50) = (Select GUID FROM LegionellaLocation Where LegionellaLocationID=@LegionellaLocationID)
+      Update @ReinspectData Set GUID=@LegionellaLocationGUID,GUIDVersion=1 Where TableName='LegionellaLocation' AND TableID=@LegionellaLocationID
+    END
+      
+    WHILE (SELECT COUNT(*) FROM @ReinspectData Where TableName='LegionellaOutlet' AND GUID IS NULL) > 0
+    BEGIN
+      DECLARE @LegionellaOutletID INT = (Select top 1 TableID FROM @ReinspectData Where TableName='LegionellaOutlet' AND GUID IS NULL)
+      UPDATE LegionellaOutlet Set GUID=dbo.CreateGUID('000000000000','LegionellaOutlet','TS'),GUIDVersion=1 Where LegionellaOutletID=@LegionellaOutletID
+      DECLARE @LegionellaOutletGUID VARCHAR(50) = (Select GUID FROM LegionellaOutlet Where LegionellaOutletID=@LegionellaOutletID)
+      Update @ReinspectData Set GUID=@LegionellaOutletGUID,GUIDVersion=1 Where TableName='LegionellaOutlet' AND TableID=@LegionellaOutletID
+    END
+      
+    WHILE (SELECT COUNT(*) FROM @ReinspectData Where TableName LIKE 'LegionellaTask%' AND GUID IS NULL) > 0
+    BEGIN
+      DECLARE @LegionellaTaskID INT = (Select top 1 TableID FROM @ReinspectData Where TableName LIKE 'LegionellaTask%' AND GUID IS NULL)
+      UPDATE LegionellaTask Set GUID=dbo.CreateGUID('000000000000','LegionellaTask','TS'),GUIDVersion=1 Where LegionellaTaskID=@LegionellaTaskID
+      DECLARE @LegionellaTaskGUID VARCHAR(50) = (Select GUID FROM LegionellaTask Where LegionellaTaskID=@LegionellaTaskID)
+      Update @ReinspectData Set GUID=@LegionellaTaskGUID,GUIDVersion=1 Where TableName LIKE 'LegionellaTask%' AND TableID=@LegionellaTaskID
+    END
+  END
+  
+  If @JobID IN (SELECT JobID FROM LegionellaMonitoringDataCacheJob) AND (SELECT COUNT(*) FROM LegionellaMonitoringDataCache WHERE @JobID = JobID) = 0 BEGIN
+    INSERT INTO LegionellaMonitoringDataCache (JobID,TableName,TableCategoryID,TableID,ParentID,GUID,GUIDVersion,BuildingDesignation,GeneralDescriptionOfSite,AreasNotAccessed,Notes,SystemRef,Location,[SourceCold],[SourceHot],[SourceMains],[SourceMixed],[SentinelCold],[SentinelHot],[SentinelMains],[SentinelMixed],[EnabledCold],[EnabledHot],[EnabledMains],[EnabledMixed],[LowUseCold],[LowUseHot],[LowUseMains],[LowUseMixed],LegionellaTaskAutoInsertID,LegionellaTaskAutoInsertTypeID,LegionellaTaskNo,LegionellaSectionID,LegionellaRiskCategoryID,RiskDescription,[Action],LegionellaFrequencyCategoryID,LegionellaRiskRatingID,LegionellaPriorityRatingID,SortOrder,TaskDueDate,AssetPhotoID)
+    SELECT
+      @JobID,TableName,TableCategoryID,TableID,ParentID,GUID,GUIDVersion,BuildingDesignation,GeneralDescriptionOfSite,AreasNotAccessed,Notes,SystemRef,Location,[SourceCold],[SourceHot],[SourceMains],[SourceMixed],[SentinelCold],[SentinelHot],[SentinelMains],[SentinelMixed],[EnabledCold],[EnabledHot],[EnabledMains],[EnabledMixed],[LowUseCold],[LowUseHot],[LowUseMains],[LowUseMixed],LegionellaTaskAutoInsertID,LegionellaTaskAutoInsertTypeID,LegionellaTaskNo,LegionellaSectionID,LegionellaRiskCategoryID,RiskDescription,[Action],LegionellaFrequencyCategoryID,LegionellaRiskRatingID,LegionellaPriorityRatingID,SortOrder,TaskDueDate,AssetPhotoID
+    FROM
+      @ReinspectData
+  END
+
+  -- Add row in for latest floorplan image
+  If (SELECT MobileConfigInt FROM MobileConfig WHERE MobileConfigTypeID=137) > 0 BEGIN
+    Insert into @ReinspectData (TableName,TableCategoryID,TableID,ParentID,GUID,GUIDVersion,BuildingDesignation,GeneralDescriptionOfSite,AreasNotAccessed,Notes,SystemRef,Location,[SourceCold],[SourceHot],[SourceMains],[SourceMixed],[SentinelCold],[SentinelHot],[SentinelMains],[SentinelMixed],[EnabledCold],[EnabledHot],[EnabledMains],[EnabledMixed],[LowUseCold],[LowUseHot],[LowUseMains],[LowUseMixed],LegionellaTaskAutoInsertID,LegionellaTaskAutoInsertTypeID,LegionellaTaskNo,LegionellaSectionID,LegionellaRiskCategoryID,RiskDescription,[Action],LegionellaFrequencyCategoryID,LegionellaRiskRatingID,LegionellaPriorityRatingID,SortOrder,TaskDueDate,AssetPhotoData)
+    SELECT
+      'Legionella_Floorplan' [TableName],
+      NULL [TableCategoryID],
+      NULL [TableID],
+      NULL [ParentID],
+      NULL [GUID],
+      NULL [GUIDVersion],
+      NULL [BuildingDesignation],
+      NULL [GeneralDescriptionOfSite],
+      NULL [AreasNotAccessed],
+      CASE WHEN (fp.AutocadData IS NOT NULL AND fp.AutocadDataContentType NOT LIKE '%pdf%') THEN fp.AutocadDataContentType ELSE CASE WHEN fp.FloorplanData IS NOT NULL THEN fp.FloorplanDataContentType END END [Notes],
+      NULL [SystemRef],
+      NULL [Location],
+      NULL [SourceCold],
+      NULL [SourceHot],
+      NULL [SourceMains],
+      NULL [SourceMixed],
+      NULL [SentinelCold],
+      NULL [SentinelHot],
+      NULL [SentinelMains],
+      NULL [SentinelMixed],
+      NULL [EnabledCold],
+      NULL [EnabledHot],
+      NULL [EnabledMains],
+      NULL [EnabledMixed],
+      NULL [LowUseCold],
+      NULL [LowUseHot],
+      NULL [LowUseMains],
+      NULL [LowUseMixed],
+      NULL [LegionellaTaskAutoInsertID],
+      NULL [LegionellaTaskAutoInsertTypeID],
+      NULL [LegionellaTaskNo],
+      NULL [LegionellaSectionID], 
+      NULL [LegionellaRiskCategoryID],
+      NULL [RiskDescription],
+      NULL [Action], 
+      NULL [LegionellaFrequencyCategoryID],
+      NULL [LegionellaRiskRatingID],
+      NULL [LegionellaPriorityRatingID],
+      NULL [SortOrder],
+      NULL [TaskDueDate],
+      CASE WHEN (fp.AutocadData IS NOT NULL AND fp.AutocadDataContentType NOT LIKE '%pdf%') THEN fp.AutocadData ELSE CASE WHEN fp.FloorplanData IS NOT NULL THEN fp.FloorplanData END END [AssetPhotoData]
+    FROM 
+      (
+        SELECT TOP 1
+          all_l.LegionellaID, all_al.LegionellaTypeID, all_fp.FloorplanID, all_l.LegionellaFinish
+        FROM
+          @Legionella_Data ld 
+          INNER JOIN Legionella l WITH (NOLOCK) ON ld.LegionellaID=l.LegionellaID
+          INNER JOIN JobEmployee je WITH (NOLOCK) ON je.JobEmployeeID=l.JobEmployeeID
+          INNER JOIN Job j WITH (NOLOCK) ON je.JobID=j.JobID AND j.Approved IS NOT NULL
+          INNER JOIN Job all_j WITH (NOLOCK) ON all_j.ClientID=j.ClientID AND all_j.SiteID=j.SiteID
+          INNER JOIN Quote all_q WITH (NOLOCK) ON all_j.JobID=all_q.JobID
+          INNER JOIN Appointment all_a WITH (NOLOCK) ON all_q.QuoteID=all_a.QuoteID AND all_a.DateDeclined IS NULL
+          INNER JOIN AppointmentLegionella all_al WITH (NOLOCK) ON all_al.AppointmentID=all_a.AppointmentID
+          INNER JOIN JobEmployee all_je WITH (NOLOCK) ON all_je.JobID=all_j.JobID
+          INNER JOIN Legionella all_l WITH (NOLOCK) ON all_l.JobEmployeeID=all_je.JobEmployeeID
+          INNER JOIN Floorplan all_fp WITH (NOLOCK) ON all_fp.LegionellaID=all_l.LegionellaID
+        WHERE
+          CASE WHEN all_al.LegionellaTypeID NOT IN (1,2) THEN CASE WHEN all_al.LegionellaTypeID=ld.LegionellaTypeID THEN 1 ELSE 0 END ELSE 1 END = 1
+        ORDER BY
+          all_l.LegionellaFinish DESC
+      ) ld
+      INNER JOIN Floorplan fp WITH (NOLOCK) ON ld.FloorplanID=fp.FloorplanID
+  END
+
+    Select TableName,TableCategoryID,TableID,ParentID,GUID,GUIDVersion,BuildingDesignation,GeneralDescriptionOfSite,AreasNotAccessed,Notes,SystemRef,Location,[SourceCold],[SourceHot],[SourceMains],[SourceMixed],[SentinelCold],[SentinelHot],[SentinelMains],[SentinelMixed],[EnabledCold],[EnabledHot],[EnabledMains],[EnabledMixed],[LowUseCold],[LowUseHot],[LowUseMains],[LowUseMixed],LegionellaTaskAutoInsertID,LegionellaTaskAutoInsertTypeID,LegionellaTaskNo,LegionellaSectionID,LegionellaRiskCategoryID,RiskDescription,[Action],LegionellaFrequencyCategoryID,LegionellaRiskRatingID,LegionellaPriorityRatingID,SortOrder,TaskDueDate,AssetPhotoData FROM @ReinspectData WHERE TableName != 'Legionella' --[GUID] IS NOT NULL AND [GUIDVersion] IS NOT NULL
+
+    SELECT
+      *
+    FROM
+    (
+      SELECT
+        laodc.*,
+        rd.TableName,rd.TableCategoryID,rd.TableID,rd.ParentID,rd.GUID,rd.GUIDVersion,rd.BuildingDesignation,
+        rd.GeneralDescriptionOfSite, rd.AreasNotAccessed, rd.Notes,rd.SystemRef,rd.Location,rd.SourceCold, rd.SourceHot,rd.SourceMains, rd.SourceMixed,rd.SentinelCold, rd.SentinelHot, rd.SentinelMains, rd.SentinelMixed,rd.EnabledCold, rd.EnabledHot, rd.EnabledMains, rd.EnabledMixed,rd.[LowUseCold], rd.[LowUseHot],rd.[LowUseMains], rd.[LowUseMixed],
+        rd.LegionellaTaskAutoInsertID,rd.LegionellaTaskAutoInsertTypeID, rd.LegionellaTaskNo, rd.LegionellaSectionID, rd.LegionellaRiskCategoryID, rd.RiskDescription, rd.[Action], rd.LegionellaFrequencyCategoryID, rd.LegionellaRiskRatingID, rd.LegionellaPriorityRatingID, rd.SortOrder, rd.TaskDueDate
+      FROM
+        LegionellaAssetOutletDataCollection laodc
+        INNER JOIN @ReinspectData rd ON laodc.LegionellaID = rd.TableID AND TableName='Legionella'
+      WHERE 
+        laodc.Deleted IS NULL
+          AND
+        @IncludeDataCollectionAndTasks = 1
+      UNION
+      SELECT
+        laodc.*,
+        rd.TableName,rd.TableCategoryID,rd.TableID,rd.ParentID,rd.GUID,rd.GUIDVersion,rd.BuildingDesignation,
+        rd.GeneralDescriptionOfSite, rd.AreasNotAccessed, rd.Notes,rd.SystemRef,rd.Location,rd.SourceCold, rd.SourceHot,rd.SourceMains, rd.SourceMixed,rd.SentinelCold, rd.SentinelHot, rd.SentinelMains, rd.SentinelMixed,rd.EnabledCold, rd.EnabledHot, rd.EnabledMains, rd.EnabledMixed,rd.[LowUseCold], rd.[LowUseHot],rd.[LowUseMains], rd.[LowUseMixed],
+        rd.LegionellaTaskAutoInsertID,rd.LegionellaTaskAutoInsertTypeID, rd.LegionellaTaskNo, rd.LegionellaSectionID, rd.LegionellaRiskCategoryID, rd.RiskDescription, rd.[Action], rd.LegionellaFrequencyCategoryID, rd.LegionellaRiskRatingID, rd.LegionellaPriorityRatingID, rd.SortOrder, rd.TaskDueDate
+      FROM
+        LegionellaAssetOutletDataCollection laodc
+        INNER JOIN @ReinspectData rd ON laodc.LegionellaAssetID = rd.TableID AND TableName='LegionellaAsset'
+      WHERE 
+        laodc.Deleted IS NULL
+          AND
+        @IncludeDataCollectionAndTasks = 1
+      UNION
+      SELECT
+        laodc.*,
+        rd.TableName,rd.TableCategoryID,rd.TableID,rd.ParentID,rd.GUID,rd.GUIDVersion,rd.BuildingDesignation,
+        rd.GeneralDescriptionOfSite, rd.AreasNotAccessed, rd.Notes,rd.SystemRef,rd.Location,rd.SourceCold, rd.SourceHot,rd.SourceMains, rd.SourceMixed,rd.SentinelCold, rd.SentinelHot, rd.SentinelMains, rd.SentinelMixed,rd.EnabledCold, rd.EnabledHot, rd.EnabledMains, rd.EnabledMixed,rd.[LowUseCold], rd.[LowUseHot],rd.[LowUseMains], rd.[LowUseMixed],
+        rd.LegionellaTaskAutoInsertID,rd.LegionellaTaskAutoInsertTypeID, rd.LegionellaTaskNo, rd.LegionellaSectionID, rd.LegionellaRiskCategoryID, rd.RiskDescription, rd.[Action], rd.LegionellaFrequencyCategoryID, rd.LegionellaRiskRatingID, rd.LegionellaPriorityRatingID, rd.SortOrder, rd.TaskDueDate
+      FROM
+        LegionellaAssetOutletDataCollection laodc
+        INNER JOIN @ReinspectData rd ON laodc.LegionellaLocationID = rd.TableID AND TableName='LegionellaLocation'
+      WHERE 
+        laodc.Deleted IS NULL
+          AND
+        @IncludeDataCollectionAndTasks = 1
+      UNION
+      SELECT
+        laodc.*,
+        rd.TableName,rd.TableCategoryID,rd.TableID,rd.ParentID,rd.GUID,rd.GUIDVersion,rd.BuildingDesignation,
+        rd.GeneralDescriptionOfSite, rd.AreasNotAccessed, rd.Notes,rd.SystemRef,rd.Location,rd.SourceCold, rd.SourceHot,rd.SourceMains, rd.SourceMixed,rd.SentinelCold, rd.SentinelHot, rd.SentinelMains, rd.SentinelMixed,rd.EnabledCold, rd.EnabledHot, rd.EnabledMains, rd.EnabledMixed,rd.[LowUseCold], rd.[LowUseHot],rd.[LowUseMains], rd.[LowUseMixed],
+        rd.LegionellaTaskAutoInsertID,rd.LegionellaTaskAutoInsertTypeID, rd.LegionellaTaskNo, rd.LegionellaSectionID, rd.LegionellaRiskCategoryID, rd.RiskDescription, rd.[Action], rd.LegionellaFrequencyCategoryID, rd.LegionellaRiskRatingID, rd.LegionellaPriorityRatingID, rd.SortOrder, rd.TaskDueDate
+      FROM
+        LegionellaAssetOutletDataCollection laodc
+        INNER JOIN @ReinspectData rd ON laodc.LegionellaOutletID = rd.TableID AND TableName='LegionellaOutlet'
+      WHERE 
+        laodc.Deleted IS NULL
+          AND
+        @IncludeDataCollectionAndTasks = 1
+    ) main
+
+    SELECT
+      *
+    FROM
+    (
+      SELECT
+        lte.*,
+        rd.TableName,rd.TableCategoryID,rd.TableID,rd.ParentID,rd.GUID,rd.GUIDVersion,rd.BuildingDesignation,
+        rd.GeneralDescriptionOfSite, rd.AreasNotAccessed, rd.Notes,rd.SystemRef,rd.Location,rd.SourceCold, rd.SourceHot,rd.SourceMains, rd.SourceMixed,rd.SentinelCold, rd.SentinelHot, rd.SentinelMains, rd.SentinelMixed,rd.EnabledCold, rd.EnabledHot, rd.EnabledMains, rd.EnabledMixed,rd.[LowUseCold], rd.[LowUseHot],rd.[LowUseMains], rd.[LowUseMixed],
+        rd.LegionellaTaskAutoInsertID,rd.LegionellaTaskAutoInsertTypeID, rd.LegionellaTaskNo, rd.LegionellaSectionID, rd.LegionellaRiskCategoryID, rd.RiskDescription, rd.[Action], rd.LegionellaFrequencyCategoryID, rd.LegionellaRiskRatingID, rd.LegionellaPriorityRatingID, rd.SortOrder, rd.TaskDueDate
+      FROM
+        LegionellaTaskEvent lte
+        INNER JOIN @ReinspectData rd ON lte.LegionellaTaskID = rd.TableID AND TableName LIKE 'LegionellaTask_%'
+      WHERE 
+        lte.Deleted IS NULL
+    ) main
+    ORDER BY
+      main.LegionellaTaskID
+
+SET NOCOUNT OFF;
+END
+GO
+
+
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'P' AND name = 'mobile_Surveying_v3.2020.10.1_DataTransfer_JobQuoteAppointment')
+BEGIN
+    EXEC('CREATE PROCEDURE [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_JobQuoteAppointment] AS BEGIN SET NOCOUNT ON; END')
+END
 GO
 
 ALTER PROC [dbo].[mobile_Surveying_v3.2020.10.1_DataTransfer_JobQuoteAppointment]
@@ -18921,7 +19830,7 @@ BEGIN
 
   SELECT [SQLTableName|NVARCHAR|NOTNULL||],[ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||] FROM @ClientTable GROUP BY [SQLTableName|NVARCHAR|NOTNULL||],[ClientID|INTEGER|NOTNULL||SERVERKEY],[ClientName|VARCHAR|NOTNULL||],[ClientAddress|VARCHAR|NOTNULL||],[Email|VARCHAR|NOTNULL||],[Telephone|VARCHAR|NOTNULL||],[Fax|VARCHAR|NOTNULL||],[MainContact|VARCHAR|NOTNULL||],[EnterpriseServerCode|VARCHAR|NULL||],[EnterpriseAuthEnc|VARCHAR|NULL||]
   --------------------------------------------------------
-  
+
 
   --------------------------------------------------------
   -- Sites - PJL: I split these up so I could read them!
@@ -18940,16 +19849,25 @@ BEGIN
   , dbo.get_SiteHighestRegisterItemNo([SiteID|INTEGER|NOTNULL||SERVERKEY]) [SiteHighestRegisterItemNo|VARCHAR|INT||] 
   FROM @SiteTable
   --------------------------------------------------------
-  /*
-  DECLARE @AppointmentTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[AppointmentTypeID|INTEGER|NOTNULL||] INT NOT NULL ,[ClientID|INTEGER|NULL|Client|] INT NULL ,[SiteID|INTEGER|NULL|Site|] INT NULL ,[StartTime|DATETIME|NOTNULL||] DATETIME NOT NULL ,[EndTime|DATETIME|NOTNULL||] DATETIME NOT NULL ,[Notes|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[ClientOrderNo|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[DateCreated|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[QuoteID|INTEGER|NULL||] INT NULL ,[DateConfirmed|DATETIME|NULL||] DATETIME NULL ,[DateDeclined|DATETIME|NULL||] DATETIME NULL ,[AppointmentCategoryID|INTEGER|NULL||] INT NULL DEFAULT (NULL),[ProjectAppointmentId|INTEGER|NULL||] INT NULL ,[AppointmentGroupId|INTEGER|NULL||] INT NULL ,[BranchOfficeID|INTEGER|NOTNULL||] INT NOT NULL DEFAULT ((0)), [SiteAlert|VARCHAR|NULL||] VARCHAR(MAX)) INSERT INTO @AppointmentTable ([SQLTableName|NVARCHAR|NOTNULL||],[AppointmentID|INTEGER|NOTNULL||SERVERKEY],[AppointmentTypeID|INTEGER|NOTNULL||],[ClientID|INTEGER|NULL|Client|],[SiteID|INTEGER|NULL|Site|],[StartTime|DATETIME|NOTNULL||],[EndTime|DATETIME|NOTNULL||],[Notes|VARCHAR|NOTNULL||],[ClientOrderNo|VARCHAR|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[QuoteID|INTEGER|NULL||],[DateConfirmed|DATETIME|NULL||],[DateDeclined|DATETIME|NULL||],[AppointmentCategoryID|INTEGER|NULL||],[ProjectAppointmentId|INTEGER|NULL||],[AppointmentGroupId|INTEGER|NULL||],[BranchOfficeID|INTEGER|NOTNULL||],[SiteAlert|VARCHAR|NULL||]) Select 'Appointment' AS [TableName], a.[AppointmentID],a.[AppointmentTypeID],a.[ClientID],a.[SiteID],a.[StartTime],a.[EndTime],a.[Notes],a.[ClientOrderNo],a.[DateCreated],a.[QuoteID],a.[DateConfirmed],a.[DateDeclined],a.[AppointmentCategoryID],a.[ProjectAppointmentId],a.[AppointmentGroupId],a.[BranchOfficeID], cs.SiteAlerts FROM Appointment a WITH (NOLOCK) LEFT OUTER JOIN Site si WITH (NOLOCK) ON a.SiteID=si.SiteID LEFT OUTER JOIN ClientSite cs WITH (NOLOCK) ON si.SiteID = cs.SiteID AND cs.ClientID=a.ClientID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentID|INTEGER|NOTNULL||SERVERKEY],[AppointmentTypeID|INTEGER|NOTNULL||],[ClientID|INTEGER|NULL|Client|],[SiteID|INTEGER|NULL|Site|],[StartTime|DATETIME|NOTNULL||],[EndTime|DATETIME|NOTNULL||],[Notes|VARCHAR|NOTNULL||],[ClientOrderNo|VARCHAR|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[QuoteID|INTEGER|NULL||],[DateConfirmed|DATETIME|NULL||],[DateDeclined|DATETIME|NULL||],[AppointmentCategoryID|INTEGER|NULL||],[ProjectAppointmentId|INTEGER|NULL||],[AppointmentGroupId|INTEGER|NULL||],[BranchOfficeID|INTEGER|NOTNULL||],[SiteAlert|VARCHAR|NULL||] FROM @AppointmentTable
-  DECLARE @AppointmentEmployeeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL ,[EmployeeID|INTEGER|NULL||] INT NULL)  INSERT INTO @AppointmentEmployeeTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NULL||]) Select 'AppointmentEmployee' AS [TableName], ae.[AppointmentEmployeeID],ae.[AppointmentID],ae.[EmployeeID] FROM AppointmentEmployee ae WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=ae.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID WHERE ae.EmployeeID=@EmployeeID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NULL||] FROM @AppointmentEmployeeTable
-  DECLARE @JobTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL,  [JobID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL, [JobNo|INTEGER|NOTNULL||] INT NOT NULL, [ClientID|INTEGER|NOTNULL|Client|] INT NOT NULL, [SiteID|INTEGER|NULL|Site|] INT NULL, [ClientOrderNo|VARCHAR|NULL||] VARCHAR(MAX) NULL, [Created|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT ( getdate() ), [ProjectManagerID|INTEGER|NULL||] INT NULL, [HasSiteData|INTEGER|NULL||] INT NULL, [Notes|VARCHAR|NULL||] VARCHAR(MAX), [SiteAlert|VARCHAR|NULL||] VARCHAR(MAX) ) INSERT INTO @JobTable ([SQLTableName|NVARCHAR|NOTNULL||], [JobID|INTEGER|NOTNULL||SERVERKEY], [JobNo|INTEGER|NOTNULL||], [ClientID|INTEGER|NOTNULL|Client|], [SiteID|INTEGER|NULL|Site|], [ClientOrderNo|VARCHAR|NULL||], [Created|DATETIME|NOTNULL||], [ProjectManagerID|INTEGER|NULL||], [HasSiteData|INTEGER|NULL||], [Notes|VARCHAR|NULL||], [SiteAlert|VARCHAR|NULL||] ) Select 'Job' AS [TableName], j.[JobID], j.[JobNo], j.[ClientID], j.[SiteID], j.[ClientOrderNo], j.[Created], j.[ProjectManagerID], CASE WHEN sd.DataCount > 0 THEN 1 END [HasSiteData], ( SELECT top 1 a.Notes FROM @JobQuoteAppointmentIDList jqal INNER JOIN Appointment a WITH (NOLOCK) ON jqal.AppointmentID = a.AppointmentID WHERE jqal.JobID = j.JobID ), cs.SiteAlerts FROM Job j WITH (NOLOCK) INNER JOIN ( SELECT JobID FROM @JobQuoteAppointmentIDList WHERE JobID IS NOT NULL GROUP BY JobID ) jqa ON j.JobID = jqa.JobID OUTER APPLY ( SELECT COUNT(*) [DataCount] FROM Site subSi WITH (NOLOCK) INNER JOIN Job subJ WITH (NOLOCK) ON subSi.SiteID = subJ.SiteID INNER JOIN JobEmployee subje WITH (NOLOCK) ON subje.JobID = subj.JobID INNER JOIN Register subr WITH (NOLOCK) ON subje.JobEmployeeID = subr.JobEmployeeID INNER JOIN Floorplan subfp WITH (NOLOCK) ON subfp.RegisterID = subr.RegisterID WHERE subSi.SiteID = j.SiteID ) sd INNER JOIN Site si WITH (NOLOCK) ON j.SiteID = si.SiteID INNER JOIN ClientSite cs WITH (NOLOCK) ON si.SiteID = cs.SiteID AND cs.ClientID=j.ClientID SELECT [SQLTableName|NVARCHAR|NOTNULL||], [JobID|INTEGER|NOTNULL||SERVERKEY], [JobNo|INTEGER|NOTNULL||], [ClientID|INTEGER|NOTNULL|Client|], [SiteID|INTEGER|NULL|Site|], [ClientOrderNo|VARCHAR|NULL||], [Created|DATETIME|NOTNULL||], [ProjectManagerID|INTEGER|NULL||], [HasSiteData|INTEGER|NULL||], [Notes|VARCHAR|NULL||], [SiteAlert|VARCHAR|NULL||] FROM @JobTable
-  DECLARE @QuoteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteTypeID|INTEGER|NULL||] INT NULL ,[QuoteNo|INTEGER|NOTNULL||] INT NOT NULL ,[ScopeOfWork|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL DEFAULT (''),[Status|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[Created|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[Accepted|DATETIME|NULL||] DATETIME NULL ,[JobID|INTEGER|NULL|Job|] INT NULL ,[Rejected|DATETIME|NULL||] DATETIME NULL ,[Exclusions|VARCHAR|NULL||] VARCHAR(MAX) NULL ) INSERT INTO @QuoteTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteID|INTEGER|NOTNULL||SERVERKEY],[QuoteTypeID|INTEGER|NULL||],[QuoteNo|INTEGER|NOTNULL||],[ScopeOfWork|VARCHAR|NOTNULL||],[Status|VARCHAR|NULL||],[Created|DATETIME|NOTNULL||],[Accepted|DATETIME|NULL||],[JobID|INTEGER|NULL|Job|],[Rejected|DATETIME|NULL||],[Exclusions|VARCHAR|NULL||]) Select 'Quote' AS [TableName], q.[QuoteID],q.[QuoteTypeID],q.[QuoteNo],q.[ScopeOfWork],q.[Status],q.[Created],q.[Accepted],q.[JobID],q.[Rejected],q.[Exclusions] FROM Quote q WITH (NOLOCK) INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) jqa ON q.QuoteID=jqa.QuoteID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteID|INTEGER|NOTNULL||SERVERKEY],[QuoteTypeID|INTEGER|NULL||],[QuoteNo|INTEGER|NOTNULL||],[ScopeOfWork|VARCHAR|NOTNULL||],[Status|VARCHAR|NULL||],[Created|DATETIME|NOTNULL||],[Accepted|DATETIME|NULL||],[JobID|INTEGER|NULL|Job|],[Rejected|DATETIME|NULL||],[Exclusions|VARCHAR|NULL||] FROM @QuoteTable
-  */
+
+
+  -- Temporrary hack to enable DTS for certain companies
+  DECLARE @CompanyName NVARCHAR(50)
+  SET @CompanyName = (SELECT TOP 1 s__CompanyName FROM Config)
+  
+  -- Remove this IF/END around these tables once we open DTS up to all companies  
+  IF @CompanyName = 'Mark One Derry' OR @CompanyName = 'Pennington Choices' OR
+   (@CompanyName = 'G&L Consultancy Ltd' AND @EmployeeID IN (2,66)) OR
+   (@CompanyName = 'Environtec' AND @EmployeeID IN (1,998)) BEGIN
+      DECLARE @AppointmentTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[AppointmentTypeID|INTEGER|NOTNULL||] INT NOT NULL ,[ClientID|INTEGER|NULL|Client|] INT NULL ,[SiteID|INTEGER|NULL|Site|] INT NULL ,[StartTime|DATETIME|NOTNULL||] DATETIME NOT NULL ,[EndTime|DATETIME|NOTNULL||] DATETIME NOT NULL ,[Notes|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[ClientOrderNo|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[DateCreated|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[QuoteID|INTEGER|NULL||] INT NULL ,[DateConfirmed|DATETIME|NULL||] DATETIME NULL ,[DateDeclined|DATETIME|NULL||] DATETIME NULL ,[AppointmentCategoryID|INTEGER|NULL||] INT NULL DEFAULT (NULL),[ProjectAppointmentId|INTEGER|NULL||] INT NULL ,[AppointmentGroupId|INTEGER|NULL||] INT NULL ,[BranchOfficeID|INTEGER|NOTNULL||] INT NOT NULL DEFAULT ((0)), [SiteAlert|VARCHAR|NULL||] VARCHAR(MAX)) INSERT INTO @AppointmentTable ([SQLTableName|NVARCHAR|NOTNULL||],[AppointmentID|INTEGER|NOTNULL||SERVERKEY],[AppointmentTypeID|INTEGER|NOTNULL||],[ClientID|INTEGER|NULL|Client|],[SiteID|INTEGER|NULL|Site|],[StartTime|DATETIME|NOTNULL||],[EndTime|DATETIME|NOTNULL||],[Notes|VARCHAR|NOTNULL||],[ClientOrderNo|VARCHAR|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[QuoteID|INTEGER|NULL||],[DateConfirmed|DATETIME|NULL||],[DateDeclined|DATETIME|NULL||],[AppointmentCategoryID|INTEGER|NULL||],[ProjectAppointmentId|INTEGER|NULL||],[AppointmentGroupId|INTEGER|NULL||],[BranchOfficeID|INTEGER|NOTNULL||],[SiteAlert|VARCHAR|NULL||]) Select 'Appointment' AS [TableName], a.[AppointmentID],a.[AppointmentTypeID],a.[ClientID],a.[SiteID],a.[StartTime],a.[EndTime],a.[Notes],a.[ClientOrderNo],a.[DateCreated],a.[QuoteID],a.[DateConfirmed],a.[DateDeclined],a.[AppointmentCategoryID],a.[ProjectAppointmentId],a.[AppointmentGroupId],a.[BranchOfficeID], cs.SiteAlerts FROM Appointment a WITH (NOLOCK) LEFT OUTER JOIN Site si WITH (NOLOCK) ON a.SiteID=si.SiteID LEFT OUTER JOIN ClientSite cs WITH (NOLOCK) ON si.SiteID = cs.SiteID AND cs.ClientID=a.ClientID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID  SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentID|INTEGER|NOTNULL||SERVERKEY],[AppointmentTypeID|INTEGER|NOTNULL||],[ClientID|INTEGER|NULL|Client|],[SiteID|INTEGER|NULL|Site|],[StartTime|DATETIME|NOTNULL||],[EndTime|DATETIME|NOTNULL||],[Notes|VARCHAR|NOTNULL||],[ClientOrderNo|VARCHAR|NOTNULL||],[DateCreated|DATETIME|NOTNULL||],[QuoteID|INTEGER|NULL||],[DateConfirmed|DATETIME|NULL||],[DateDeclined|DATETIME|NULL||],[AppointmentCategoryID|INTEGER|NULL||],[ProjectAppointmentId|INTEGER|NULL||],[AppointmentGroupId|INTEGER|NULL||],[BranchOfficeID|INTEGER|NOTNULL||],[SiteAlert|VARCHAR|NULL||] FROM @AppointmentTable
+    DECLARE @AppointmentEmployeeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL,[AppointmentID|INTEGER|NOTNULL||] INT NOT NULL ,[EmployeeID|INTEGER|NULL||] INT NULL)  INSERT INTO @AppointmentEmployeeTable ([SQLTableName|NVARCHAR|NOTNULL||], [AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NULL||]) Select 'AppointmentEmployee' AS [TableName], ae.[AppointmentEmployeeID],ae.[AppointmentID],ae.[EmployeeID] FROM AppointmentEmployee ae WITH (NOLOCK) INNER JOIN Appointment a WITH (NOLOCK) ON a.AppointmentID=ae.AppointmentID INNER JOIN (SELECT AppointmentID FROM @JobQuoteAppointmentIDList WHERE AppointmentID IS NOT NULL GROUP BY AppointmentID) jqa ON jqa.AppointmentID=a.AppointmentID WHERE ae.EmployeeID=@EmployeeID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[AppointmentEmployeeID|INTEGER|NOTNULL||SERVERKEY],[AppointmentID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NULL||] FROM @AppointmentEmployeeTable
+    DECLARE @JobTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL,  [JobID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL, [JobNo|INTEGER|NOTNULL||] INT NOT NULL, [ClientID|INTEGER|NOTNULL|Client|] INT NOT NULL, [SiteID|INTEGER|NULL|Site|] INT NULL, [ClientOrderNo|VARCHAR|NULL||] VARCHAR(MAX) NULL, [Created|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT ( getdate() ), [ProjectManagerID|INTEGER|NULL||] INT NULL, [HasSiteData|INTEGER|NULL||] INT NULL, [Notes|VARCHAR|NULL||] VARCHAR(MAX), [SiteAlert|VARCHAR|NULL||] VARCHAR(MAX) ) INSERT INTO @JobTable ([SQLTableName|NVARCHAR|NOTNULL||], [JobID|INTEGER|NOTNULL||SERVERKEY], [JobNo|INTEGER|NOTNULL||], [ClientID|INTEGER|NOTNULL|Client|], [SiteID|INTEGER|NULL|Site|], [ClientOrderNo|VARCHAR|NULL||], [Created|DATETIME|NOTNULL||], [ProjectManagerID|INTEGER|NULL||], [HasSiteData|INTEGER|NULL||], [Notes|VARCHAR|NULL||], [SiteAlert|VARCHAR|NULL||] ) Select 'Job' AS [TableName], j.[JobID], j.[JobNo], j.[ClientID], j.[SiteID], j.[ClientOrderNo], j.[Created], j.[ProjectManagerID], CASE WHEN sd.DataCount > 0 THEN 1 END [HasSiteData], ( SELECT top 1 a.Notes FROM @JobQuoteAppointmentIDList jqal INNER JOIN Appointment a WITH (NOLOCK) ON jqal.AppointmentID = a.AppointmentID WHERE jqal.JobID = j.JobID ), cs.SiteAlerts FROM Job j WITH (NOLOCK) INNER JOIN ( SELECT JobID FROM @JobQuoteAppointmentIDList WHERE JobID IS NOT NULL GROUP BY JobID ) jqa ON j.JobID = jqa.JobID OUTER APPLY ( SELECT COUNT(*) [DataCount] FROM Site subSi WITH (NOLOCK) INNER JOIN Job subJ WITH (NOLOCK) ON subSi.SiteID = subJ.SiteID INNER JOIN JobEmployee subje WITH (NOLOCK) ON subje.JobID = subj.JobID INNER JOIN Register subr WITH (NOLOCK) ON subje.JobEmployeeID = subr.JobEmployeeID INNER JOIN Floorplan subfp WITH (NOLOCK) ON subfp.RegisterID = subr.RegisterID WHERE subSi.SiteID = j.SiteID ) sd INNER JOIN Site si WITH (NOLOCK) ON j.SiteID = si.SiteID INNER JOIN ClientSite cs WITH (NOLOCK) ON si.SiteID = cs.SiteID AND cs.ClientID=j.ClientID SELECT [SQLTableName|NVARCHAR|NOTNULL||], [JobID|INTEGER|NOTNULL||SERVERKEY], [JobNo|INTEGER|NOTNULL||], [ClientID|INTEGER|NOTNULL|Client|], [SiteID|INTEGER|NULL|Site|], [ClientOrderNo|VARCHAR|NULL||], [Created|DATETIME|NOTNULL||], [ProjectManagerID|INTEGER|NULL||], [HasSiteData|INTEGER|NULL||], [Notes|VARCHAR|NULL||], [SiteAlert|VARCHAR|NULL||] FROM @JobTable
+    DECLARE @QuoteTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteTypeID|INTEGER|NULL||] INT NULL ,[QuoteNo|INTEGER|NOTNULL||] INT NOT NULL ,[ScopeOfWork|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL DEFAULT (''),[Status|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[Created|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[Accepted|DATETIME|NULL||] DATETIME NULL ,[JobID|INTEGER|NULL|Job|] INT NULL ,[Rejected|DATETIME|NULL||] DATETIME NULL ,[Exclusions|VARCHAR|NULL||] VARCHAR(MAX) NULL ) INSERT INTO @QuoteTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteID|INTEGER|NOTNULL||SERVERKEY],[QuoteTypeID|INTEGER|NULL||],[QuoteNo|INTEGER|NOTNULL||],[ScopeOfWork|VARCHAR|NOTNULL||],[Status|VARCHAR|NULL||],[Created|DATETIME|NOTNULL||],[Accepted|DATETIME|NULL||],[JobID|INTEGER|NULL|Job|],[Rejected|DATETIME|NULL||],[Exclusions|VARCHAR|NULL||]) Select 'Quote' AS [TableName], q.[QuoteID],q.[QuoteTypeID],q.[QuoteNo],q.[ScopeOfWork],q.[Status],q.[Created],q.[Accepted],q.[JobID],q.[Rejected],q.[Exclusions] FROM Quote q WITH (NOLOCK) INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) jqa ON q.QuoteID=jqa.QuoteID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteID|INTEGER|NOTNULL||SERVERKEY],[QuoteTypeID|INTEGER|NULL||],[QuoteNo|INTEGER|NOTNULL||],[ScopeOfWork|VARCHAR|NOTNULL||],[Status|VARCHAR|NULL||],[Created|DATETIME|NOTNULL||],[Accepted|DATETIME|NULL||],[JobID|INTEGER|NULL|Job|],[Rejected|DATETIME|NULL||],[Exclusions|VARCHAR|NULL||] FROM @QuoteTable
+  END
+
   DECLARE @QuoteEmployeeTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteID|INTEGER|NOTNULL||] INT NOT NULL ,[EmployeeID|INTEGER|NOTNULL||] INT NOT NULL ,[ScheduledStart|DATETIME|NULL||] DATETIME NULL ,[ScheduledFinish|DATETIME|NULL||] DATETIME NULL ,[ActualStart|DATETIME|NULL||] DATETIME NULL ,[ActualFinish|DATETIME|NULL||] DATETIME NULL ) INSERT INTO @QuoteEmployeeTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY],[QuoteID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[ScheduledStart|DATETIME|NULL||],[ScheduledFinish|DATETIME|NULL||],[ActualStart|DATETIME|NULL||],[ActualFinish|DATETIME|NULL||]) Select 'QuoteEmployee' AS [TableName], qe.[QuoteEmployeeID],qe.[QuoteID],qe.[EmployeeID],qe.[ScheduledStart],qe.[ScheduledFinish],qe.[ActualStart],qe.[ActualFinish] FROM QuoteEmployee qe INNER JOIN (SELECT QuoteID FROM @JobQuoteAppointmentIDList WHERE QuoteID IS NOT NULL GROUP BY QuoteID) q ON qe.QuoteID=q.QuoteID AND qe.EmployeeID>0 SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY],[QuoteID|INTEGER|NOTNULL||],[EmployeeID|INTEGER|NOTNULL||],[ScheduledStart|DATETIME|NULL||],[ScheduledFinish|DATETIME|NULL||],[ActualStart|DATETIME|NULL||],[ActualFinish|DATETIME|NULL||] FROM @QuoteEmployeeTable
   DECLARE @QuoteVisitTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [QuoteVisitID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[QuoteVisitTypeID|INTEGER|NOTNULL||] INT NOT NULL ,[QuoteEmployeeID|INTEGER|NULL||] INT NULL ,[QuoteVisitStart|DATETIME|NOTNULL||] DATETIME NOT NULL DEFAULT (getdate()),[QuoteVisitFinish|DATETIME|NULL||] DATETIME NULL ,[Notes|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[PhotoID|INTEGER|NULL||] INT NULL ,[SystemName|VARCHAR|NOTNULL||] VARCHAR(MAX) NOT NULL ,[Closed|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[Finished|BIT|NOTNULL||] BIT NOT NULL DEFAULT ((0)),[SignatureID|INTEGER|NULL||] INT NULL ,[_QuoteVisitConsumableMarkup|DECIMAL|NULL||] DECIMAL(38,38) NULL ,[_QuoteVisitEquipmentMarkup|DECIMAL|NULL||] DECIMAL(38,38) NULL ,[_QuoteVisitLabourMarkup|DECIMAL|NULL||] DECIMAL(38,38) NULL )  INSERT INTO @QuoteVisitTable ([SQLTableName|NVARCHAR|NOTNULL||], [QuoteVisitID|INTEGER|NOTNULL||SERVERKEY],[QuoteVisitTypeID|INTEGER|NOTNULL||],[QuoteEmployeeID|INTEGER|NULL||],[QuoteVisitStart|DATETIME|NOTNULL||],[QuoteVisitFinish|DATETIME|NULL||],[Notes|VARCHAR|NULL||],[PhotoID|INTEGER|NULL||],[SystemName|VARCHAR|NOTNULL||],[Closed|BIT|NOTNULL||],[Finished|BIT|NOTNULL||],[SignatureID|INTEGER|NULL||],[_QuoteVisitConsumableMarkup|DECIMAL|NULL||],[_QuoteVisitEquipmentMarkup|DECIMAL|NULL||],[_QuoteVisitLabourMarkup|DECIMAL|NULL||]) Select 'QuoteVisit' AS [TableName], qv.[QuoteVisitID],qv.[QuoteVisitTypeID],qv.[QuoteEmployeeID],qv.[QuoteVisitStart],qv.[QuoteVisitFinish],qv.[Notes],qv.[PhotoID],qv.[SystemName],qv.[Closed],qv.[Finished],qv.[SignatureID],qv.[_QuoteVisitConsumableMarkup],qv.[_QuoteVisitEquipmentMarkup],qv.[_QuoteVisitLabourMarkup] FROM QuoteVisit qv INNER JOIN @QuoteEmployeeTable qet ON qet.[QuoteEmployeeID|INTEGER|NOTNULL||SERVERKEY]=qv.QuoteEmployeeID SELECT [SQLTableName|NVARCHAR|NOTNULL||],[QuoteVisitID|INTEGER|NOTNULL||SERVERKEY],[QuoteVisitTypeID|INTEGER|NOTNULL||],[QuoteEmployeeID|INTEGER|NULL||],[QuoteVisitStart|DATETIME|NOTNULL||],[QuoteVisitFinish|DATETIME|NULL||],[Notes|VARCHAR|NULL||],[PhotoID|INTEGER|NULL||],[SystemName|VARCHAR|NOTNULL||],[Closed|BIT|NOTNULL||],[Finished|BIT|NOTNULL||],[SignatureID|INTEGER|NULL||],[_QuoteVisitConsumableMarkup|DECIMAL|NULL||],[_QuoteVisitEquipmentMarkup|DECIMAL|NULL||],[_QuoteVisitLabourMarkup|DECIMAL|NULL||] FROM @QuoteVisitTable
   DECLARE @DataCollectionTable TABLE ([SQLTableName|NVARCHAR|NOTNULL||] NVARCHAR(MAX) NOT NULL, [DataCollectionID|INTEGER|NOTNULL||SERVERKEY] INT NOT NULL ,[DataCollectionQuestionID|INTEGER|NOTNULL||] INT NOT NULL ,[DataText|VARCHAR|NULL||] VARCHAR(MAX) NULL ,[DataInt|INTEGER|NULL||] INT NULL ,[DataCollectionQuestionOptionOrInsertID|INTEGER|NULL||] INT NULL ,[Deleted|DATETIME|NULL||] DATETIME NULL ,[QuoteVisitID|INTEGER|NULL||] INT NULL ,[DataCollectionCategoryTypeID|INTEGER|NOTNULL||] INT NOT NULL ) INSERT INTO @DataCollectionTable ([SQLTableName|NVARCHAR|NOTNULL||], [DataCollectionID|INTEGER|NOTNULL||SERVERKEY],[DataCollectionQuestionID|INTEGER|NOTNULL||],[DataText|VARCHAR|NULL||],[DataInt|INTEGER|NULL||],[DataCollectionQuestionOptionOrInsertID|INTEGER|NULL||],[Deleted|DATETIME|NULL||],[QuoteVisitID|INTEGER|NULL||],[DataCollectionCategoryTypeID|INTEGER|NOTNULL||]) Select 'DataCollection' AS [TableName], dc.[DataCollectionID],dc.[DataCollectionQuestionID],dc.[DataText],dc.[DataInt],dc.[DataCollectionQuestionOptionOrInsertID],dc.[Deleted],dc.[QuoteVisitID],dc.[DataCollectionCategoryTypeID] FROM DataCollection  dc INNER JOIN @QuoteVisitTable qvt ON dc.QuoteVisitID=qvt.[QuoteVisitID|INTEGER|NOTNULL||SERVERKEY] SELECT [SQLTableName|NVARCHAR|NOTNULL||],[DataCollectionID|INTEGER|NOTNULL||SERVERKEY],[DataCollectionQuestionID|INTEGER|NOTNULL||],[DataText|VARCHAR|NULL||],[DataInt|INTEGER|NULL||],[DataCollectionQuestionOptionOrInsertID|INTEGER|NULL||],[Deleted|DATETIME|NULL||],[QuoteVisitID|INTEGER|NULL||],[DataCollectionCategoryTypeID|INTEGER|NOTNULL||] FROM @DataCollectionTable
-
 
   SET NOCOUNT OFF;
 END

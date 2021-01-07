@@ -461,212 +461,6 @@ END
 
 GO
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_OtherServicesWorkInProgress') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[Paged_OtherServicesWorkInProgress] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-ALTER PROCEDURE [dbo].[Paged_OtherServicesWorkInProgress]
-    @PerPage INT = 15,
-    @CurrentPage INT = 1,
-    @ClientID INT = 0,
-    @ProjectID INT = 0,
-    @SiteID INT = 0,
-    @FilterStartDate DATETIME = NULL,
-    @FilterFinishDate DATETIME = NULL,
-    @BranchOfficeID INT = 0,
-    @EmployeeID INT = 0,
-	@QuoteVisitTypeID INT = 0
-
-WITH RECOMPILE
-AS
-BEGIN
-	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-    SET NOCOUNT ON;
-    
-DECLARE @UseDefaultOrdering INT = 0
-
--- Set default variable values if not passed in.
-SELECT
-    @FilterStartDate = ISNULL(@FilterStartDate, CAST(DATEADD(YY, -1, GETDATE()) AS DATE)),
-    @FilterFinishDate = ISNULL(@FilterFinishDate, CAST(CAST(CAST(DATEADD(M, 3, GETDATE()) AS DATE) AS VARCHAR(100)) + ' 23:59:59.997' AS DATETIME))
-
-DECLARE
-	@LegionellaEnabled BIT = (SELECT CASE WHEN DateDeleted IS NULL THEN 1 ELSE 0 END FROM TeamsV2Tab WHERE TabText = 'Legionella' AND TeamsV2SectionID = 5)
-    
--- Get list of jobs upfront
-DECLARE @OtherServicesJobList TABLE (JobID INT, JobNo INT, ClientID INT, SiteID INT, ProjectID INT, BranchOfficeID INT, LastNoteCreated DATETIME, Status VARCHAR(100), 
-									Created DATETIME, AppointmentID INT)
-INSERT INTO @OtherServicesJobList
-SELECT
-	j.JobID,
-	j.JobNo,
-	j.ClientID,
-	j.SiteID,
-	j.ProjectID,
-	j.BranchOfficeID,
-	j.LastNoteCreated,
-	j.Status,
-	j.Created,
-	MAX(a.AppointmentID)
-FROM
-	Job j
-	INNER JOIN Quote q ON j.JobId = q.JobID
-	LEFT JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID
-	INNER JOIN Appointment a ON q.QuoteID = a.QuoteID AND a.AppointmentTypeID NOT IN (1, 3, 9)
-WHERE
-	a.ManuallyMarkWorkDone = 0
-		AND
-	a.DateDeclined IS NULL
-		AND
-	a.DateConfirmed IS NOT NULL
-		AND 
-	((j.ClientID = @ClientID) OR @ClientID = 0)
-		AND
-	((j.ProjectID = @ProjectID) OR @ProjectID = 0)
-		AND
-	((j.SiteID = @SiteID) OR @SiteID = 0)
-		AND
-	((j.BranchOfficeID = @BranchOfficeID) OR @BranchOfficeID = 0)
-		AND
-	a.StartTime BETWEEN @FilterStartDate AND @FilterFinishDate
-		AND
-	((qt.QuoteVisitTypeID = @QuoteVisitTypeID) OR @QuoteVisitTypeID = 0)
-GROUP BY
-	j.JobID,
-	j.JobNo,
-	j.ClientID,
-	j.SiteID,
-	j.ProjectID,
-	j.BranchOfficeID,
-	j.LastNoteCreated,
-	j.Status,
-	j.Created
-
-IF @LegionellaEnabled = 0
-BEGIN
-	INSERT INTO @OtherServicesJobList
-SELECT
-	j.JobID,
-	j.JobNo,
-	j.ClientID,
-	j.SiteID,
-	j.ProjectID,
-	j.BranchOfficeID,
-	j.LastNoteCreated,
-	j.Status,
-	j.Created,
-	MAX(a.AppointmentID)
-FROM
-	Job j
-	INNER JOIN Quote q ON j.JobId = q.JobID
-	LEFT JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID
-	INNER JOIN Appointment a ON q.QuoteID = a.QuoteID AND a.AppointmentTypeID = 9
-WHERE
-	a.ManuallyMarkWorkDone = 0
-		AND
-	a.DateDeclined IS NULL
-		AND
-	a.DateConfirmed IS NOT NULL
-		AND 
-	((j.ClientID = @ClientID) OR @ClientID = 0)
-		AND
-	((j.ProjectID = @ProjectID) OR @ProjectID = 0)
-		AND
-	((j.SiteID = @SiteID) OR @SiteID = 0)
-		AND
-	((j.BranchOfficeID = @BranchOfficeID) OR @BranchOfficeID = 0)
-		AND
-	a.StartTime BETWEEN @FilterStartDate AND @FilterFinishDate
-		AND
-	((qt.QuoteVisitTypeID = @QuoteVisitTypeID) OR @QuoteVisitTypeID = 0)
-GROUP BY
-	j.JobID,
-	j.JobNo,
-	j.ClientID,
-	j.SiteID,
-	j.ProjectID,
-	j.BranchOfficeID,
-	j.LastNoteCreated,
-	j.Status,
-	j.Created	
-END
-
--- Get all of the data needed for the procedure
-DECLARE @OtherServicesJobData TABLE (IndexID INT IDENTITY(1,1), QuoteVisitTypeID INT, ReportType VARCHAR(MAX), QuoteID INT, StartDate DATETIME, DueDate DATETIME, JobID INT, JobNo INT,
-									LastNoteCreated DATETIME, BranchOfficeID INT, ProjectID INT, Created DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, PostCode VARCHAR(50),
-									UPRN VARCHAR(50), Address VARCHAR(MAX), Status VARCHAR(100))
-
-INSERT INTO @OtherServicesJobData
-SELECT
-	qt.QuoteVisitTypeID,
-	COALESCE(ac.Description, qvt.Description, qt.QuoteType),
-	q.QuoteID,
-	a.StartTime,
-	ag.DueDate,
-	j.JobID,
-	j.JobNo,
-	j.LastNoteCreated,
-	j.BranchOfficeID,
-	j.ProjectID,
-	j.Created,
-	j.ClientID,
-	c.Client,
-	j.SiteID,
-	si.Postcode,
-	si.UPRN,
-	si.Address,
-	j.Status
-FROM
-	@OtherServicesJobList j
-	INNER JOIN Client c ON j.ClientID = c.ClientID
-	LEFT JOIN Site si ON j.SiteID = si.SiteID
-	INNER JOIN Quote q ON j.JobID = q.JobID
-	INNER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID
-	INNER JOIN Appointment a ON j.AppointmentID = a.AppointmentID
-	LEFT JOIN AppointmentGeneral ag ON a.AppointmentID = ag.AppointmentID
-	LEFT JOIN AppointmentCategory ac ON a.AppointmentCategoryID = ac.AppointmentCategoryID
-	LEFT JOIN QuoteVisitType qvt ON qt.QuoteVisitTypeID = qvt.QuoteVisitTypeID
-    
--- Get the total number of rows.
-DECLARE @TotalRowNumber INT = (SELECT COUNT(*) FROM @OtherServicesJobData);
-    
--- Use a CTE to setup paging.
-WITH Paging AS
-(
-    SELECT
-        CASE WHEN @PerPage = 0
-            THEN 1
-            ELSE ((a.IndexID - 1) / @PerPage) + 1
-        END [Page],
-        CASE WHEN @PerPage = 0
-            THEN 1
-            ELSE CAST(CEILING(COUNT(*) OVER (PARTITION BY '') * 1.00 / @PerPage) AS INT)
-        END [Pages],
-        a.*
-    FROM
-        (
-            SELECT * FROM @OtherServicesJobData
-        ) a
-) 
-
--- Start the main select
-SELECT
-	@TotalRowNumber [TotalRowNumber],
-	p.* 
-FROM
-	Paging p
-WHERE
-	(
-		(p.IndexID BETWEEN (@CurrentPage - 1) * @PerPage + 1 AND @CurrentPage * @PerPage)
-			OR
-		(@PerPage = 0 AND @CurrentPage = 0)
-    )
-    
-    SET NOCOUNT OFF;
-END
-GO
-
 BEGIN TRANSACTION 
 	IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='UserSalt'))
 	BEGIN
@@ -3332,119 +3126,6 @@ GO
 
 UPDATE TeamsV2Tab SET EnableMvcGrid = 1 WHERE TabText = 'projects'
 
-USE [TEAMS]
-GO
-
-/****** Object:  View [dbo].[MobileUnitSummary]    Script Date: 31/08/2018 11:21:15 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-ALTER VIEW [dbo].[MobileUnitSummary]
-As
-
-SELECT
-	[SystemName] =			SystemName, 
-	[LastUsed] =			m1.DateCreated, 
-	[SoftwareVersion] =		DataQueryString, 
-	[SerialNumber] =		eq.SerialNumber,
-	[Employee] =			ISNULL(e.FullName,'Unknown') ,
-	[UserBranch] =			b.BranchOffice,
-	[LicenceKey] =			mlk.LicenceKey,
-	[EquipmentID] =			eq.EquipmentID,
-	[LastUpdate] =			lastUpd.DateCreated,
-	[DataScript] =			recentScript.DataScript
-From
-	MobileAuditTrail m1 WITH (NOLOCK)
-	INNER JOIN Equipment eq WITH (NOLOCK) ON eq.RefNo = m1.SystemName And eq.EquipmentCategoryID = 19
-	LEFT JOIN Employee e WITH (NOLOCK) ON m1.EmployeeID = e.EmployeeID
-	LEFT JOIN BranchOffice b WITH (NOLOCK) ON e.BranchOfficeID = b.BranchOfficeID
-	LEFT JOIN MobileUnitLicenceKey mlk WITH (NOLOCK) ON eq.[MobileUnitLicenceKeyID] = [mlk].[MobileUnitLicenceKeyID]
-	--Last time an update was done
-	OUTER APPLY
-	(
-		SELECT TOP 1
-			DateCreated
-		FROM
-			MobileAuditTrail _mat WITH (NOLOCK)
-		WHERE
-			_mat.SystemName = m1.SystemName
-				AND
-			_mat.DataQueryString != m1.DataQueryString
-		ORDER BY
-			DateCreated DESC
-	) lastUpd
-	OUTER APPLY
-	(
-		SELECT TOP 1
-			_mat.DataScript
-		FROM
-			MobileAuditTrail _mat WITH (NOLOCK)
-		WHERE
-			_mat.SystemName = m1.SystemName
-		ORDER BY
-			DateCreated DESC
-	) recentScript
-Where
-	MobileAuditTrailID = (Select Top 1 MobileAuditTrailID from MobileAuditTrail m2 WITH (NOLOCK) Where m1.SystemName = m2.SystemName Order By MobileAuditTrailID DESC)
-		AND
-	m1.[DateCreated] BETWEEN CONVERT(varchar(20),DATEADD(day,-30,GETDATE()),106) AND CONVERT(VARCHAR(20),DATEADD(day,1,GETDATE()),106)
-
-UNION
-
-SELECT
-	[SystemName] =			SystemName, 
-	[LastUsed] =			m1.DateCreated, 
-	[SoftwareVersion] =		DataQueryString, 
-	[SerialNumber] =		eq.SerialNumber,
-	[Employee] =			ISNULL(e.FullName,'Unknown') ,
-	[UserBranch] =			b.BranchOffice,
-	[LicenceKey] =			mlk.LicenceKey,
-	[EquipmentID] =			eq.EquipmentID,
-	[LastUpdate] =			lastUpd.DateCreated,
-	[DataScript] =			recentScript.DataScript
-From
-	MobileAuditTrail m1 WITH (NOLOCK)
-	LEFT JOIN Equipment eq WITH (NOLOCK) ON eq.RefNo = m1.SystemName And eq.EquipmentCategoryID = 19
-	LEFT JOIN Employee e WITH (NOLOCK) ON m1.EmployeeID = e.EmployeeID
-	LEFT JOIN BranchOffice b WITH (NOLOCK) ON e.BranchOfficeID = b.BranchOfficeID
-	LEFT JOIN MobileUnitLicenceKey mlk WITH (NOLOCK) ON eq.[MobileUnitLicenceKeyID] = [mlk].[MobileUnitLicenceKeyID]
-	--Last time an update was done
-	OUTER APPLY
-	(
-		SELECT TOP 1
-			DateCreated,
-			_mat.DataScript
-		FROM
-			MobileAuditTrail _mat WITH (NOLOCK)
-		WHERE
-			_mat.SystemName = m1.SystemName
-				AND
-			_mat.DataQueryString != m1.DataQueryString
-		ORDER BY
-			DateCreated DESC
-	) lastUpd
-    OUTER APPLY
-	(
-		SELECT TOP 1
-			_mat.DataScript
-		FROM
-			MobileAuditTrail _mat WITH (NOLOCK)
-		WHERE
-			_mat.SystemName = m1.SystemName
-		ORDER BY
-			DateCreated DESC
-	) recentScript
-Where
-	MobileAuditTrailID = (Select Top 1 MobileAuditTrailID from MobileAuditTrail m2 WITH (NOLOCK) Where m1.SystemName = m2.SystemName Order By MobileAuditTrailID DESC)
-		AND
-	m1.[DateCreated] BETWEEN CONVERT(varchar(20),DATEADD(day,-30,GETDATE()),106) AND CONVERT(VARCHAR(20),DATEADD(day,1,GETDATE()),106)
-		AND
-	eq.EquipmentID IS NULL
-
-
 GO
 
 USE [TEAMS]
@@ -5690,111 +5371,6 @@ ALTER VIEW [dbo].[dgLegionellaCompleted] AS
 		e.FullName,
 		j.ProjectID
 
-GO
-GO
-
-IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'V' AND name = 'MobileUnitSummary')
-BEGIN
-    EXEC('CREATE VIEW[dbo].[MobileUnitSummary] AS SELECT 1 GO')
-END
-GO
-
-USE [TEAMS]
-GO
-
-/****** Object:  View [dbo].[MobileUnitSummary]    Script Date: 21/09/2018 14:37:57 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-ALTER VIEW [dbo].[MobileUnitSummary]
-As
-
--- Get a list of all of the different tablets (including tablets with different Mobile V2 Types (e.g. survey, air, legionella))
-WITH 
-MobileUnits (SystemName, Category) AS
-(
-	SELECT
-		DISTINCT
-		mat.SystemName,
-		mat.Category
-	FROM
-		MobileAuditTrail mat
-	WHERE
-		mat.[DateCreated] BETWEEN CONVERT(varchar(20),DATEADD(day,-30,GETDATE()),106) AND CONVERT(VARCHAR(20),DATEADD(day,1,GETDATE()),106)
-			--AND
-		--Category <> 2
-)
-
-SELECT TOP 100 PERCENT
-	mu.SystemName [SystemName],
-	LastUsedDetails.Date [LastUsed],
-	CASE
-		WHEN Category = 1 THEN 'Mobile V1'
-		WHEN Category = 3 THEN 'Mobile V2 AirTesting'
-		WHEN Category = 4 THEN 'Mobile V2 Surveying'
-		WHEN Category = 5 THEN 'Mobile V2 Legionella'
-		ELSE
-			CASE
-				WHEN LastUsedDetails.DataScript = 'DataTransferService.cs'
-				THEN 'Mobile V1'
-				ELSE 'Mobile V2'
-			END
-	END + ' (' + LastUsedDetails.Version + ')' [SoftwareVersion],
-	ISNULL(eq.SerialNumber, '') [SerialNumber],
-	ISNULL(LastUsedDetails.Employee, '') [Employee],
-	ISNULL(LastUsedDetails.Branch, '') [UserBranch],
-	mulk.LicenceKey [LicenceKey],
-	eq.EquipmentID [EquipmentID],
-	LastUpdate.Date [LastUpdate],
-	LastUsedDetails.DataScript [DataScript]
-FROM
-	MobileUnits mu
-	LEFT JOIN Equipment eq WITH (NOLOCK) ON eq.RefNo = mu.SystemName AND eq.EquipmentCategoryID = 19
-	LEFT JOIN MobileUnitLicenceKey mulk	WITH (NOLOCK) ON eq.MobileUnitLicenceKeyID = mulk.MobileUnitLicenceKeyID
-
-	OUTER APPLY
-	(
-		SELECT
-			TOP 1
-			mat.DataQueryString [Version],
-			mat.DateCreated [Date],
-			e.FullName [Employee],
-			bo.BranchOffice [Branch],
-			mat.DataScript [DataScript]
-		FROM
-			MobileAuditTrail mat
-			LEFT JOIN Employee e WITH (NOLOCK) ON mat.EmployeeID = e.EmployeeID
-			LEFT JOIN BranchOffice bo WITH (NOLOCK) ON e.BranchOfficeID = bo.BranchOfficeID
-		WHERE
-			mat.SystemName = mu.SystemName
-				AND
-			mat.Category = mu.Category
-		ORDER BY
-			mat.DateCreated DESC
-	) LastUsedDetails
-
-	OUTER APPLY
-	(
-		SELECT TOP 1
-			mat1.DateCreated [Date]
-		FROM
-			MobileAuditTrail mat1
-		WHERE
-			mat1.SystemName = mu.SystemName
-					AND
-			mat1.Category = mu.Category
-				AND
-			mat1.DataQueryString != LastUsedDetails.Version
-		ORDER BY
-			mat1.DateCreated DESC
-	) LastUpdate
-ORDER BY
-	mu.SystemName
 GO
 
 IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='PortalUser') AND name='Fire') < 1
@@ -11283,745 +10859,7 @@ BEGIN
 
 	SET NOCOUNT OFF;
 END
-GO
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'QualityControlSampleList_2') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[QualityControlSampleList_2] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-
-ALTER PROCEDURE [dbo].[QualityControlSampleList_2]
-    @startdate [datetime] =NULL,
-    @enddate [datetime] =NULL,
-    @clientid [int] =NULL,
-    @ProjectId int =NULL,
-    @siteid int =NULL,
-    @employeeid int= 0,
-    @mode int = 1,
-    @forceUpdateCounts bit = 1
-AS
-BEGIN
-set transaction ISOLATION level READ uncommitted 
-
-SET NOCOUNT ON 
---update QCOutnstandingCountByDay for some bizare reason!
-DECLARE @internalstartdate [datetime],@internalenddate [datetime]
-
-DECLARE @maxpoints int
-SET @maxpoints = (SELECT Max(i__MaxDailyPoints) FROM Config)
-
-DECLARE @ceilingpercentage decimal(5, 3)
-SET @ceilingpercentage = (SELECT Max(i__QcCeilingPercentage) FROM Config)
-
-SET @internalstartdate = @startdate
-SET @internalenddate = @enddate
-
-IF @employeeid IS NULL
-BEGIN
-	set @employeeid = 0
-END
-
-IF @internalstartdate IS NULL 
-BEGIN
-    set @internalstartdate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 00:00:00' as datetime)
-END 
-
-IF @internalenddate IS NULL 
-BEGIN
-    set @internalenddate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 23:59:59' as datetime)
-END 
-
-if (CONVERT(VARCHAR(8),@internalenddate,108) = '00:00:00')
-begin 
-    set @internalenddate = cast(CONVERT(VARCHAR(11),@internalenddate,106) + ' 23:59:59' as datetime)
-END 
-
-If @mode = 3 BEGIN
-	Select
-		rs.theDay  [_day],
-		rs.Total [c]	
-	FROM
-		QCOutstandingCountByDay rs
-	Where 
-		rs.theDay = @internalstartdate
-END
-
-
-If @mode < 3 BEGIN
-
-DECLARE @SampleTable TABLE (SessionRef VARCHAR(50),SampleID INT, OrderIdentifier INT, TimeIdentifier INT,CreatedDate DATE,CreatedDateTime DATETIME, sampleTestCollectionID INT, SampleTestID INT,datasaved INT, _name VARCHAR(MAX), EmployeeID INT)
-Insert into @SampleTable (SessionRef,SampleID,OrderIdentifier, TimeIdentifier,CreatedDate,CreatedDateTime,sampleTestCollectionID,SampleTestID,datasaved,_name,EmployeeID)
-SELECT 
-	test_st._sessionRef,
-	test_st._sampleID,
-	ROW_NUMBER() OVER (Partition By test_st._sampleID,test_st._EmployeeID Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [OrderIdentifier],
-	ROW_NUMBER() OVER (Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [TimeIdentifier],
-	[test_st].[_testCreatedOn] [_testCreatedOn],
-	[test_st].[_testCreatedOn] [_testCreatedOn],
-    test_st.[sampleTestCollectionID],
-    test_st.[sampleTestID],
-    test_st._wasSaved [datasaved],
-    [test_st].[_name],
-    [test_st]._employeeID
-FROM 
-    sampletest test_st 
-    INNER JOIN Sample s ON test_st._sampleID=s.SampleID
-    INNER JOIN SampleTestCollection stc ON test_st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
-    LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = test_st.sampleTestCollectionID
-		AND
-		test_st._SessionRef = stcs.sessionref
-WHERE
-    ((test_st.[_name] ='AnalysisTest') OR (test_st.[_name] ='AnalysisQC'))
-    AND (test_st.[_testCancelledOn] IS NULL)
-    AND [test_st].[_wasSaved] = 1
-    AND ([test_st].[_testCreatedOn] BETWEEN @internalstartdate AND @internalenddate) 
-    AND (test_st._employeeID = @employeeid OR @employeeid = 0)
-Order By
-	test_st._sampleID
-
-DECLARE @SampleRowNumber TABLE (SampleID INT, RowNumber INT)
-Insert into @SampleRowNumber (SampleID, RowNumber)
-Select
-	st.SampleID, ROW_NUMBER() OVER (PARTITION BY MAX(st.CreatedDate) ORDER BY MAX(st.CreatedDateTime), MAX(st.SampleTestID)) [rownumber]
-FROM 
-	@SampleTable st
-GROUP BY
-	st.SampleID
-
-DECLARE @OriginalTest TABLE (SampleTestID INT,SampleID INT, EmployeeID INT, CreatedDate DATE, Analysed DATETIME)
-Insert into @OriginalTest (SampleTestID,SampleID,EmployeeID,CreatedDate,Analysed)
-Select main.SampleTestID,main.SampleID, main.EmployeeID, main.CreatedDate, main.Analysed
-FROM
-(Select
-	_ori.SampleTestID,ROW_NUMBER() OVER (PARTITION BY st.SampleID ORDER BY _ori._testCreatedOn DESC) [OrderIdentifier],st.SampleID, _ori._employeeID [EmployeeID], _ori._testCreatedOn [CreatedDate], stcs.sample_dateanalysed [Analysed]
-FROM
-	@SampleTable st 
-	LEFT OUTER JOIN SampleTest _ori ON st.SampleID=_ori._sampleID 
-	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
-		AND
-		st.SessionRef = stcs.sessionref
-Where
-	_ori._testCreatedOn <= st.CreatedDateTime
-		AND
-	_ori._name = 'AnalysisTest' --AND 
-) main
-Where
-	main.OrderIdentifier=1
-
-DECLARE @SampleAllResult TABLE (SampleID INT, _testCreatedOn DATE, RowNumber INT,sampleTestCollectionSessionID INT)
-Insert into @SampleAllResult (SampleID, RowNumber,sampleTestCollectionSessionID)
-Select
-	srn.SampleID, srn.RowNumber [rownumber],MAX(stcs.sampleTestCollectionSessionID)
-FROM
-	@SampleRowNumber srn
-	INNER JOIN @SampleTable st ON srn.SampleID=st.SampleID
-	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
-		AND
-		st.SessionRef = stcs.sessionref
-		AND
-		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-Group By
-	srn.SampleID,srn.RowNumber
-
-DECLARE @QCSample TABLE (SampleTestID INT,SampleID INT, EmployeeID INT,sampleTestCollectionSessionID INT, Analysed DATETIME)
-Insert into @QCSample (SampleTestID,SampleID,EmployeeID,sampleTestCollectionSessionID,Analysed)
-Select 
-	main.SampleTestID, main.SampleID, main.EmployeeID, main.sampleTestCollectionSessionID, main.Analysed
-FROM
-(Select
-	st.SampleTestID,st.SampleID, st.EmployeeID,stcs.sampleTestCollectionSessionID, stcs.sample_dateanalysed [Analysed],
-	ROW_NUMBER() OVER (Partition By st.SampleID Order By st.CreatedDateTime DESC) [OrderIdentifier]
-FROM
-	@SampleTable st
-	INNER JOIN SampleTestCollection stc ON st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
-	INNER JOIN SampleTestCollectionSession stcs ON 
-		stcs.sampleTestCollectionID = st.sampleTestCollectionID
-			AND
-		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-		--	AND 
-		--stcs.sessionref = st.SessionRef
-Where
-	st._name = 'AnalysisQC'
-) main
-Where main.OrderIdentifier=1
-
-DECLARE @FutureSamples TABLE (SampleID INT, EmployeeID INT, _name VARCHAR(MAX), TestCreatedOn DATETIME)
-Insert into @FutureSamples
-Select main._SampleID, main._EmployeeID, main._Name, main._TestCreatedOn
-FROM
-(
-Select
-	test_st._sampleID, test_st._employeeID, test_st._name, test_st._testCreatedOn
-FROM
-	sampletest test_st
-	INNER JOIN @SampleTable st ON st.SampleID=test_st._SampleID
-Where
-	test_st._testCancelledOn IS NULL
-) main
-
-
-DECLARE @FutureQCSample TABLE (SampleID INT, EmployeeID INT, TestCreatedOn VARCHAR(MAX))
-Insert into @FutureQCSample (SampleID,EmployeeID, TestCreatedOn)
-Select main.SampleID, main.EmployeeID, main.TestCreatedOn
-FROM
-(Select
-	st.SampleID, st.EmployeeID, fs.TestCreatedOn, ROW_NUMBER() OVER (Partition By st.SampleID Order By fs.TestCreatedOn DESC) [OrderIdentifier] --NEED TO MAKE THIS STUFF
-FROM
-	@SampleTable st
-	INNER JOIN @FutureSamples fs ON st.SampleID=fs.SampleID AND fs._name='AnalysisQC'
-Where
-	st._name = 'AnalysisTest'
-) main
-Where
-	main.OrderIdentifier=1
-
---DECLARE A TABLE VALUE SO WE CAN TALLY UP POINTS
-DECLARE @ResultSet TABLE (EmployeeID INT,[otSampleTestID] INT,[OriginalAnalystEmployeeID] INT,[qcEmployeeID] INT,[stSampleTestID] INT,[qcSampleTestID] INT,[Test No] INT,[SampleID] INT,[analysed] INT,[OriginalAnalystName] VARCHAR(MAX),[qc] INT,[datasaved] BIT,[qcdInFuture] INT,[sampleTestCollectionSessionID] INT,[sampleref] VARCHAR(MAX),[totalsofar] INT,[rownumber] INT,[OverMaxPoints] INT,[Points] INT, [Star] BIT,[sampleClassificationDetails] VARCHAR(MAX),[sampleresultdetails] VARCHAR(MAX),[loggedSampleClassificationExtendedID] INT,[loggedSampleClassificationID] INT,[loggedSampleResultID] INT,[testCreatedOn] DATE,[JobID] INT,[jobno] VARCHAR(MAX),[FullName] VARCHAR(MAX),[Approved] INT,[allowcheck] INT,[futuredates_string] VARCHAR(MAX),[CreatedDate] DATE,[AnalysedToday] INT,[qcdToday] INT,[otCreatedDate] DATE)
-Insert into @ResultSet (EmployeeID,[OriginalAnalystEmployeeID],[qcEmployeeID],[otSampleTestID],[stSampleTestID],[qcSampleTestID],[Test No],[SampleID],[analysed],[OriginalAnalystName],[qc],[datasaved],[qcdInFuture],[sampleTestCollectionSessionID],[sampleref],[totalsofar],[rownumber],[OverMaxPoints],[Points],[Star],[sampleClassificationDetails],[sampleresultdetails],[loggedSampleClassificationExtendedID],[loggedSampleClassificationID],[loggedSampleResultID],[testCreatedOn],[JobID],[jobno],[FullName],[Approved],[allowcheck],[futuredates_string],[CreatedDate],[AnalysedToday],[qcdToday],[otCreatedDate])
-Select 
-	e.EmployeeID,
-	OriginalAnalyst.EmployeeID [OriginalAnalystEmployeeID],
-	qc.EmployeeID [qcEmployeeID],
-	ot.SampleTestID [otSampleTestID],
-	st.SampleTestID [stSampleTestID],
-	CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END [qcSampleTestID],
-	ROW_NUMBER() OVER (Partition By e.FullName Order by s.DateAnalysed) [Test No],
-	st.SampleID,
-	CASE WHEN (((IsNull(ot.EmployeeID,0) = st.EmployeeID) AND st.CreatedDate = ot.CreatedDate) OR (ot.EmployeeID = qc.EmployeeID)) THEN 1 ELSE 0 END [analysed],
-	OriginalAnalyst.FullName [OriginalAnalystName],
-	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 1 ELSE 0 END [qc],
-	CASE WHEN st.SampleTestID=IsNull(qc.SampleTestID,st.SampleTestID) AND IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND (stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef) THEN 1 ELSE 0 END [datasaved], -- NO LONGER USED?
-	CASE WHEN fqc.EmployeeID IS NULL THEN 0 ELSE 1 END [qcdInFuture],
-	stcs.sampleTestCollectionSessionID,
-	s.SampleRef [sampleref],
-	NULL [totalsofar],
-	sar.RowNumber [rownumber],
-	--SUM(sar.RowNumber) OVER(PARTITION BY e.FullName ORDER BY s.DateAnalysed ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)  -- ONLY 2012 :/
-	NULL as [OverMaxPoints],
-	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) AND ot.CreatedDate=st.CreatedDate THEN scePoints.Points * 2 ELSE scePoints.Points END [Points],
-	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) THEN 1 ELSE 0 END [Star],
-	sce.SampleClassification [sampleClassificationDetails],
-	sr.SampleResult [sampleresultDetails],
-	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationExtendedID END [loggedSampleClassificationExtendedID],
-	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationID END [loggedSampleClassificationID],
-	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleResultID END [loggedSampleResultID],
-	dbo.formatteamsdate(st.CreatedDate,1) [testCreatedOn],
-	j.JobID [JobID],
-	dbo.FormatTeamsReference('J',j.JobNo) [jobno],
-	e.FullName,
-	case when (not j.SampleResultEmployeeID IS NULL AND not j.SampleContentEmployeeID IS NULL) then 1 else 0 end [Approved],
-	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 0 ELSE 1 END [allowcheck],
-	IsNull(fqc.TestCreatedOn,'') [futuredates_string],
-	st.CreatedDate [CreatedDate],
-	CASE WHEN ot.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [AnalysedToday],
-	CASE WHEN qc.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [qcdToday],
-	ot.CreatedDate [otCreatedDate]
-FROM 
-	@SampleTable st
-	LEFT OUTER JOIN @OriginalTest ot ON st.SampleID = ot.SampleID
-	LEFT OUTER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = ot.EmployeeID
-	
-	LEFT OUTER JOIN @SampleAllResult sar ON st.SampleID=sar.SampleID
-	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.SampleTestCollectionSessionID=sar.SampleTestCollectionSessionID
-	
-	LEFT OUTER JOIN @QCSample qc ON st.SampleID=qc.SampleID-- AND qc.EmployeeID=st.EmployeeID
-	
-	
-	LEFT OUTER JOIN @FutureQCSample fqc ON fqc.SampleID=st.SampleID
-		AND fqc.TestCreatedOn > cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-	
-	INNER JOIN Employee e ON st.EmployeeID = e.EmployeeID
-	INNER JOIN Sample s ON s.SampleID = st.SampleID
-	
-	
-	--INNER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = s.EmployeeID
-	INNER JOIN Room rm ON rm.RoomID = s.RoomID
-	INNER JOIN Register r ON rm.RegisterID=r.RegisterID
-	INNER JOIN JobEmployee je ON r.JobEmployeeID = je.JobEmployeeID
-	INNER JOIN Job j ON je.JobID = j.JobID
-	
-	LEFT OUTER JOIN SampleClassificationExtended sce ON sce.SampleClassificationExtendedID = s.SampleClassificationExtendedID
-	LEFT OUTER JOIN SampleResult sr ON sr.SampleResultID = s.SampleResultID
-	
-	LEFT OUTER JOIN SampleClassificationExtendedPoints scePoints  ON scePoints.SampleClassificationExtendedPointsID=s.SampleClassificationExtendedPointsID
-	
-Where 
-	OrderIdentifier = 1
-		AND
-	(
-		CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) THEN 
-			CASE WHEN ot.EmployeeID=qc.EmployeeID THEN CASE WHEN st.EmployeeID = qc.EmployeeID THEN 1 ELSE 0 END ELSE 1 END
-		ELSE 
-			1
-		END = 1
-	)
-		AND
-	(st.EmployeeID = @employeeid OR @employeeid = 0)
-
-/*
-	Select 
-		checked.SampleID
-	FROM
-		@ResultSet rs
-		OUTER APPLY
-		(
-			Select EmployeeID, SampleID, MAX(qcdToday) [qcdToday]
-			FROM
-			(Select EmployeeID,SampleID, 1 [qcdToday] FROM @QCSample
-				UNION
-			Select EmployeeID,SampleID, 0 [qcdToday] FROM @FutureQCSample) main
-			Where
-				rs.SampleID = main.SampleID AND rs.qc=0
-				AND
-				(
-					(main.EmployeeID != rs.EmployeeID AND main.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND main.EmployeeID = rs.EmployeeID)
-				)
-			Group By EmployeeID, SampleID
-		) checked
-	Where rs.EmployeeID=8 AND checked.SampleID IS NOT NULL
-*/	
-
-	If @mode = 0 BEGIN
-		DECLARE @Mode0Table TABLE ([_day] DATETIME,[c] INT,[qcd] INT,[qcdone] INT,[points] INT,[EmployeeID] INT,[FullName] VARCHAR(MAX),[QCCountNeededMethod1] INT, [QCCountNeededMethod1_Outstanding] INT, [QCCountNeededMethod2] INT, [QCCountNeededMethod2_Outstanding] INT, [checked_count] INT, [samplecount] INT, [ac] INT)
-		Insert into @Mode0Table
-		Select 
-			main._day,
-			SUM(main.c) [c],
-			SUM(main.qcd) [qcd],
-			SUM(main.qcdone) [qcdone],
-			SUM(main.points) [points],
-			main.EmployeeID [EmployeeID],
-			main.FullName [FullName],
-			--MIN(main.MaxPoints),
-			CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod1],
-			CASE WHEN  CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END > 0 THEN
-				CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) ElSE 0 END - SUM(main.checked_count)
-			ELSE
-				0
-			END [QCCountNeededMethod1_Outstanding],
-			--SUM(main.QCCountNeededMethod1_Outstanding - main.checked_count) [QCCountNeededMethod1_Outstanding],
-			CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod2],
-			SUM(CASE WHEN main.QCCountNeededMethod2_Outstanding - main.checked_count > 0 THEN main.QCCountNeededMethod2_Outstanding - main.checked_count ELSE 0 END) [QCCountNeededMethod2_Outstanding],
-			IsNull(SUM(main.checked_count),0) [checked_count],
-			IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) [samplecount],
-			ISNULL(SUM(main.ac),0) [ac]
-			--*/
-		FROM
-		(
-			Select
-				a.allEmployees,
-				a._day,
-				CASE WHEN ISNULL(inner_main.c,qconly.c) > 0 THEN ISNULL(inner_main.c,qconly.c) ELSE 0 END [c],
-				CASE WHEN qconly.qcd IS NOT NULL THEN IsNull(inner_main.qcd,qconly.qcdone) ELSE qconly.qcdone END [qcd],
-				ISNULL(inner_main.qcdone,0) [qcdone],
-				ISNULL(inner_main.points,0) [points],
-				a.allEmployees [EmployeeID],
-				e.FullName,
-				inner_main.MaxPoints,
-				ISNULL(inner_main.QCCountNeededMethod1,qconly.QCCountNeededMethod1) [QCCountNeededMethod1],
-				CASE WHEN inner_main.QCCountNeededMethod1_Outstanding > 0 THEN inner_main.QCCountNeededMethod1_Outstanding ELSE 0 END [QCCountNeededMethod1_Outstanding],
-				ISNULL(inner_main.QCCountNeededMethod2,qconly.QCCountNeededMethod2) [QCCountNeededMethod2],
-				CASE WHEN inner_main.QCCountNeededMethod2_Outstanding > 0 THEN inner_main.QCCountNeededMethod2_Outstanding ELSE 0 END [QCCountNeededMethod2_Outstanding],
-				--ISNULL(CASE WHEN IsNull(inner_main.qcd,qconly.qcd) > 0 THEN checked.[count] END,0)
-				inner_main.checked [checked_count],
-				inner_main.samplecount [samplecount],
-				inner_main.ac+qconly.ac [ac]
-			FROM
-			(
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],EmployeeID [allEmployees] FROM @ResultSet
-					UNION
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],OriginalAnalystEmployeeID [allEmployees] FROM @ResultSet
-			) a
-			INNER JOIN Employee e ON e.EmployeeID = a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					SUM(rs.Analysed) [c],
-					ISNULL(qcd.qcd,0) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.EmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					MIN(CASE WHEN rs.OverMaxPoints = 1 THEN rs.totalsofar ELSE 99999 END) [MaxPoints],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					SUM(CASE WHEN rs.OriginalAnalystEmployeeID <> rs.qcEmployeeID THEN 1 ELSE 0 END) [checked_count],
-					CEILING(COUNT(
-						CASE WHEN rs.totalsofar > @maxpoints Then
-							rs.SampleID
-						End)) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac],
-					--SUM(CASE WHEN (checked.EmployeeID != rs.EmployeeID AND checked.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND checked.EmployeeID = rs.EmployeeID) Then 1 ELSE 0 END) [checked]
-					COUNT(checked.SampleID) [checked]
-				FROM
-					(
-						Select 
-							rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[OriginalAnalystName],rs.Analysed,rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],
-							CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],
-							rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
-						FROM 
-							@ResultSet rs
-							INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
-						GROUP BY
-							rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
-					) rs
-					OUTER APPLY
-					(
-						Select EmployeeID, SampleID, MAX(qcdToday) [qcdToday]
-						FROM
-						(Select EmployeeID,SampleID, 1 [qcdToday] FROM @QCSample
-							UNION
-						Select EmployeeID,SampleID, 0 [qcdToday] FROM @FutureQCSample) main
-						Where
-							rs.SampleID = main.SampleID AND rs.qc=0
-							AND
-							(
-								(main.EmployeeID != rs.EmployeeID AND main.qcdToday=1) --OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND main.EmployeeID = rs.EmployeeID)
-									OR 
-								((rs.AnalysedToday = 1 OR rs.qcdInFuture = 1) AND main.EmployeeID = rs.EmployeeID)
-							)
-						Group By EmployeeID, SampleID
-					) checked
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 --OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.OriginalAnalystEmployeeID
-					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID AND rs.qc=0
-				Group By
-					rs.CreatedDate,rs.FullName,rs.EmployeeID,qcd.qcd,qcd.self_qcd
-			) inner_main ON inner_main.EmployeeID=a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
-					COUNT(rs.SampleID) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.OriginalAnalystEmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					0 [checked_count],
-					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End)) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac]
-				FROM
-					(
-						Select 
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName] [FullName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],0 [totalsofar],rs.[rownumber],0 [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-						GROUP BY
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.EmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.EmployeeID
-					) qcd ON rs.OriginalAnalystEmployeeID=qcd.EmployeeID
-				Group By
-					rs.CreatedDate,rs.FullName,rs.OriginalAnalystEmployeeID,qcd.qcd,qcd.self_qcd
-			) qconly  ON qconly.EmployeeID=a.allEmployees
-		) main
-		GROUP BY
-			main.[_day],main.EmployeeID,main.FullName
-		Order By
-			main.EmployeeID
-		
-		If @forceUpdateCounts = 1 AND @employeeid = 0 BEGIN
-			DECLARE @QCOutstandingCountByDayID INT = (Select top 1 QCOutstandingCountByDayID FROM QCOutstandingCountByDay Where theDay=@internalstartdate)
-			IF(@QCOutstandingCountByDayID = 0) BEGIN
-				Insert into QCOutstandingCountByDay (theDay,Total) Select m0t._day,SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @Mode0Table m0t GROUP BY m0t._day
-			END
-			IF(@QCOutstandingCountByDayID > 0) BEGIN
-				DECLARE @CurrentTotal INT = (Select Total FROM QCOutstandingCountByDay Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID)
-				If ((Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @Mode0Table m0t GROUP BY m0t._day) != @CurrentTotal) BEGIN
-					Update QCOutstandingCountByDay Set Total = (Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @Mode0Table m0t GROUP BY m0t._day) Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID
-				END
-			END		
-		END	
-		
-		Select * FROM @Mode0Table m0t Where (m0t.EmployeeID = @employeeid OR @employeeid=0) Order by m0t.EmployeeID
-	END
-	
-	If @mode = 1 BEGIN
-		Select 
-			rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],
-			--rs.[sampleTestCollectionSessionID],
-			--rs.otSampleTestID,
-			--rs.stSampleTestID,
-			--rs.qcSampleTestID,
-			rs.[sampleref],
-			CAST(SUM(rs2.[Points]) as varchar) + CASE WHEN rs.[Star] = 1 THEN '*' ELSE '' END [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-			CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-				RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-			ELSE
-				CONVERT(varchar(11), rs.[testCreatedOn], 106)
-			END [testCreatedOn]
-			,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string]
-		FROM 
-			@ResultSet rs
-			INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
-		GROUP BY
-			rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleTestCollectionSessionID],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string]
-			--,rs.otSampleTestID,
-			--rs.stSampleTestID,
-			--rs.qcSampleTestID
-		Order By
-			--rs.rownumber,
-			rs.FullName
-			, rs.rownumber
-	END
-
-	If @mode = 2 BEGIN
-			Select
-				main._day,SUM(main.QCCountNeededMethod1),SUM(main.QCCountNeededMethod2)
-			FROM
-			(
-			Select
-					CAST(rs.CreatedDate as DATETIME) [_day],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2]
-				FROM
-					(
-						Select 
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-							INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber AND rs.CreatedDate=rs2.CreatedDate
-						GROUP BY
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.CreatedDate,qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 --OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.CreatedDate,qc.OriginalAnalystEmployeeID
-					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID AND rs.CreatedDate=qcd.CreatedDate
-				Group By
-					rs.CreatedDate,rs.EmployeeID
-			) main
-		GROUP BY
-			main._day
-	END
-	
-	
-	If @mode = 3 BEGIN
-		Select 
-			main._day,
-			SUM(CASE WHEN main.QCCountNeededMethod2_Outstanding > 0 THEN main.QCCountNeededMethod2_Outstanding ELSE 0 END) [c]
-		FROM
-		(
-			Select
-				a._day,
-				CASE WHEN inner_main.c > 0 THEN inner_main.c ELSE 0 END [c],
-				IsNull(inner_main.qcd,qconly.qcd) [qcd],
-				ISNULL(inner_main.qcdone,qconly.qcdone) [qcdone],
-				ISNULL(inner_main.points,qconly.points) [points],
-				a.allEmployees [EmployeeID],
-				e.FullName,
-				ISNULL(inner_main.QCCountNeededMethod1,qconly.QCCountNeededMethod1) [QCCountNeededMethod1],
-				CASE WHEN inner_main.QCCountNeededMethod1_Outstanding > 0 THEN inner_main.QCCountNeededMethod1_Outstanding ELSE 0 END [QCCountNeededMethod1_Outstanding],
-				ISNULL(inner_main.QCCountNeededMethod2,qconly.QCCountNeededMethod2) [QCCountNeededMethod2],
-				CASE WHEN inner_main.QCCountNeededMethod2_Outstanding > 0 THEN inner_main.QCCountNeededMethod2_Outstanding ELSE 0 END [QCCountNeededMethod2_Outstanding],
-				ISNULL(inner_main.checked_count,qconly.checked_count) [checked_count],
-				ISNULL(inner_main.samplecount,qconly.samplecount) [samplecount],
-				ISNULL(inner_main.ac,qconly.ac) [ac]
-			FROM
-			(
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],EmployeeID [allEmployees] FROM @ResultSet
-					UNION
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],OriginalAnalystEmployeeID [allEmployees] FROM @ResultSet
-			) a
-			INNER JOIN Employee e ON e.EmployeeID = a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
-					ISNULL(qcd.qcd,0) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.EmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					ISNULL(qcd.self_qcd,0) [checked_count],
-					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) * @ceilingpercentage) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac]
-				FROM
-					(
-						Select 
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-							INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
-						GROUP BY
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.OriginalAnalystEmployeeID
-					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID
-				Group By
-					rs.CreatedDate,rs.FullName,rs.EmployeeID,qcd.qcd,qcd.self_qcd
-			) inner_main ON inner_main.EmployeeID=a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
-					COUNT(rs.SampleID) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.OriginalAnalystEmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					ISNULL(qcd.self_qcd,0) [checked_count],
-					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) * @ceilingpercentage) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac]
-				FROM
-					(
-						Select 
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName] [FullName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],0 [totalsofar],rs.[rownumber],0 [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-						GROUP BY
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.EmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.EmployeeID
-					) qcd ON rs.OriginalAnalystEmployeeID=qcd.EmployeeID
-				Group By
-					rs.CreatedDate,rs.FullName,rs.OriginalAnalystEmployeeID,qcd.qcd,qcd.self_qcd
-			) qconly  ON qconly.EmployeeID=a.allEmployees
-		) main
-		Group By
-			main._day
-	END
-	
-	END
-
-SET NOCOUNT OFF
-
-END
 
 GO
 
@@ -19649,1533 +18487,7 @@ END
 GO
 
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'QualityControlSampleList_2') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[QualityControlSampleList_2] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
 
-/*    ==Scripting Parameters==
-
-    Source Server Version : SQL Server 2008 (10.0.1600)
-    Source Database Engine Edition : Microsoft SQL Server Standard Edition
-    Source Database Engine Type : Standalone SQL Server
-
-    Target Server Version : SQL Server 2008
-    Target Database Engine Edition : Microsoft SQL Server Standard Edition
-    Target Database Engine Type : Standalone SQL Server
-*/
-
-USE [TEAMS]
-GO
-
-/****** Object:  StoredProcedure [dbo].[QualityControlSampleList_2]    Script Date: 27/03/2019 11:46:10 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-
-
-
-
-
-ALTER PROCEDURE [dbo].[QualityControlSampleList_2]
-    @startdate [datetime] =NULL,
-    @enddate [datetime] =NULL,
-    @clientid [int] =NULL,
-    @ProjectId int =NULL,
-    @siteid int =NULL,
-    @employeeid int= 0,
-    @mode int = 1,
-    @forceUpdateCounts bit = 1
-AS
-BEGIN
-set transaction ISOLATION level READ uncommitted 
-
-SET NOCOUNT ON 
---update QCOutnstandingCountByDay for some bizare reason!
-DECLARE @internalstartdate [datetime],@internalenddate [datetime]
-
-DECLARE @maxpoints int
-SET @maxpoints = (SELECT Max(i__MaxDailyPoints) FROM Config)
-
-DECLARE @ceilingpercentage decimal(5, 3)
-SET @ceilingpercentage = (SELECT Max(i__QcCeilingPercentage) FROM Config)
-
-SET @internalstartdate = @startdate
-SET @internalenddate = @enddate
-
-IF @employeeid IS NULL
-BEGIN
-	set @employeeid = 0
-END
-
-IF @internalstartdate IS NULL 
-BEGIN
-    set @internalstartdate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 00:00:00' as datetime)
-END 
-
-IF @internalenddate IS NULL 
-BEGIN
-    set @internalenddate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 23:59:59' as datetime)
-END 
-
-if (CONVERT(VARCHAR(8),@internalenddate,108) = '00:00:00')
-begin 
-    set @internalenddate = cast(CONVERT(VARCHAR(11),@internalenddate,106) + ' 23:59:59' as datetime)
-END 
-
-If @mode = 3 BEGIN
-	Select
-		rs.theDay  [_day],
-		rs.Total [c]	
-	FROM
-		QCOutstandingCountByDay rs
-	Where 
-		rs.theDay = @internalstartdate
-END
-
-
-If @mode < 3 BEGIN
-
-DECLARE @SampleTable TABLE (SessionRef VARCHAR(50),SampleID INT, OrderIdentifier INT, TimeIdentifier INT,CreatedDate DATE,CreatedDateTime DATETIME, sampleTestCollectionID INT, SampleTestID INT,datasaved INT, _name VARCHAR(MAX), EmployeeID INT)
-Insert into @SampleTable (SessionRef,SampleID,OrderIdentifier, TimeIdentifier,CreatedDate,CreatedDateTime,sampleTestCollectionID,SampleTestID,datasaved,_name,EmployeeID)
-SELECT 
-	test_st._sessionRef,
-	test_st._sampleID,
-	ROW_NUMBER() OVER (Partition By test_st._sampleID,test_st._EmployeeID Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [OrderIdentifier],
-	ROW_NUMBER() OVER (Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [TimeIdentifier],
-	[test_st].[_testCreatedOn] [_testCreatedOn],
-	[test_st].[_testCreatedOn] [_testCreatedOn],
-    test_st.[sampleTestCollectionID],
-    test_st.[sampleTestID],
-    test_st._wasSaved [datasaved],
-    [test_st].[_name],
-    [test_st]._employeeID
-FROM 
-    sampletest test_st 
-    INNER JOIN Sample s ON test_st._sampleID=s.SampleID
-    INNER JOIN SampleTestCollection stc ON test_st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
-    LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = test_st.sampleTestCollectionID
-		AND
-		test_st._SessionRef = stcs.sessionref
-WHERE
-    ((test_st.[_name] ='AnalysisTest') OR (test_st.[_name] ='AnalysisQC'))
-    AND (test_st.[_testCancelledOn] IS NULL)
-    AND [test_st].[_wasSaved] = 1
-    AND ([test_st].[_testCreatedOn] BETWEEN @internalstartdate AND @internalenddate) 
-    AND (test_st._employeeID = @employeeid OR @employeeid = 0)
-Order By
-	test_st._sampleID
-
-DECLARE @SampleRowNumber TABLE (SampleID INT, RowNumber INT)
-Insert into @SampleRowNumber (SampleID, RowNumber)
-Select
-	st.SampleID, ROW_NUMBER() OVER (PARTITION BY MAX(st.CreatedDate) ORDER BY MAX(st.CreatedDateTime), MAX(st.SampleTestID)) [rownumber]
-FROM 
-	@SampleTable st
-GROUP BY
-	st.SampleID
-
-DECLARE @OriginalTest TABLE (SampleTestID INT,SampleID INT, EmployeeID INT, CreatedDate DATE, Analysed DATETIME)
-Insert into @OriginalTest (SampleTestID,SampleID,EmployeeID,CreatedDate,Analysed)
-Select main.SampleTestID,main.SampleID, main.EmployeeID, main.CreatedDate, main.Analysed
-FROM
-(Select
-	_ori.SampleTestID,ROW_NUMBER() OVER (PARTITION BY st.SampleID ORDER BY _ori._testCreatedOn DESC) [OrderIdentifier],st.SampleID, _ori._employeeID [EmployeeID], _ori._testCreatedOn [CreatedDate], stcs.sample_dateanalysed [Analysed]
-FROM
-	@SampleTable st 
-	LEFT OUTER JOIN SampleTest _ori ON st.SampleID=_ori._sampleID 
-	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
-		AND
-		st.SessionRef = stcs.sessionref
-Where
-	_ori._testCreatedOn <= st.CreatedDateTime
-		AND
-	_ori._name = 'AnalysisTest' --AND 
-) main
-Where
-	main.OrderIdentifier=1
-
-DECLARE @SampleAllResult TABLE (SampleID INT, _testCreatedOn DATE, RowNumber INT,sampleTestCollectionSessionID INT)
-Insert into @SampleAllResult (SampleID, RowNumber,sampleTestCollectionSessionID)
-Select
-	srn.SampleID, srn.RowNumber [rownumber],MAX(stcs.sampleTestCollectionSessionID)
-FROM
-	@SampleRowNumber srn
-	INNER JOIN @SampleTable st ON srn.SampleID=st.SampleID
-	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
-		AND
-		st.SessionRef = stcs.sessionref
-		AND
-		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-Group By
-	srn.SampleID,srn.RowNumber
-
-DECLARE @QCSample TABLE (SampleTestID INT,SampleID INT, EmployeeID INT,sampleTestCollectionSessionID INT, Analysed DATETIME)
-Insert into @QCSample (SampleTestID,SampleID,EmployeeID,sampleTestCollectionSessionID,Analysed)
-Select 
-	main.SampleTestID, main.SampleID, main.EmployeeID, main.sampleTestCollectionSessionID, main.Analysed
-FROM
-(Select
-	st.SampleTestID,st.SampleID, st.EmployeeID,stcs.sampleTestCollectionSessionID, stcs.sample_dateanalysed [Analysed],
-	ROW_NUMBER() OVER (Partition By st.SampleID Order By st.CreatedDateTime DESC) [OrderIdentifier]
-FROM
-	@SampleTable st
-	INNER JOIN SampleTestCollection stc ON st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
-	INNER JOIN SampleTestCollectionSession stcs ON 
-		stcs.sampleTestCollectionID = st.sampleTestCollectionID
-			AND
-		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-		--	AND 
-		--stcs.sessionref = st.SessionRef
-Where
-	st._name = 'AnalysisQC'
-) main
-Where main.OrderIdentifier=1
-
-DECLARE @FutureSamples TABLE (SampleID INT, EmployeeID INT, _name VARCHAR(MAX), TestCreatedOn DATETIME)
-Insert into @FutureSamples
-Select main._SampleID, main._EmployeeID, main._Name, main._TestCreatedOn
-FROM
-(
-Select
-	test_st._sampleID, test_st._employeeID, test_st._name, test_st._testCreatedOn
-FROM
-	sampletest test_st
-	INNER JOIN @SampleTable st ON st.SampleID=test_st._SampleID
-Where
-	test_st._testCancelledOn IS NULL
-		AND
-	test_st._testCreatedOn > cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-) main
-
-
-DECLARE @FutureQCSample TABLE (SampleID INT, EmployeeID INT, TestCreatedOn VARCHAR(MAX))
-Insert into @FutureQCSample (SampleID,EmployeeID, TestCreatedOn)
-Select main.SampleID, main.EmployeeID, main.TestCreatedOn
-FROM
-(Select
-	st.SampleID, st.EmployeeID, fs.TestCreatedOn, ROW_NUMBER() OVER (Partition By st.SampleID Order By fs.TestCreatedOn DESC) [OrderIdentifier] --NEED TO MAKE THIS STUFF
-FROM
-	@SampleTable st
-	INNER JOIN @FutureSamples fs ON st.SampleID=fs.SampleID AND fs._name='AnalysisQC'
-Where
-	st._name = 'AnalysisTest'
-) main
-Where
-	main.OrderIdentifier=1
-
---DECLARE A TABLE VALUE SO WE CAN TALLY UP POINTS
-DECLARE @ResultSet TABLE (EmployeeID INT,[otSampleTestID] INT,[OriginalAnalystEmployeeID] INT,[qcEmployeeID] INT,[stSampleTestID] INT,[qcSampleTestID] INT,[Test No] INT,[SampleID] INT,[analysed] INT,[OriginalAnalystName] VARCHAR(MAX),[qc] INT,[datasaved] BIT,[qcdInFuture] INT,[sampleTestCollectionSessionID] INT,[sampleref] VARCHAR(MAX),[totalsofar] INT,[rownumber] INT,[OverMaxPoints] INT,[Points] INT, [Star] BIT,[sampleClassificationDetails] VARCHAR(MAX),[sampleresultdetails] VARCHAR(MAX),[loggedSampleClassificationExtendedID] INT,[loggedSampleClassificationID] INT,[loggedSampleResultID] INT,[testCreatedOn] DATE,[JobID] INT,[jobno] VARCHAR(MAX),[FullName] VARCHAR(MAX),[Approved] INT,[allowcheck] INT,[futuredates_string] VARCHAR(MAX),[CreatedDate] DATE,[AnalysedToday] INT,[qcdToday] INT,[otCreatedDate] DATE)
-Insert into @ResultSet (EmployeeID,[OriginalAnalystEmployeeID],[qcEmployeeID],[otSampleTestID],[stSampleTestID],[qcSampleTestID],[Test No],[SampleID],[analysed],[OriginalAnalystName],[qc],[datasaved],[qcdInFuture],[sampleTestCollectionSessionID],[sampleref],[totalsofar],[rownumber],[OverMaxPoints],[Points],[Star],[sampleClassificationDetails],[sampleresultdetails],[loggedSampleClassificationExtendedID],[loggedSampleClassificationID],[loggedSampleResultID],[testCreatedOn],[JobID],[jobno],[FullName],[Approved],[allowcheck],[futuredates_string],[CreatedDate],[AnalysedToday],[qcdToday],[otCreatedDate])
-Select 
-	e.EmployeeID,
-	OriginalAnalyst.EmployeeID [OriginalAnalystEmployeeID],
-	qc.EmployeeID [qcEmployeeID],
-	ot.SampleTestID [otSampleTestID],
-	st.SampleTestID [stSampleTestID],
-	CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END [qcSampleTestID],
-	ROW_NUMBER() OVER (Partition By e.FullName Order by s.DateAnalysed) [Test No],
-	st.SampleID,
-	CASE WHEN (((IsNull(ot.EmployeeID,0) = st.EmployeeID) AND st.CreatedDate = ot.CreatedDate) OR (ot.EmployeeID = qc.EmployeeID)) THEN 1 ELSE 0 END [analysed],
-	OriginalAnalyst.FullName [OriginalAnalystName],
-	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 1 ELSE 0 END [qc],
-	CASE WHEN st.SampleTestID=IsNull(qc.SampleTestID,st.SampleTestID) AND IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND (stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef) THEN 1 ELSE 0 END [datasaved], -- NO LONGER USED?
-	CASE WHEN fqc.EmployeeID IS NULL THEN 0 ELSE 1 END [qcdInFuture],
-	stcs.sampleTestCollectionSessionID,
-	s.SampleRef [sampleref],
-	NULL [totalsofar],
-	sar.RowNumber [rownumber],
-	--SUM(sar.RowNumber) OVER(PARTITION BY e.FullName ORDER BY s.DateAnalysed ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)  -- ONLY 2012 :/
-	NULL as [OverMaxPoints],
-	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) AND ot.CreatedDate=st.CreatedDate THEN scePoints.Points * 2 ELSE scePoints.Points END [Points],
-	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) THEN 1 ELSE 0 END [Star],
-	sce.SampleClassification [sampleClassificationDetails],
-	sr.SampleResult [sampleresultDetails],
-	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationExtendedID END [loggedSampleClassificationExtendedID],
-	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationID END [loggedSampleClassificationID],
-	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleResultID END [loggedSampleResultID],
-	dbo.formatteamsdate(st.CreatedDate,1) [testCreatedOn],
-	j.JobID [JobID],
-	dbo.FormatTeamsReference('J',j.JobNo) [jobno],
-	e.FullName,
-	case when (not j.SampleResultEmployeeID IS NULL AND not j.SampleContentEmployeeID IS NULL) then 1 else 0 end [Approved],
-	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 0 ELSE 1 END [allowcheck],
-	IsNull(fqc.TestCreatedOn,'') [futuredates_string],
-	st.CreatedDate [CreatedDate],
-	CASE WHEN ot.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [AnalysedToday],
-	CASE WHEN qc.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [qcdToday],
-	ot.CreatedDate [otCreatedDate]
-FROM 
-	@SampleTable st
-	LEFT OUTER JOIN @OriginalTest ot ON st.SampleID = ot.SampleID
-	LEFT OUTER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = ot.EmployeeID
-	
-	LEFT OUTER JOIN @SampleAllResult sar ON st.SampleID=sar.SampleID
-	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.SampleTestCollectionSessionID=sar.SampleTestCollectionSessionID
-	
-	LEFT OUTER JOIN @QCSample qc ON st.SampleID=qc.SampleID-- AND qc.EmployeeID=st.EmployeeID
-	
-	
-	LEFT OUTER JOIN @FutureQCSample fqc ON fqc.SampleID=st.SampleID
-		AND fqc.TestCreatedOn > cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-	
-	INNER JOIN Employee e ON st.EmployeeID = e.EmployeeID
-	INNER JOIN Sample s ON s.SampleID = st.SampleID
-	
-	
-	--INNER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = s.EmployeeID
-	INNER JOIN Room rm ON rm.RoomID = s.RoomID
-	INNER JOIN Register r ON rm.RegisterID=r.RegisterID
-	INNER JOIN JobEmployee je ON r.JobEmployeeID = je.JobEmployeeID
-	INNER JOIN Job j ON je.JobID = j.JobID
-	
-	LEFT OUTER JOIN SampleClassificationExtended sce ON sce.SampleClassificationExtendedID = s.SampleClassificationExtendedID
-	LEFT OUTER JOIN SampleResult sr ON sr.SampleResultID = s.SampleResultID
-	
-	LEFT OUTER JOIN SampleClassificationExtendedPoints scePoints  ON scePoints.SampleClassificationExtendedPointsID=s.SampleClassificationExtendedPointsID
-	
-Where 
-	OrderIdentifier = 1
-		AND
-	(
-		CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) THEN 
-			CASE WHEN ot.EmployeeID=qc.EmployeeID THEN CASE WHEN st.EmployeeID = qc.EmployeeID THEN 1 ELSE 0 END ELSE 1 END
-		ELSE 
-			1
-		END = 1
-	)
-		AND
-	(st.EmployeeID = @employeeid OR @employeeid = 0)
-
-/*
-	Select 
-		checked.SampleID
-	FROM
-		@ResultSet rs
-		OUTER APPLY
-		(
-			Select EmployeeID, SampleID, MAX(qcdToday) [qcdToday]
-			FROM
-			(Select EmployeeID,SampleID, 1 [qcdToday] FROM @QCSample
-				UNION
-			Select EmployeeID,SampleID, 0 [qcdToday] FROM @FutureQCSample) main
-			Where
-				rs.SampleID = main.SampleID AND rs.qc=0
-				AND
-				(
-					(main.EmployeeID != rs.EmployeeID AND main.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND main.EmployeeID = rs.EmployeeID)
-				)
-			Group By EmployeeID, SampleID
-		) checked
-	Where rs.EmployeeID=8 AND checked.SampleID IS NOT NULL
-*/	
-
-	If @mode = 0 BEGIN
-		DECLARE @Mode0Table TABLE ([_day] DATETIME,[c] INT,[qcd] INT,[qcdone] INT,[points] INT,[EmployeeID] INT,[FullName] VARCHAR(MAX),[QCCountNeededMethod1] INT, [QCCountNeededMethod1_Outstanding] INT, [QCCountNeededMethod2] INT, [QCCountNeededMethod2_Outstanding] INT, [checked_count] INT, [samplecount] INT, [ac] INT)
-		Insert into @Mode0Table
-		Select 
-			main._day,
-			SUM(main.c) [c],
-			SUM(main.qcd) [qcd],
-			SUM(main.qcdone) [qcdone],
-			SUM(main.points) [points],
-			main.EmployeeID [EmployeeID],
-			main.FullName [FullName],
-			--MIN(main.MaxPoints),
-			CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod1],
-			CASE WHEN  CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END > 0 THEN
-				CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) ElSE 0 END - SUM(main.checked_count)
-			ELSE
-				0
-			END [QCCountNeededMethod1_Outstanding],
-			--SUM(main.QCCountNeededMethod1_Outstanding - main.checked_count) [QCCountNeededMethod1_Outstanding],
-			CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod2],
-			SUM(CASE WHEN main.QCCountNeededMethod2_Outstanding - main.checked_count > 0 THEN main.QCCountNeededMethod2_Outstanding - main.checked_count ELSE 0 END) [QCCountNeededMethod2_Outstanding],
-			IsNull(SUM(main.checked_count),0) [checked_count],
-			IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) [samplecount],
-			ISNULL(SUM(main.ac),0) [ac]
-			--*/
-		FROM
-		(
-			Select
-				a.allEmployees,
-				a._day,
-				CASE WHEN ISNULL(inner_main.c,qconly.c) > 0 THEN ISNULL(inner_main.c,qconly.c) ELSE 0 END [c],
-				CASE WHEN qconly.qcd IS NOT NULL THEN IsNull(inner_main.qcd,qconly.qcdone) ELSE qconly.qcdone END [qcd],
-				ISNULL(inner_main.qcdone,0) [qcdone],
-				ISNULL(inner_main.points,0) [points],
-				a.allEmployees [EmployeeID],
-				e.FullName,
-				inner_main.MaxPoints,
-				ISNULL(inner_main.QCCountNeededMethod1,qconly.QCCountNeededMethod1) [QCCountNeededMethod1],
-				CASE WHEN inner_main.QCCountNeededMethod1_Outstanding > 0 THEN inner_main.QCCountNeededMethod1_Outstanding ELSE 0 END [QCCountNeededMethod1_Outstanding],
-				ISNULL(inner_main.QCCountNeededMethod2,qconly.QCCountNeededMethod2) [QCCountNeededMethod2],
-				CASE WHEN inner_main.QCCountNeededMethod2_Outstanding > 0 THEN inner_main.QCCountNeededMethod2_Outstanding ELSE 0 END [QCCountNeededMethod2_Outstanding],
-				--ISNULL(CASE WHEN IsNull(inner_main.qcd,qconly.qcd) > 0 THEN checked.[count] END,0)
-				inner_main.checked [checked_count],
-				inner_main.samplecount [samplecount],
-				inner_main.ac+qconly.ac [ac]
-			FROM
-			(
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],EmployeeID [allEmployees] FROM @ResultSet
-					UNION
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],OriginalAnalystEmployeeID [allEmployees] FROM @ResultSet
-			) a
-			INNER JOIN Employee e ON e.EmployeeID = a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					SUM(rs.Analysed) [c],
-					ISNULL(qcd.qcd,0) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.EmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					MIN(CASE WHEN rs.OverMaxPoints = 1 THEN rs.totalsofar ELSE 99999 END) [MaxPoints],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					SUM(CASE WHEN rs.OriginalAnalystEmployeeID <> rs.qcEmployeeID THEN 1 ELSE 0 END) [checked_count],
-					CEILING(COUNT(
-						CASE WHEN rs.totalsofar > @maxpoints Then
-							rs.SampleID
-						End)) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac],
-					--SUM(CASE WHEN (checked.EmployeeID != rs.EmployeeID AND checked.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND checked.EmployeeID = rs.EmployeeID) Then 1 ELSE 0 END) [checked]
-					COUNT(checked.SampleID) [checked]
-				FROM
-					(
-						Select 
-							rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[OriginalAnalystName],rs.Analysed,rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],
-							CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],
-							rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
-						FROM 
-							@ResultSet rs
-							INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
-						GROUP BY
-							rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
-					) rs
-					OUTER APPLY
-					(
-						Select EmployeeID, SampleID, MAX(qcdToday) [qcdToday]
-						FROM
-						(Select EmployeeID,SampleID, 1 [qcdToday] FROM @QCSample
-							UNION
-						Select EmployeeID,SampleID, 0 [qcdToday] FROM @FutureQCSample) main
-						Where
-							rs.SampleID = main.SampleID AND rs.qc=0
-							AND
-							(
-								(main.EmployeeID != rs.EmployeeID AND main.qcdToday=1) --OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND main.EmployeeID = rs.EmployeeID)
-									OR 
-								((rs.AnalysedToday = 1 OR rs.qcdInFuture = 1) AND main.EmployeeID = rs.EmployeeID)
-							)
-							--AND
-							--main.EmployeeID = rs.EmployeeID
-						Group By EmployeeID, SampleID
-					) checked
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 --OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.OriginalAnalystEmployeeID
-					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID AND rs.qc=0
-				Group By
-					rs.CreatedDate,rs.FullName,rs.EmployeeID,qcd.qcd,qcd.self_qcd
-			) inner_main ON inner_main.EmployeeID=a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
-					COUNT(rs.SampleID) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.OriginalAnalystEmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					0 [checked_count],
-					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End)) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac]
-				FROM
-					(
-						Select 
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName] [FullName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],0 [totalsofar],rs.[rownumber],0 [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-						GROUP BY
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.EmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.EmployeeID
-					) qcd ON rs.OriginalAnalystEmployeeID=qcd.EmployeeID
-				Group By
-					rs.CreatedDate,rs.FullName,rs.OriginalAnalystEmployeeID,qcd.qcd,qcd.self_qcd
-			) qconly  ON qconly.EmployeeID=a.allEmployees
-		) main
-		GROUP BY
-			main.[_day],main.EmployeeID,main.FullName
-		Order By
-			main.EmployeeID
-		
-		If @forceUpdateCounts = 1 AND @employeeid = 0 BEGIN
-			DECLARE @QCOutstandingCountByDayID INT = (Select top 1 QCOutstandingCountByDayID FROM QCOutstandingCountByDay Where theDay=@internalstartdate)
-			IF(@QCOutstandingCountByDayID = 0) BEGIN
-				Insert into QCOutstandingCountByDay (theDay,Total) Select m0t._day,SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @Mode0Table m0t GROUP BY m0t._day
-			END
-			IF(@QCOutstandingCountByDayID > 0) BEGIN
-				DECLARE @CurrentTotal INT = (Select Total FROM QCOutstandingCountByDay Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID)
-				If ((Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @Mode0Table m0t GROUP BY m0t._day) != @CurrentTotal) BEGIN
-					Update QCOutstandingCountByDay Set Total = (Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @Mode0Table m0t GROUP BY m0t._day) Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID
-				END
-			END		
-		END	
-		
-		Select * FROM @Mode0Table m0t Where (m0t.EmployeeID = @employeeid OR @employeeid=0) Order by m0t.EmployeeID
-	END
-	
-	If @mode = 1 BEGIN
-		Select 
-			rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],
-			--rs.[sampleTestCollectionSessionID],
-			--rs.otSampleTestID,
-			--rs.stSampleTestID,
-			--rs.qcSampleTestID,
-			rs.[sampleref],
-			CAST(SUM(rs2.[Points]) as varchar) + CASE WHEN rs.[Star] = 1 THEN '*' ELSE '' END [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-			CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-				RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-			ELSE
-				CONVERT(varchar(11), rs.[testCreatedOn], 106)
-			END [testCreatedOn]
-			,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string]
-		FROM 
-			@ResultSet rs
-			INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
-		GROUP BY
-			rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleTestCollectionSessionID],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string]
-			--,rs.otSampleTestID,
-			--rs.stSampleTestID,
-			--rs.qcSampleTestID
-		Order By
-			--rs.rownumber,
-			rs.FullName
-			, rs.rownumber
-	END
-
-	If @mode = 2 BEGIN
-			Select
-				main._day,SUM(main.QCCountNeededMethod1),SUM(main.QCCountNeededMethod2)
-			FROM
-			(
-			Select
-					CAST(rs.CreatedDate as DATETIME) [_day],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2]
-				FROM
-					(
-						Select 
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-							INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber AND rs.CreatedDate=rs2.CreatedDate
-						GROUP BY
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.CreatedDate,qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 --OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.CreatedDate,qc.OriginalAnalystEmployeeID
-					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID AND rs.CreatedDate=qcd.CreatedDate
-				Group By
-					rs.CreatedDate,rs.EmployeeID
-			) main
-		GROUP BY
-			main._day
-	END
-	
-	
-	If @mode = 3 BEGIN
-		Select 
-			main._day,
-			SUM(CASE WHEN main.QCCountNeededMethod2_Outstanding > 0 THEN main.QCCountNeededMethod2_Outstanding ELSE 0 END) [c]
-		FROM
-		(
-			Select
-				a._day,
-				CASE WHEN inner_main.c > 0 THEN inner_main.c ELSE 0 END [c],
-				IsNull(inner_main.qcd,qconly.qcd) [qcd],
-				ISNULL(inner_main.qcdone,qconly.qcdone) [qcdone],
-				ISNULL(inner_main.points,qconly.points) [points],
-				a.allEmployees [EmployeeID],
-				e.FullName,
-				ISNULL(inner_main.QCCountNeededMethod1,qconly.QCCountNeededMethod1) [QCCountNeededMethod1],
-				CASE WHEN inner_main.QCCountNeededMethod1_Outstanding > 0 THEN inner_main.QCCountNeededMethod1_Outstanding ELSE 0 END [QCCountNeededMethod1_Outstanding],
-				ISNULL(inner_main.QCCountNeededMethod2,qconly.QCCountNeededMethod2) [QCCountNeededMethod2],
-				CASE WHEN inner_main.QCCountNeededMethod2_Outstanding > 0 THEN inner_main.QCCountNeededMethod2_Outstanding ELSE 0 END [QCCountNeededMethod2_Outstanding],
-				ISNULL(inner_main.checked_count,qconly.checked_count) [checked_count],
-				ISNULL(inner_main.samplecount,qconly.samplecount) [samplecount],
-				ISNULL(inner_main.ac,qconly.ac) [ac]
-			FROM
-			(
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],EmployeeID [allEmployees] FROM @ResultSet
-					UNION
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],OriginalAnalystEmployeeID [allEmployees] FROM @ResultSet
-			) a
-			INNER JOIN Employee e ON e.EmployeeID = a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
-					ISNULL(qcd.qcd,0) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.EmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					ISNULL(qcd.self_qcd,0) [checked_count],
-					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) * @ceilingpercentage) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac]
-				FROM
-					(
-						Select 
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-							INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
-						GROUP BY
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.OriginalAnalystEmployeeID
-					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID
-				Group By
-					rs.CreatedDate,rs.FullName,rs.EmployeeID,qcd.qcd,qcd.self_qcd
-			) inner_main ON inner_main.EmployeeID=a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
-					COUNT(rs.SampleID) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.OriginalAnalystEmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					ISNULL(qcd.self_qcd,0) [checked_count],
-					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) * @ceilingpercentage) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac]
-				FROM
-					(
-						Select 
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName] [FullName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],0 [totalsofar],rs.[rownumber],0 [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-						GROUP BY
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.EmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.EmployeeID
-					) qcd ON rs.OriginalAnalystEmployeeID=qcd.EmployeeID
-				Group By
-					rs.CreatedDate,rs.FullName,rs.OriginalAnalystEmployeeID,qcd.qcd,qcd.self_qcd
-			) qconly  ON qconly.EmployeeID=a.allEmployees
-		) main
-		Group By
-			main._day
-	END
-	
-	END
-
-SET NOCOUNT OFF
-
-END
-
-GO
-
-
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'QualityControlSampleList_2') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[QualityControlSampleList_2] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-/*    ==Scripting Parameters==
-
-    Source Server Version : SQL Server 2008 (10.0.1600)
-    Source Database Engine Edition : Microsoft SQL Server Standard Edition
-    Source Database Engine Type : Standalone SQL Server
-
-    Target Server Version : SQL Server 2008
-    Target Database Engine Edition : Microsoft SQL Server Standard Edition
-    Target Database Engine Type : Standalone SQL Server
-*/
-
-USE [TEAMS]
-GO
-
-/****** Object:  StoredProcedure [dbo].[QualityControlSampleList_2]    Script Date: 28/03/2019 14:26:47 ******/
-SET ANSI_NULLS ON
-GO
-
-SET QUOTED_IDENTIFIER ON
-GO
-
-ALTER PROCEDURE [dbo].[QualityControlSampleList_2]
-    @startdate [datetime] =NULL,
-    @enddate [datetime] =NULL,
-    @clientid [int] =NULL,
-    @ProjectId int =NULL,
-    @siteid int =NULL,
-    @employeeid int= 0,
-    @mode int = 1,
-    @forceUpdateCounts bit = 1
-AS
-BEGIN
-set transaction ISOLATION level READ uncommitted 
-
-SET NOCOUNT ON 
---update QCOutnstandingCountByDay for some bizare reason!
-DECLARE @internalstartdate [datetime],@internalenddate [datetime]
-
-DECLARE @maxpoints int
-SET @maxpoints = (SELECT Max(i__MaxDailyPoints) FROM Config)
-
-DECLARE @ceilingpercentage decimal(5, 3)
-SET @ceilingpercentage = (SELECT Max(i__QcCeilingPercentage) FROM Config)
-
-SET @internalstartdate = @startdate
-SET @internalenddate = @enddate
-
-IF @employeeid IS NULL
-BEGIN
-	set @employeeid = 0
-END
-
-IF @internalstartdate IS NULL 
-BEGIN
-    set @internalstartdate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 00:00:00' as datetime)
-END 
-
-IF @internalenddate IS NULL 
-BEGIN
-    set @internalenddate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 23:59:59' as datetime)
-END 
-
-if (CONVERT(VARCHAR(8),@internalenddate,108) = '00:00:00')
-begin 
-    set @internalenddate = cast(CONVERT(VARCHAR(11),@internalenddate,106) + ' 23:59:59' as datetime)
-END 
-
-If @mode = 3 BEGIN
-	Select
-		rs.theDay  [_day],
-		rs.Total [c]	
-	FROM
-		QCOutstandingCountByDay rs
-	Where 
-		rs.theDay = @internalstartdate
-END
-
-
-If @mode < 3 BEGIN
-
-DECLARE @SampleTable TABLE (SessionRef VARCHAR(50),SampleID INT, OrderIdentifier INT, TimeIdentifier INT,CreatedDate DATE,CreatedDateTime DATETIME, sampleTestCollectionID INT, SampleTestID INT,datasaved INT, _name VARCHAR(MAX), EmployeeID INT)
-Insert into @SampleTable (SessionRef,SampleID,OrderIdentifier, TimeIdentifier,CreatedDate,CreatedDateTime,sampleTestCollectionID,SampleTestID,datasaved,_name,EmployeeID)
-SELECT 
-	test_st._sessionRef,
-	test_st._sampleID,
-	ROW_NUMBER() OVER (Partition By test_st._sampleID,test_st._EmployeeID Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [OrderIdentifier],
-	ROW_NUMBER() OVER (Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [TimeIdentifier],
-	[test_st].[_testCreatedOn] [_testCreatedOn],
-	[test_st].[_testCreatedOn] [_testCreatedOn],
-    test_st.[sampleTestCollectionID],
-    test_st.[sampleTestID],
-    test_st._wasSaved [datasaved],
-    [test_st].[_name],
-    [test_st]._employeeID
-FROM 
-    sampletest test_st 
-    INNER JOIN Sample s ON test_st._sampleID=s.SampleID
-    INNER JOIN SampleTestCollection stc ON test_st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
-    LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = test_st.sampleTestCollectionID
-		AND
-		test_st._SessionRef = stcs.sessionref
-WHERE
-    ((test_st.[_name] ='AnalysisTest') OR (test_st.[_name] ='AnalysisQC'))
-    AND (test_st.[_testCancelledOn] IS NULL)
-    AND [test_st].[_wasSaved] = 1
-    AND ([test_st].[_testCreatedOn] BETWEEN @internalstartdate AND @internalenddate) 
-    AND (test_st._employeeID = @employeeid OR @employeeid = 0)
-Order By
-	test_st._sampleID
-
-DECLARE @SampleRowNumber TABLE (SampleID INT, RowNumber INT)
-Insert into @SampleRowNumber (SampleID, RowNumber)
-Select
-	st.SampleID, ROW_NUMBER() OVER (PARTITION BY MAX(st.CreatedDate) ORDER BY MAX(st.CreatedDateTime), MAX(st.SampleTestID)) [rownumber]
-FROM 
-	@SampleTable st
-GROUP BY
-	st.SampleID
-
-DECLARE @OriginalTest TABLE (SampleTestID INT,SampleID INT, EmployeeID INT, CreatedDate DATE, Analysed DATETIME)
-Insert into @OriginalTest (SampleTestID,SampleID,EmployeeID,CreatedDate,Analysed)
-Select main.SampleTestID,main.SampleID, main.EmployeeID, main.CreatedDate, main.Analysed
-FROM
-(Select
-	_ori.SampleTestID,ROW_NUMBER() OVER (PARTITION BY st.SampleID ORDER BY _ori._testCreatedOn DESC) [OrderIdentifier],st.SampleID, _ori._employeeID [EmployeeID], _ori._testCreatedOn [CreatedDate], stcs.sample_dateanalysed [Analysed]
-FROM
-	@SampleTable st 
-	LEFT OUTER JOIN SampleTest _ori ON st.SampleID=_ori._sampleID 
-	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
-		AND
-		st.SessionRef = stcs.sessionref
-Where
-	_ori._testCreatedOn <= st.CreatedDateTime
-		AND
-	_ori._name = 'AnalysisTest' --AND 
-) main
-Where
-	main.OrderIdentifier=1
-
-DECLARE @SampleAllResult TABLE (SampleID INT, _testCreatedOn DATE, RowNumber INT,sampleTestCollectionSessionID INT)
-Insert into @SampleAllResult (SampleID, RowNumber,sampleTestCollectionSessionID)
-Select
-	srn.SampleID, srn.RowNumber [rownumber],MAX(stcs.sampleTestCollectionSessionID)
-FROM
-	@SampleRowNumber srn
-	INNER JOIN @SampleTable st ON srn.SampleID=st.SampleID
-	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
-		AND
-		st.SessionRef = stcs.sessionref
-		AND
-		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-Group By
-	srn.SampleID,srn.RowNumber
-
-DECLARE @QCSample TABLE (SampleTestID INT,SampleID INT, EmployeeID INT,sampleTestCollectionSessionID INT, Analysed DATETIME)
-Insert into @QCSample (SampleTestID,SampleID,EmployeeID,sampleTestCollectionSessionID,Analysed)
-Select 
-	main.SampleTestID, main.SampleID, main.EmployeeID, main.sampleTestCollectionSessionID, main.Analysed
-FROM
-(Select
-	st.SampleTestID,st.SampleID, st.EmployeeID,stcs.sampleTestCollectionSessionID, stcs.sample_dateanalysed [Analysed],
-	ROW_NUMBER() OVER (Partition By st.SampleID Order By st.CreatedDateTime DESC) [OrderIdentifier]
-FROM
-	@SampleTable st
-	INNER JOIN SampleTestCollection stc ON st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
-	INNER JOIN SampleTestCollectionSession stcs ON 
-		stcs.sampleTestCollectionID = st.sampleTestCollectionID
-			AND
-		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-		--	AND 
-		--stcs.sessionref = st.SessionRef
-Where
-	st._name = 'AnalysisQC'
-) main
-Where main.OrderIdentifier=1
-
-DECLARE @FutureSamples TABLE (SampleID INT, EmployeeID INT, _name VARCHAR(MAX), TestCreatedOn DATETIME)
-Insert into @FutureSamples
-Select main._SampleID, main._EmployeeID, main._Name, main._TestCreatedOn
-FROM
-(
-Select
-	test_st._sampleID, test_st._employeeID, test_st._name, test_st._testCreatedOn
-FROM
-	sampletest test_st
-	INNER JOIN @SampleTable st ON st.SampleID=test_st._SampleID
-Where
-	test_st._testCancelledOn IS NULL
-) main
-
-
-DECLARE @FutureQCSample TABLE (SampleID INT, EmployeeID INT, TestCreatedOn VARCHAR(MAX))
-Insert into @FutureQCSample (SampleID,EmployeeID, TestCreatedOn)
-Select main.SampleID, main.EmployeeID, main.TestCreatedOn
-FROM
-(Select
-	st.SampleID, st.EmployeeID, fs.TestCreatedOn, ROW_NUMBER() OVER (Partition By st.SampleID Order By fs.TestCreatedOn DESC) [OrderIdentifier] --NEED TO MAKE THIS STUFF
-FROM
-	@SampleTable st
-	INNER JOIN @FutureSamples fs ON st.SampleID=fs.SampleID AND fs._name='AnalysisQC'
-Where
-	st._name = 'AnalysisTest'
-) main
-Where
-	main.OrderIdentifier=1
-
---DECLARE A TABLE VALUE SO WE CAN TALLY UP POINTS
-DECLARE @ResultSet TABLE (EmployeeID INT,[otSampleTestID] INT,[OriginalAnalystEmployeeID] INT,[qcEmployeeID] INT,[stSampleTestID] INT,[qcSampleTestID] INT,[Test No] INT,[SampleID] INT,[analysed] INT,[OriginalAnalystName] VARCHAR(MAX),[qc] INT,[datasaved] BIT,[qcdInFuture] INT,[sampleTestCollectionSessionID] INT,[sampleref] VARCHAR(MAX),[totalsofar] INT,[rownumber] INT,[OverMaxPoints] INT,[Points] INT, [Star] BIT,[sampleClassificationDetails] VARCHAR(MAX),[sampleresultdetails] VARCHAR(MAX),[loggedSampleClassificationExtendedID] INT,[loggedSampleClassificationID] INT,[loggedSampleResultID] INT,[testCreatedOn] DATE,[JobID] INT,[jobno] VARCHAR(MAX),[FullName] VARCHAR(MAX),[Approved] INT,[allowcheck] INT,[futuredates_string] VARCHAR(MAX),[CreatedDate] DATE,[AnalysedToday] INT,[qcdToday] INT,[otCreatedDate] DATE)
-Insert into @ResultSet (EmployeeID,[OriginalAnalystEmployeeID],[qcEmployeeID],[otSampleTestID],[stSampleTestID],[qcSampleTestID],[Test No],[SampleID],[analysed],[OriginalAnalystName],[qc],[datasaved],[qcdInFuture],[sampleTestCollectionSessionID],[sampleref],[totalsofar],[rownumber],[OverMaxPoints],[Points],[Star],[sampleClassificationDetails],[sampleresultdetails],[loggedSampleClassificationExtendedID],[loggedSampleClassificationID],[loggedSampleResultID],[testCreatedOn],[JobID],[jobno],[FullName],[Approved],[allowcheck],[futuredates_string],[CreatedDate],[AnalysedToday],[qcdToday],[otCreatedDate])
-Select 
-	e.EmployeeID,
-	OriginalAnalyst.EmployeeID [OriginalAnalystEmployeeID],
-	qc.EmployeeID [qcEmployeeID],
-	ot.SampleTestID [otSampleTestID],
-	st.SampleTestID [stSampleTestID],
-	CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END [qcSampleTestID],
-	ROW_NUMBER() OVER (Partition By e.FullName Order by s.DateAnalysed) [Test No],
-	st.SampleID,
-	CASE WHEN (((IsNull(ot.EmployeeID,0) = st.EmployeeID) AND st.CreatedDate = ot.CreatedDate) OR (ot.EmployeeID = qc.EmployeeID)) THEN 1 ELSE 0 END [analysed],
-	OriginalAnalyst.FullName [OriginalAnalystName],
-	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 1 ELSE 0 END [qc],
-	CASE WHEN st.SampleTestID=IsNull(qc.SampleTestID,st.SampleTestID) AND IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND (stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef) THEN 1 ELSE 0 END [datasaved], -- NO LONGER USED?
-	CASE WHEN fqc.EmployeeID IS NULL THEN 0 ELSE 1 END [qcdInFuture],
-	stcs.sampleTestCollectionSessionID,
-	s.SampleRef [sampleref],
-	NULL [totalsofar],
-	sar.RowNumber [rownumber],
-	--SUM(sar.RowNumber) OVER(PARTITION BY e.FullName ORDER BY s.DateAnalysed ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)  -- ONLY 2012 :/
-	NULL as [OverMaxPoints],
-	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) AND ot.CreatedDate=st.CreatedDate THEN scePoints.Points * 2 ELSE scePoints.Points END [Points],
-	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) THEN 1 ELSE 0 END [Star],
-	sce.SampleClassification [sampleClassificationDetails],
-	sr.SampleResult [sampleresultDetails],
-	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationExtendedID END [loggedSampleClassificationExtendedID],
-	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationID END [loggedSampleClassificationID],
-	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleResultID END [loggedSampleResultID],
-	dbo.formatteamsdate(st.CreatedDate,1) [testCreatedOn],
-	j.JobID [JobID],
-	dbo.FormatTeamsReference('J',j.JobNo) [jobno],
-	e.FullName,
-	case when (not j.SampleResultEmployeeID IS NULL AND not j.SampleContentEmployeeID IS NULL) then 1 else 0 end [Approved],
-	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 0 ELSE 1 END [allowcheck],
-	IsNull(fqc.TestCreatedOn,'') [futuredates_string],
-	st.CreatedDate [CreatedDate],
-	CASE WHEN ot.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [AnalysedToday],
-	CASE WHEN qc.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [qcdToday],
-	ot.CreatedDate [otCreatedDate]
-FROM 
-	@SampleTable st
-	LEFT OUTER JOIN @OriginalTest ot ON st.SampleID = ot.SampleID
-	LEFT OUTER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = ot.EmployeeID
-	
-	LEFT OUTER JOIN @SampleAllResult sar ON st.SampleID=sar.SampleID
-	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.SampleTestCollectionSessionID=sar.SampleTestCollectionSessionID
-	
-	LEFT OUTER JOIN @QCSample qc ON st.SampleID=qc.SampleID-- AND qc.EmployeeID=st.EmployeeID
-	
-	
-	LEFT OUTER JOIN @FutureQCSample fqc ON fqc.SampleID=st.SampleID
-		AND fqc.TestCreatedOn > cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
-	
-	INNER JOIN Employee e ON st.EmployeeID = e.EmployeeID
-	INNER JOIN Sample s ON s.SampleID = st.SampleID
-	
-	
-	--INNER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = s.EmployeeID
-	INNER JOIN Room rm ON rm.RoomID = s.RoomID
-	INNER JOIN Register r ON rm.RegisterID=r.RegisterID
-	INNER JOIN JobEmployee je ON r.JobEmployeeID = je.JobEmployeeID
-	INNER JOIN Job j ON je.JobID = j.JobID
-	
-	LEFT OUTER JOIN SampleClassificationExtended sce ON sce.SampleClassificationExtendedID = s.SampleClassificationExtendedID
-	LEFT OUTER JOIN SampleResult sr ON sr.SampleResultID = s.SampleResultID
-	
-	LEFT OUTER JOIN SampleClassificationExtendedPoints scePoints  ON scePoints.SampleClassificationExtendedPointsID=s.SampleClassificationExtendedPointsID
-	
-Where 
-	OrderIdentifier = 1
-		AND
-	(
-		CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) THEN 
-			CASE WHEN ot.EmployeeID=qc.EmployeeID THEN CASE WHEN st.EmployeeID = qc.EmployeeID THEN 1 ELSE 0 END ELSE 1 END
-		ELSE 
-			1
-		END = 1
-	)
-		AND
-	(st.EmployeeID = @employeeid OR @employeeid = 0)
-
-/*
-	Select 
-		checked.SampleID
-	FROM
-		@ResultSet rs
-		OUTER APPLY
-		(
-			Select EmployeeID, SampleID, MAX(qcdToday) [qcdToday]
-			FROM
-			(Select EmployeeID,SampleID, 1 [qcdToday] FROM @QCSample
-				UNION
-			Select EmployeeID,SampleID, 0 [qcdToday] FROM @FutureQCSample) main
-			Where
-				rs.SampleID = main.SampleID AND rs.qc=0
-				AND
-				(
-					(main.EmployeeID != rs.EmployeeID AND main.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND main.EmployeeID = rs.EmployeeID)
-				)
-			Group By EmployeeID, SampleID
-		) checked
-	Where rs.EmployeeID=8 AND checked.SampleID IS NOT NULL
-*/	
-
-	If @mode = 0 BEGIN
-		DECLARE @Mode0Table TABLE ([_day] DATETIME,[c] INT,[qcd] INT,[qcdone] INT,[points] INT,[EmployeeID] INT,[FullName] VARCHAR(MAX),[QCCountNeededMethod1] INT, [QCCountNeededMethod1_Outstanding] INT, [QCCountNeededMethod2] INT, [QCCountNeededMethod2_Outstanding] INT, [checked_count] INT, [samplecount] INT, [ac] INT)
-		Insert into @Mode0Table
-		Select 
-			main._day,
-			SUM(main.c) [c],
-			SUM(main.qcd) [qcd],
-			SUM(main.qcdone) [qcdone],
-			SUM(main.points) [points],
-			main.EmployeeID [EmployeeID],
-			main.FullName [FullName],
-			--MIN(main.MaxPoints),
-			CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod1],
-			CASE WHEN  CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END > 0 THEN
-				CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) ElSE 0 END - SUM(main.checked_count)
-			ELSE
-				0
-			END [QCCountNeededMethod1_Outstanding],
-			--SUM(main.QCCountNeededMethod1_Outstanding - main.checked_count) [QCCountNeededMethod1_Outstanding],
-			CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod2],
-			SUM(CASE WHEN main.QCCountNeededMethod2_Outstanding - main.checked_count > 0 THEN main.QCCountNeededMethod2_Outstanding - main.checked_count ELSE 0 END) [QCCountNeededMethod2_Outstanding],
-			IsNull(SUM(main.checked_count),0) [checked_count],
-			IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) [samplecount],
-			ISNULL(SUM(main.ac),0) [ac]
-			--*/
-		FROM
-		(
-			Select
-				a.allEmployees,
-				a._day,
-				CASE WHEN ISNULL(inner_main.c,qconly.c) > 0 THEN ISNULL(inner_main.c,qconly.c) ELSE 0 END [c],
-				CASE WHEN qconly.qcd IS NOT NULL THEN IsNull(inner_main.qcd,qconly.qcdone) ELSE qconly.qcdone END [qcd],
-				ISNULL(inner_main.qcdone,0) [qcdone],
-				ISNULL(inner_main.points,0) [points],
-				a.allEmployees [EmployeeID],
-				e.FullName,
-				inner_main.MaxPoints,
-				ISNULL(inner_main.QCCountNeededMethod1,qconly.QCCountNeededMethod1) [QCCountNeededMethod1],
-				CASE WHEN inner_main.QCCountNeededMethod1_Outstanding > 0 THEN inner_main.QCCountNeededMethod1_Outstanding ELSE 0 END [QCCountNeededMethod1_Outstanding],
-				ISNULL(inner_main.QCCountNeededMethod2,qconly.QCCountNeededMethod2) [QCCountNeededMethod2],
-				CASE WHEN inner_main.QCCountNeededMethod2_Outstanding > 0 THEN inner_main.QCCountNeededMethod2_Outstanding ELSE 0 END [QCCountNeededMethod2_Outstanding],
-				--ISNULL(CASE WHEN IsNull(inner_main.qcd,qconly.qcd) > 0 THEN checked.[count] END,0)
-				inner_main.checked [checked_count],
-				inner_main.samplecount [samplecount],
-				inner_main.ac+qconly.ac [ac]
-			FROM
-			(
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],EmployeeID [allEmployees] FROM @ResultSet
-					UNION
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],OriginalAnalystEmployeeID [allEmployees] FROM @ResultSet
-			) a
-			INNER JOIN Employee e ON e.EmployeeID = a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					SUM(rs.Analysed) [c],
-					ISNULL(qcd.qcd,0) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.EmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					MIN(CASE WHEN rs.OverMaxPoints = 1 THEN rs.totalsofar ELSE 99999 END) [MaxPoints],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					SUM(CASE WHEN rs.OriginalAnalystEmployeeID <> rs.qcEmployeeID THEN 1 ELSE 0 END) [checked_count],
-					CEILING(COUNT(
-						CASE WHEN rs.totalsofar > @maxpoints Then
-							rs.SampleID
-						End)) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac],
-					--SUM(CASE WHEN (checked.EmployeeID != rs.EmployeeID AND checked.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND checked.EmployeeID = rs.EmployeeID) Then 1 ELSE 0 END) [checked]
-					COUNT(checked.SampleID) [checked]
-				FROM
-					(
-						Select 
-							rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[OriginalAnalystName],rs.Analysed,rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],
-							CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],
-							rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
-						FROM 
-							@ResultSet rs
-							INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
-						GROUP BY
-							rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
-					) rs
-					OUTER APPLY
-					(
-						Select EmployeeID, SampleID, MAX(qcdToday) [qcdToday]
-						FROM
-						(Select EmployeeID,SampleID, 1 [qcdToday] FROM @QCSample
-							UNION
-						Select EmployeeID,SampleID, 0 [qcdToday] FROM @FutureQCSample) main
-						Where
-							rs.SampleID = main.SampleID AND rs.qc=0
-							AND
-							(
-								(main.EmployeeID != rs.EmployeeID AND main.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND main.EmployeeID = rs.EmployeeID)
-							)
-						Group By EmployeeID, SampleID
-					) checked
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 --OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.OriginalAnalystEmployeeID
-					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID AND rs.qc=0
-				Group By
-					rs.CreatedDate,rs.FullName,rs.EmployeeID,qcd.qcd,qcd.self_qcd
-			) inner_main ON inner_main.EmployeeID=a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
-					COUNT(rs.SampleID) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.OriginalAnalystEmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					0 [checked_count],
-					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End)) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac]
-				FROM
-					(
-						Select 
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName] [FullName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],0 [totalsofar],rs.[rownumber],0 [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-						GROUP BY
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.EmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.EmployeeID
-					) qcd ON rs.OriginalAnalystEmployeeID=qcd.EmployeeID
-				Group By
-					rs.CreatedDate,rs.FullName,rs.OriginalAnalystEmployeeID,qcd.qcd,qcd.self_qcd
-			) qconly  ON qconly.EmployeeID=a.allEmployees
-		) main
-		GROUP BY
-			main.[_day],main.EmployeeID,main.FullName
-		Order By
-			main.EmployeeID
-		
-		If @forceUpdateCounts = 1 AND @employeeid = 0 BEGIN
-			DECLARE @QCOutstandingCountByDayID INT = (Select top 1 QCOutstandingCountByDayID FROM QCOutstandingCountByDay Where theDay=@internalstartdate)
-			IF(@QCOutstandingCountByDayID = 0) BEGIN
-				Insert into QCOutstandingCountByDay (theDay,Total) Select m0t._day,SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @Mode0Table m0t GROUP BY m0t._day
-			END
-			IF(@QCOutstandingCountByDayID > 0) BEGIN
-				DECLARE @CurrentTotal INT = (Select Total FROM QCOutstandingCountByDay Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID)
-				If ((Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @Mode0Table m0t GROUP BY m0t._day) != @CurrentTotal) BEGIN
-					Update QCOutstandingCountByDay Set Total = (Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @Mode0Table m0t GROUP BY m0t._day) Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID
-				END
-			END		
-		END	
-		
-		Select * FROM @Mode0Table m0t Where (m0t.EmployeeID = @employeeid OR @employeeid=0) Order by m0t.EmployeeID
-	END
-	
-	If @mode = 1 BEGIN
-		Select 
-			rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],
-			--rs.[sampleTestCollectionSessionID],
-			--rs.otSampleTestID,
-			--rs.stSampleTestID,
-			--rs.qcSampleTestID,
-			rs.[sampleref],
-			CAST(SUM(rs2.[Points]) as varchar) + CASE WHEN rs.[Star] = 1 THEN '*' ELSE '' END [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-			CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-				RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-			ELSE
-				CONVERT(varchar(11), rs.[testCreatedOn], 106)
-			END [testCreatedOn]
-			,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string]
-		FROM 
-			@ResultSet rs
-			INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
-		GROUP BY
-			rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleTestCollectionSessionID],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string]
-			--,rs.otSampleTestID,
-			--rs.stSampleTestID,
-			--rs.qcSampleTestID
-		Order By
-			--rs.rownumber,
-			rs.FullName
-			, rs.rownumber
-	END
-
-	If @mode = 2 BEGIN
-			Select
-				main._day,SUM(main.QCCountNeededMethod1),SUM(main.QCCountNeededMethod2)
-			FROM
-			(
-			Select
-					CAST(rs.CreatedDate as DATETIME) [_day],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2]
-				FROM
-					(
-						Select 
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-							INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber AND rs.CreatedDate=rs2.CreatedDate
-						GROUP BY
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.CreatedDate,qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 --OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.CreatedDate,qc.OriginalAnalystEmployeeID
-					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID AND rs.CreatedDate=qcd.CreatedDate
-				Group By
-					rs.CreatedDate,rs.EmployeeID
-			) main
-		GROUP BY
-			main._day
-	END
-	
-	
-	If @mode = 3 BEGIN
-		Select 
-			main._day,
-			SUM(CASE WHEN main.QCCountNeededMethod2_Outstanding > 0 THEN main.QCCountNeededMethod2_Outstanding ELSE 0 END) [c]
-		FROM
-		(
-			Select
-				a._day,
-				CASE WHEN inner_main.c > 0 THEN inner_main.c ELSE 0 END [c],
-				IsNull(inner_main.qcd,qconly.qcd) [qcd],
-				ISNULL(inner_main.qcdone,qconly.qcdone) [qcdone],
-				ISNULL(inner_main.points,qconly.points) [points],
-				a.allEmployees [EmployeeID],
-				e.FullName,
-				ISNULL(inner_main.QCCountNeededMethod1,qconly.QCCountNeededMethod1) [QCCountNeededMethod1],
-				CASE WHEN inner_main.QCCountNeededMethod1_Outstanding > 0 THEN inner_main.QCCountNeededMethod1_Outstanding ELSE 0 END [QCCountNeededMethod1_Outstanding],
-				ISNULL(inner_main.QCCountNeededMethod2,qconly.QCCountNeededMethod2) [QCCountNeededMethod2],
-				CASE WHEN inner_main.QCCountNeededMethod2_Outstanding > 0 THEN inner_main.QCCountNeededMethod2_Outstanding ELSE 0 END [QCCountNeededMethod2_Outstanding],
-				ISNULL(inner_main.checked_count,qconly.checked_count) [checked_count],
-				ISNULL(inner_main.samplecount,qconly.samplecount) [samplecount],
-				ISNULL(inner_main.ac,qconly.ac) [ac]
-			FROM
-			(
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],EmployeeID [allEmployees] FROM @ResultSet
-					UNION
-				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],OriginalAnalystEmployeeID [allEmployees] FROM @ResultSet
-			) a
-			INNER JOIN Employee e ON e.EmployeeID = a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
-					ISNULL(qcd.qcd,0) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.EmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					ISNULL(qcd.self_qcd,0) [checked_count],
-					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) * @ceilingpercentage) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac]
-				FROM
-					(
-						Select 
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-							INNER JOIN @ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
-						GROUP BY
-							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.OriginalAnalystEmployeeID
-					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID
-				Group By
-					rs.CreatedDate,rs.FullName,rs.EmployeeID,qcd.qcd,qcd.self_qcd
-			) inner_main ON inner_main.EmployeeID=a.allEmployees
-			LEFT OUTER JOIN 
-			(
-				Select
-					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
-					COUNT(rs.SampleID) [qcd],
-					SUM(rs.[qc]) [qcdone],
-					SUM(rs.Points) [points],
-					rs.OriginalAnalystEmployeeID [EmployeeID],
-					rs.FullName [FullName],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
-					ELSE
-						0
-					END [QCCountNeededMethod1],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN
-						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
-					Else
-						0
-					END [QCCountNeededMethod1_Outstanding],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
-					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
-					ISNULL(qcd.self_qcd,0) [checked_count],
-					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) * @ceilingpercentage) [samplecount],
-					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
-						rs.SampleID
-					End) [ac]
-				FROM
-					(
-						Select 
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName] [FullName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],0 [totalsofar],rs.[rownumber],0 [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
-							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
-								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
-							ELSE
-								CONVERT(varchar(11), rs.[testCreatedOn], 106)
-							END [testCreatedOn]
-							,rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
-						FROM 
-							@ResultSet rs
-						GROUP BY
-							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
-					) rs
-					LEFT OUTER JOIN 
-					(
-						Select 
-							qc.EmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
-						FROM
-							@ResultSet qc
-						Where
-							qc.qc = 1 OR qc.qcdInFuture = 1
-						GROUP BY
-							qc.EmployeeID
-					) qcd ON rs.OriginalAnalystEmployeeID=qcd.EmployeeID
-				Group By
-					rs.CreatedDate,rs.FullName,rs.OriginalAnalystEmployeeID,qcd.qcd,qcd.self_qcd
-			) qconly  ON qconly.EmployeeID=a.allEmployees
-		) main
-		Group By
-			main._day
-	END
-	
-	END
-
-SET NOCOUNT OFF
-
-END
-
-GO
 
 
 IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_Projects') < 1 BEGIN
@@ -25414,59 +22726,6 @@ BEGIN
 	
 END
 GO
-
-If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'EnterpriseSurveyDataValidationChecks') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[EnterpriseSurveyDataValidationChecks] AS BEGIN SET NOCOUNT ON; END')
-End
-
-GO
-
-ALTER PROCEDURE [dbo].[EnterpriseSurveyDataValidationChecks]
-		@JobID INT
-
-AS
-BEGIN
-    SET NOCOUNT ON;
-
-	INSERT INTO #Issues
-	SELECT
-		'Enterprise has gone bad' [IssueDescription],
-		0 [Required]
-
-    SET NOCOUNT OFF;
-END
-GO
-
-If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'SurveyDataValidationChecks') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[SurveyDataValidationChecks] AS BEGIN SET NOCOUNT ON; END')
-End
-
-GO
-
-ALTER PROCEDURE [dbo].[SurveyDataValidationChecks]
-	@JobID INT
-
-AS
-BEGIN
-    SET NOCOUNT ON;
-
-	CREATE TABLE #Issues (IssueDescription VARCHAR(MAX), [Required] BIT)	
-	--INSERT INTO #Issues (IssueDescription, [Required])
-	--SELECT 'No photo on sample', 1
-	
-	--EXEC EnterpriseSurveyDataValidationChecks @JobID = @JobID
-
-	SELECT
-		IssueDescription, [Required]
-	FROM
-		#Issues
-
-	--DROP TABLE #Issues
-
-    SET NOCOUNT OFF;
-END
-GO
-
 
 IF (not EXISTS (SELECT * FROM [TEAMS_IVF].INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='IVF_Import'))
 	BEGIN
@@ -48512,366 +45771,6 @@ From
 	LEFT JOIN SampleClassificationExtended sce WITH (NOLOCK) ON s.SampleClassificationExtendedID = sce.SampleClassificationExtendedID
 GO
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_ProjectJobSheetv2') < 1 BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[Paged_ProjectJobSheetv2] AS BEGIN SET NOCOUNT ON; END')
-END
-
-GO
-
-ALTER PROCEDURE [dbo].[Paged_ProjectJobSheetv2]
-	@PerPage INT = 15
-	, @CurrentPage INT = 1
-	, @ClientID INT = NULL
-	, @ProjectGroupID INT = NULL
-	, @ProjectID INT = NULL
-	, @SiteID INT = NULL
-	, @Status VARCHAR(24) = ''
-	, @Other VARCHAR(MAX) = ''
-	, @Address VARCHAR(200) = ''
-	, @PhoneCalls INT = NULL
-	, @Letters INT = NULL,
-	@NoAccessAttempts INT = NULL
-/**********************************************************************
-** Overview: Get data for the View Project JobSheet tab - procedurised
-**		to improve performance over previous code + add paging capability
-**
-** PLEASE NOTE: The Change Log has now been removed as this has been added to SQL SVN instead.
-** Please use the latest version from SVN before making changes. Commit the changes when done.
-**********************************************************************/
-AS
-SET ANSI_WARNINGS OFF
-BEGIN
-    SET NOCOUNT ON;
-    
-	-- tidy input variables
-	SELECT @ClientID = NULLIF(@ClientID, 0)
-	SELECT @ProjectGroupID = NULLIF(@ProjectGroupID, 0)
-	SELECT @ProjectID = NULLIF(@ProjectID, 0)
-	SELECT @SiteID = NULLIF(@SiteID, 0)
-	SELECT @Status = NULLIF(@Status, '')
-	SELECT @Other = NULLIF(@Other, '')
-	SELECT @Address = NULLIF(@Address, '')
-	SELECT @PhoneCalls = NULLIF(@PhoneCalls, 0)
-	SELECT @Letters = NULLIF(@Letters, 0)
-	SELECT @NoAccessAttempts = NULLIF(@NoAccessAttempts, 0)
-
-	-- ensure we have at least 1 filter ID (don't want to kill the server!)
-	IF (@ClientID IS NULL) AND (@ProjectGroupID IS NULL) AND (@ProjectID IS NULL) AND (@SiteID IS NULL) BEGIN
-		RAISERROR('No ID values passed to GetProjectJobSheet', 16, 1)
-		RETURN
-	END
-	
-	-- get ProjectIDs into a table to join to, based on @ProjectGroupID AND @ProjectID inputs
-	CREATE TABLE #ProjectIDs (ProjectID INT)
-	IF @ProjectID IS NOT NULL BEGIN
-	
-		INSERT
-			#ProjectIDs
-		SELECT
-			@ProjectID
-			
-	END ELSE BEGIN
-		
-		INSERT
-			#ProjectIDs
-		SELECT
-			ProjectID
-		FROM
-			Project
-		WHERE
-			ProjectGroupId = @ProjectGroupID
-	END
-	
-	-- change #ProjectIDs into a comma separated string of IDs 
-	DECLARE @ProjectIDsString VARCHAR(MAX)
-	SELECT @ProjectIDsString = STUFF 
-	((
-		SELECT ',' + CONVERT(VARCHAR(20), ProjectID)
-		FROM #ProjectIDs
-		FOR XML PATH('')
-	), 1, 1, '')
-
-	SELECT * INTO #ProjectJobSheet FROM ProjectJobSheet WHERE ProjectID IN (SELECT ProjectID FROM #ProjectIDs)
-	
-	-- select from existing ProjectJobSheet view into a temp table
-	CREATE TABLE #JobSheetData (
-		JobSheetDataID INT IDENTITY (1,1) NOT NULL
-		, AppointmentID INT NULL
-		, JobId INT NULL
-		, SurveyTypeId INT NULL
-		, ClientId INT NULL
-		, ProjectId INT NULL
-		, SiteId INT NULL
-		, SurveyCompleted INT NULL
-		, SurveyStillDue INT NULL
-		, Approved INT NULL
-		, SurveyOnTime INT NULL
-		, SurveyOverTime INT NULL
-		, Unscheduled INT NULL
-		, SurveyCompletedRaw NVARCHAR(40) NULL
-		, DueDateRaw NVARCHAR(40) NULL
-		, ApprovedRaw NVARCHAR(40) NULL
-		, SortOrder INT NOT NULL
-		, Samples INT NULL
-		, SampleResults INT NULL
-		, [Status] VARCHAR(24)
-		, Other VARCHAR(MAX)
-		, [Address] VARCHAR(200)
-		, PhoneCalls INT NULL
-		, Letters INT NULL
-		, NoAccessAttempts INT NULL
-		, StatusFilterTypeID INT NULL
-		, StatusFilterType VARCHAR(MAX) NULL
-	)
-	
-	/**************************************************************************************************************************************
-	-- NOTE - We are using dynamic SQL because the WHERE filters are still evaluated even if the parameter to be filtered on IS NULL, which
-	--   causes a hit on performance.  NOT ideal, but performance is more important than tidy code here!
-	**************************************************************************************************************************************/
-	DECLARE @DynamicSQL NVARCHAR(MAX)
-	SELECT @DynamicSQL = 'INSERT
-		#JobSheetData
-	SELECT
-		pjs.AppointmentID
-		, pjs.JobId
-		, pjs.SurveyTypeId
-		, pjs.ClientId
-		, pjs.ProjectId
-		, pjs.SiteId
-		, CASE WHEN NOT SurveyCompleted IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyCompleted
-		, CASE WHEN pjs.[Status] = ''Unscheduled'' OR SortOrder = 3 THEN 0 ELSE 1 END AS SurveyStillDue
-		, CASE WHEN NOT Approved IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS Approved
-		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) <= 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOnTime
-		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) > 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOverTime
-		, CASE WHEN pjs.[Status] = ''Unscheduled'' AND SortOrder <> 3 THEN 1 ELSE 0 END AS Unscheduled
-		, SurveyCompleted
-		, DueDate
-		, Approved
-		, SortOrder
-		, Samples
-		, SampleResults
-		, pjs.[Status]
-		, pjs.Other
-		, pjs.[Address]
-		, [PhoneCalls]
-		, [Letters]
-		, pjs.NoAccessAttempts
-		, s.StatusFilterTypeID
-		, sft.[Status] As StatusFilterType
-	FROM
-		#ProjectJobSheet pjs
-		LEFT JOIN Site s ON pjs.SiteId = s.SiteID
-		LEFT JOIN StatusFilterType sft ON s.StatusFilterTypeID = sft.StatusFilterTypeID
-	WHERE
-		pjs.ProjectID IN (' + @ProjectIDsString + ') '
-
-	-- add default order by
-	SELECT @DynamicSQL = @DynamicSQL + ' ORDER BY SortOrder, JobNo, Address'
-
-	-- execute the SQL
-	EXECUTE sp_executesql @DynamicSQL
-	
-	-- ClientID filter (not applied to view above as extra view filters slow performance)
-	IF @ClientID IS NOT NULL BEGIN
-		DELETE FROM #JobSheetData WHERE ClientID <> @ClientID
-	END
-	
-	-- SiteID filter (not applied to view above as extra view filters slow performance)
-	IF @SiteID IS NOT NULL BEGIN
-		DELETE FROM #JobSheetData WHERE SiteID <> @SiteID
-	END
-
-	-- @PhoneCalls filter (not applied to view above as extra view filters slow performance)
-	IF @PhoneCalls IS NOT NULL BEGIN
-		
-		IF @PhoneCalls > 3 BEGIN
-			DELETE FROM #JobSheetData WHERE PhoneCalls < 4
-		END
-
-		IF @PhoneCalls < 4 BEGIN
-			DELETE FROM #JobSheetData WHERE PhoneCalls <> @PhoneCalls
-		END
-	END
-
-	-- @Letters filter (not applied to view above as extra view filters slow performance)
-	IF @Letters IS NOT NULL BEGIN
-
-		IF @Letters > 3 BEGIN
-			DELETE FROM #JobSheetData WHERE Letters < 4
-		END
-
-		IF @Letters < 4 BEGIN
-			DELETE FROM #JobSheetData WHERE Letters <> @Letters
-		END
-	END
-	
-	-- @NoAccessAttempts filter (not applied to view above as extra view filters slow performance)
-	IF @NoAccessAttempts IS NOT NULL BEGIN
-
-		IF @NoAccessAttempts > 3 BEGIN
-			DELETE FROM #JobSheetData WHERE NoAccessAttempts < 4
-		END
-
-		IF @NoAccessAttempts < 4 BEGIN
-			DELETE FROM #JobSheetData WHERE NoAccessAttempts <> @NoAccessAttempts
-		END
-	END
-
-	-- calculate useful totals
-    DECLARE @SurveysCompleted INT
-    DECLARE @SurveysStillDue INT
-    DECLARE @Approved INT
-    DECLARE @SurveysOnTime INT
-    DECLARE @SurveysOverTime INT
-    DECLARE @UnScheduled INT
-    DECLARE @KPI DECIMAL(12,2)
-    DECLARE @TotalJobs_HasSampleResults INT
-    DECLARE @Approved_HasSampleResults INT
-    DECLARE @TotalRows INT
-    
-	SELECT
-		@SurveysCompleted = ISNULL(SUM(SurveyCompleted), 0)
-		, @SurveysStillDue = ISNULL(SUM(SurveyStillDue), 0) - ISNULL(SUM(SurveyCompleted), 0)
-		, @Approved = ISNULL(SUM(Approved), 0)
-		, @SurveysOnTime = ISNULL(SUM(SurveyOnTime), 0)
-		, @SurveysOverTime = ISNULL(SUM(SurveyOverTime), 0)
-		, @UnScheduled = ISNULL(SUM(UnScheduled), 0)
-		, @KPI = ISNULL(CASE WHEN COUNT(SurveyCompletedRaw) = 0 THEN 0 ELSE ROUND(SUM(CASE WHEN DueDateRaw > SurveyCompletedRaw AND SortOrder <> 3 THEN 1 ELSE 0 END)
-					/ CONVERT(FLOAT,COUNT(SurveyCompletedRaw)), 3) * 100 END, 0)
-		, @TotalRows = COUNT(1)
-	FROM 
-		#JobSheetData
-		
-	SELECT
-		@TotalJobs_HasSampleResults = ISNULL(SUM(CASE WHEN [Status] = 'Unscheduled' OR SortOrder = 3 THEN 0 ELSE 1 END), 0) 
-		, @Approved_HasSampleResults = ISNULL(SUM(CASE WHEN NOT ApprovedRaw IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END), 0)
-	FROM 
-		#JobSheetData
-	WHERE
-		Samples > 0
-		AND Samples = SampleResults
-	
-	-- return paged raw data to front end
-	-- NOTE - @Status, @Other and @Address filters only filter this data, not the count data
-	;WITH Paging AS 
-    ( 
-       SELECT 
-           CAST(CEILING(COUNT(*) OVER(PARTITION BY '') * 1.00 / @PerPage) AS INT) AS Pages
-           , ((ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) - 1) / @PerPage) + 1 AS Page
-           , ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) AS Row_Num
-           , *
-       FROM 
-       (
-			SELECT * FROM #JobSheetData jsd
-			WHERE
-				( (jsd.[Status] = @Status) OR (jsd.[StatusFilterType] = @Status) OR (@Status IS NULL) )
-				AND ( (jsd.Other = @Other) OR (@Other IS NULL) )
-				AND ( (jsd.[Address] = @Address) OR (@Address IS NULL) )
-	   ) a
-    )	
-	SELECT  
-		main.Pages
-		, main.Page
-		, main.Row_Num
-		, pjs.SortOrder
-		, pjs.AppointmentID
-		, pjs.[Status]
-		, pjs.StatusDate
-		, pjs.JobNo
-		, pjs.[Address]
-		, pjs.Postcode
-		, pjs.Contact
-		, pjs.Telephone
-		, pjs.SiteEmail
-		, pjs.JobId
-		, pjs.SurveyTypeId
-		, pjs.AppointmentDate
-		, pjs.DateSiteWorkComplete
-		, pjs.AnalysisComplete
-		, pjs.TotalJobs
-		, pjs.WorkScheduled
-		, pjs.SiteWorkComplete
-		, pjs.Samples
-		, pjs.SampleResults
-		, pjs.[FileName]
-		, pjs.ClientOrderNo
-		, pjs.DateReceived
-		, pjs.UPRN
-		, pjs.SurveyType
-		, pjs.Surveyor
-		, pjs.SurveyStart
-		, pjs.SurveyCompleted
-		, pjs.AnalysisCompleted
-		, pjs.Approved
-		, pjs.ApprovedBy
-		, pjs.DueDate
-		, pjs.NoAccessAttempts
-		, pjs.PhoneCalls
-		, pjs.Letters
-		, (SELECT STUFF(
-			(
-				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
-				FROM SiteContact sc2
-				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 1
-				FOR XML PATH('')
-			), 1, 1, '')) AS PhoneCallSiteContactIDs
-		, (SELECT STUFF(
-			(
-				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
-				FROM SiteContact sc2
-				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 2
-				FOR XML PATH('')
-			), 1, 1, '')) AS LetterSiteContactIDs
-		, pjs.GroupName
-		, pjs.ClientId
-		, pjs.ProjectId
-		, pjs.SiteId
-		, pjs.Other
-		, pjspa.ProjectAppointmentID
-		, pjs.LastNoAccessDate
-		, pjs.LastJobEmployeeDate
-		, pjs.QuoteId
-		, pjs.QuoteDate
-		, pjs.InvoiceDate
-		, main.StatusFilterTypeID
-		, main.StatusFilterType
-    FROM 
-		Paging main
-		INNER JOIN #ProjectJobSheet pjs 
-			ON ISNULL(main.AppointmentID, 0) = ISNULL(pjs.AppointmentID, 0)
-			AND ISNULL(main.JobID, 0) = ISNULL(pjs.JobID, 0)
-			AND ISNULL(main.SurveyTypeID, 0) = ISNULL(pjs.SurveyTypeID, 0)
-			AND ISNULL(main.ClientID, 0) = ISNULL(pjs.ClientID, 0)
-			AND ISNULL(main.ProjectID, 0) = ISNULL(pjs.ProjectID, 0)
-			AND ISNULL(main.SiteID, 0) = ISNULL(pjs.SiteID, 0)
-		LEFT JOIN Appointment pjspa ON pjs.AppointmentID = pjspa.AppointmentID
-    WHERE 
-		main.Row_Num BETWEEN (@CurrentPage - 1) * @PerPage + 1 AND @CurrentPage * @PerPage
-	ORDER BY
-		main.Row_Num
-	
-	-- drop temp tables
-	DROP TABLE #ProjectIDs
-	DROP TABLE #JobSheetData
-	
-	-- return useful counts to front end
-	SELECT
-		@SurveysStillDue AS WorkScheduled
-		, @SurveysStillDue AS SurveysStillDue
-		, @Approved AS Approved
-		, @SurveysOnTime AS SurveysOnTime
-		, @SurveysOverTime AS SurveysOverTime
-		, @UnScheduled AS UnScheduled
-		, @KPI AS KPI
-		, @TotalJobs_HasSampleResults - @Approved_HasSampleResults AS SampleAnalysisComplete
-		--, @SurveysCompleted - @TotalJobs_HasSampleResults - @Approved AS SiteWorkComplete
-		, @TotalRows - @UnScheduled - @SurveysStillDue - @TotalJobs_HasSampleResults + @Approved_HasSampleResults - @Approved AS SiteWorkComplete
-    
-    
-    SET NOCOUNT OFF;
-END
-GO
-
 Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 466,'Quote - Legionella Tap Descale',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Report -%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=466)=0
 Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 300,466,'Tap Descale','Tap Descale',GETDATE(),9,4 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=300)=0
 Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 467,'Report -  Legionella Tap Descale',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Report -%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=467)=0
@@ -50924,6 +47823,58 @@ GO
 INSERT INTO LegionellaAssetCategory (LegionellaAssetCategoryID,Description,TabName,DefaultAssetCode,SortOrder,Deleted) SELECT 73,'Combination Boiler','Combination Boiler','OCB',66, GETDATE() WHERE (SELECT COUNT(*) FROM LegionellaAssetCategory WHERE LegionellaAssetCategoryID=73)=0
 GO
 
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'DeleteDuplicatedElement_ByJob') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[DeleteDuplicatedElement_ByJob] AS BEGIN SET NOCOUNT ON; END')
+End
+GO
+
+ALTER PROCEDURE [dbo].[DeleteDuplicatedElement_ByJob]
+	@JobID INT
+WITH RECOMPILE
+AS
+BEGIN
+	SET NOCOUNT ON;
+	/*
+	Delete Element FROM  Element INNER JOIN 
+	(SELECT s.SampleID, DeleteE.retain_ElementID, DeleteE.ElementTypeID
+				FROM Job j
+				INNER JOIN JobEmployee je ON je.JobID = j.JobID
+				INNER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
+				INNER JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
+				INNER JOIN Room rm ON fp.FloorplanID = rm.FloorplanID
+				INNER JOIN Sample s ON s.RoomID = rm.RoomID
+				CROSS APPLY
+				(
+					Select MIN(e.ElementID) 'retain_ElementID', e.ElementTypeID FROM Element e Where e.SampleID=s.SampleID
+					GROUP BY e.SampleID,e.AirSampleID,e.ElementTypeID,e.ElementText, e.ElementDateTime,e.ElementIntID, e.ElementIntMeaningID, e.ElementIntMeaningExtendedID, e.ElementIntMeaningSubOptionID, e.RegisterID,e.AirTestID,e.RemovalID,e.ImportID
+					HAVING COUNT(e.ElementTypeID)>1
+				) DeleteE
+				WHERE j.JobID = @JobID
+	) Main ON Element.SampleID=Main.SampleID AND Main.ElementTypeID=Element.ElementTypeID
+	Where Element.ElementID NOT IN (Main.retain_ElementID)
+      
+	Delete Element FROM  Element INNER JOIN 
+	(
+	SELECT r.RegisterID, DeleteE.retain_ElementID, DeleteE.ElementTypeID
+				FROM Job j
+				INNER JOIN JobEmployee je ON je.JobID = j.JobID
+				INNER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
+				CROSS APPLY
+				(
+					Select MIN(e.ElementID) 'retain_ElementID', e.ElementTypeID FROM Element e Where e.RegisterID=r.RegisterID
+					GROUP BY e.SampleID,e.AirSampleID,e.ElementTypeID,e.ElementText, e.ElementDateTime,e.ElementIntID, e.ElementIntMeaningID, e.ElementIntMeaningExtendedID, e.ElementIntMeaningSubOptionID, e.RegisterID,e.AirTestID,e.RemovalID,e.ImportID
+					HAVING COUNT(e.ElementTypeID)>1
+				) DeleteE
+				WHERE j.JobID = @JobID
+	) 
+      
+	Main ON Element.RegisterID=Main.RegisterID AND Main.ElementTypeID=Element.ElementTypeID
+	Where Element.ElementID NOT IN (Main.retain_ElementID)
+	*/   
+	SET NOCOUNT OFF; 
+END
+GO
+
 If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'DeleteDuplicatedElement_ByJob_FromMobile') < 1 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[DeleteDuplicatedElement_ByJob_FromMobile] AS BEGIN SET NOCOUNT ON; END')
 End
@@ -50935,7 +47886,7 @@ WITH RECOMPILE
 AS
 BEGIN
 	SET NOCOUNT ON;
-
+	/*
 	DECLARE @NewJobID INT
 	SET @NewJobID = @JobID
 
@@ -50980,7 +47931,3910 @@ BEGIN
     @ElementRegisterList
     Main ON Element.RegisterID=Main.RegisterID AND Main.ElementTypeID=Element.ElementTypeID
     Where Element.ElementID NOT IN (Main.retain_ElementID)
- 
+	*/
     SET NOCOUNT OFF; 
 END
 GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'FN' AND name = 'CreateIndexScript') < 1 BEGIN
+	EXEC('CREATE FUNCTION [dbo].[CreateIndexScript]() returns varchar(max) AS BEGIN return '''' END')
+END
+
+go
+ALTER function [dbo].[CreateIndexScript](@objectid as int, @name as varchar(1000))
+returns varchar(max)
+as
+begin 
+declare @retval as varchar(max)
+select @retval = index_create_statement from
+(
+SELECT 
+    DB_NAME() AS database_name,
+    sc.name + N'.' + t.name AS table_name,
+    (SELECT MAX(user_reads) 
+        FROM (VALUES (last_user_seek), (last_user_scan), (last_user_lookup)) AS value(user_reads)) AS last_user_read,
+    last_user_update,
+    CASE si.index_id WHEN 0 THEN N'/* No create statement (Heap) */'
+    ELSE 
+        CASE is_primary_key WHEN 1 THEN
+            N'ALTER TABLE ' + QUOTENAME(sc.name) + N'.' + QUOTENAME(t.name) + N' ADD CONSTRAINT ' + QUOTENAME(si.name) + N' PRIMARY KEY ' +
+                CASE WHEN si.index_id > 1 THEN N'NON' ELSE N'' END + N'CLUSTERED '
+            ELSE N'CREATE ' + 
+                CASE WHEN si.is_unique = 1 then N'UNIQUE ' ELSE N'' END +
+                CASE WHEN si.index_id > 1 THEN N'NON' ELSE N'' END + N'CLUSTERED ' +
+                N'INDEX ' + QUOTENAME(si.name) + N' ON ' + QUOTENAME(sc.name) + N'.' + QUOTENAME(t.name) + N' '
+        END +
+        /* key def */ N'(' + key_definition + N')' +
+        /* includes */ CASE WHEN include_definition IS NOT NULL THEN 
+            N' INCLUDE (' + include_definition + N')'
+            ELSE N''
+        END +
+        /* filters */ CASE WHEN filter_definition IS NOT NULL THEN 
+            N' WHERE ' + filter_definition ELSE N''
+        END +
+        /* with clause - compression goes here */
+        CASE WHEN row_compression_partition_list IS NOT NULL OR page_compression_partition_list IS NOT NULL 
+            THEN N' WITH (' +
+                CASE WHEN row_compression_partition_list IS NOT NULL THEN
+                    N'DATA_COMPRESSION = ROW ' + CASE WHEN psc.name IS NULL THEN N'' ELSE + N' ON PARTITIONS (' + row_compression_partition_list + N')' END
+                ELSE N'' END +
+                CASE WHEN row_compression_partition_list IS NOT NULL AND page_compression_partition_list IS NOT NULL THEN N', ' ELSE N'' END +
+                CASE WHEN page_compression_partition_list IS NOT NULL THEN
+                    N'DATA_COMPRESSION = PAGE ' + CASE WHEN psc.name IS NULL THEN N'' ELSE + N' ON PARTITIONS (' + page_compression_partition_list + N')' END
+                ELSE N'' END
+            + N')'
+            ELSE N''
+        END +
+        /* ON where? filegroup? partition scheme? */
+        ' ON ' + CASE WHEN psc.name is null 
+            THEN ISNULL(QUOTENAME(fg.name),N'')
+            ELSE psc.name + N' (' + partitioning_column.column_name + N')' 
+            END
+        + N''
+    END AS index_create_statement,
+    si.index_id,
+    si.name AS index_name,
+    partition_sums.reserved_in_row_GB,
+    partition_sums.reserved_LOB_GB,
+    partition_sums.row_count,
+    stat.user_seeks,
+    stat.user_scans,
+    stat.user_lookups,
+    user_updates AS queries_that_modified,
+    partition_sums.partition_count,
+    si.allow_page_locks,
+    si.allow_row_locks,
+    si.is_hypothetical,
+    si.has_filter,
+    si.fill_factor,
+    si.is_unique,
+    ISNULL(pf.name, '/* Not partitioned */') AS partition_function,
+    ISNULL(psc.name, fg.name) AS partition_scheme_or_filegroup,
+    t.create_date AS table_created_date,
+    t.modify_date AS table_modify_date
+FROM sys.indexes AS si
+JOIN sys.tables AS t ON si.object_id=t.object_id
+JOIN sys.schemas AS sc ON t.schema_id=sc.schema_id
+LEFT JOIN sys.dm_db_index_usage_stats AS stat ON 
+    stat.database_id = DB_ID() 
+    and si.object_id=stat.object_id 
+    and si.index_id=stat.index_id
+LEFT JOIN sys.partition_schemes AS psc ON si.data_space_id=psc.data_space_id
+LEFT JOIN sys.partition_functions AS pf ON psc.function_id=pf.function_id
+LEFT JOIN sys.filegroups AS fg ON si.data_space_id=fg.data_space_id
+/* Key list */ OUTER APPLY ( SELECT STUFF (
+    (SELECT N', ' + QUOTENAME(c.name) +
+        CASE ic.is_descending_key WHEN 1 then N' DESC' ELSE N'' END
+    FROM sys.index_columns AS ic 
+    JOIN sys.columns AS c ON 
+        ic.column_id=c.column_id  
+        and ic.object_id=c.object_id
+    WHERE ic.object_id = si.object_id
+        and ic.index_id=si.index_id
+        and ic.key_ordinal > 0
+    ORDER BY ic.key_ordinal FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'),1,2,'')) AS keys ( key_definition )
+/* Partitioning Ordinal */ OUTER APPLY (
+    SELECT MAX(QUOTENAME(c.name)) AS column_name
+    FROM sys.index_columns AS ic 
+    JOIN sys.columns AS c ON 
+        ic.column_id=c.column_id  
+        and ic.object_id=c.object_id
+    WHERE ic.object_id = si.object_id
+        and ic.index_id=si.index_id
+        and ic.partition_ordinal = 1) AS partitioning_column
+/* Include list */ OUTER APPLY ( SELECT STUFF (
+    (SELECT N', ' + QUOTENAME(c.name)
+    FROM sys.index_columns AS ic 
+    JOIN sys.columns AS c ON 
+        ic.column_id=c.column_id  
+        and ic.object_id=c.object_id
+    WHERE ic.object_id = si.object_id
+        and ic.index_id=si.index_id
+        and ic.is_included_column = 1
+    ORDER BY c.name FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'),1,2,'')) AS includes ( include_definition )
+/* Partitions */ OUTER APPLY ( 
+    SELECT 
+        COUNT(*) AS partition_count,
+        CAST(SUM(ps.in_row_reserved_page_count)*8./1024./1024. AS NUMERIC(32,1)) AS reserved_in_row_GB,
+        CAST(SUM(ps.lob_reserved_page_count)*8./1024./1024. AS NUMERIC(32,1)) AS reserved_LOB_GB,
+        SUM(ps.row_count) AS row_count
+    FROM sys.partitions AS p
+    JOIN sys.dm_db_partition_stats AS ps ON
+        p.partition_id=ps.partition_id
+    WHERE p.object_id = si.object_id
+        and p.index_id=si.index_id
+    ) AS partition_sums
+/* row compression list by partition */ OUTER APPLY ( SELECT STUFF (
+    (SELECT N', ' + CAST(p.partition_number AS VARCHAR(32))
+    FROM sys.partitions AS p
+    WHERE p.object_id = si.object_id
+        and p.index_id=si.index_id
+        and p.data_compression = 1
+    ORDER BY p.partition_number FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'),1,2,'')) AS row_compression_clause ( row_compression_partition_list )
+/* data compression list by partition */ OUTER APPLY ( SELECT STUFF (
+    (SELECT N', ' + CAST(p.partition_number AS VARCHAR(32))
+    FROM sys.partitions AS p
+    WHERE p.object_id = si.object_id
+        and p.index_id=si.index_id
+        and p.data_compression = 2
+    ORDER BY p.partition_number FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'),1,2,'')) AS page_compression_clause ( page_compression_partition_list )
+WHERE 
+    si.type IN (0,1,2) /* heap, clustered, nonclustered */
+	and si.object_id =@objectid
+	and si.name = @name 
+) as x
+return @retval
+end
+GO
+
+
+
+go
+-- ****************************************BEGINNING OF PERFORMANCE INDXES****************************************
+-- ****************************************REGENERATE THESE FROM DEV USING SCRIPTINDEXES.SQL ****************************************
+
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Airtest_JobEmployeeId' AND object_id = OBJECT_ID('dbo.AirTest'))
+begin
+DROP INDEX [IDX_M1_Airtest_JobEmployeeId] ON [dbo].[AirTest]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Airtest_JobEmployeeId' AND object_id = OBJECT_ID('dbo.AirTest'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Airtest_JobEmployeeId] ON [dbo].[AirTest] ([JobEmployeeID]) ON [PRIMARY];
+	Print 'Created dbo.AirTest.IDX_M1_Airtest_JobEmployeeId';
+end
+else
+begin
+	Print 'Index already exists dbo.AirTest.IDX_M1_Airtest_JobEmployeeId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Appointment_QuoteIdDateDeclined' AND object_id = OBJECT_ID('dbo.Appointment'))
+begin
+DROP INDEX [IDX_M1_Appointment_QuoteIdDateDeclined] ON [dbo].[Appointment]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Appointment_QuoteIdDateDeclined' AND object_id = OBJECT_ID('dbo.Appointment'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Appointment_QuoteIdDateDeclined] ON [dbo].[Appointment] ([QuoteID], [DateDeclined]) ON [PRIMARY];
+	Print 'Created dbo.Appointment.IDX_M1_Appointment_QuoteIdDateDeclined';
+end
+else
+begin
+	Print 'Index already exists dbo.Appointment.IDX_M1_Appointment_QuoteIdDateDeclined'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Appointment_DateDeclinedDateConfirmed' AND object_id = OBJECT_ID('dbo.Appointment'))
+begin
+DROP INDEX [IDX_M1_Appointment_DateDeclinedDateConfirmed] ON [dbo].[Appointment]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Appointment_DateDeclinedDateConfirmed' AND object_id = OBJECT_ID('dbo.Appointment'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Appointment_DateDeclinedDateConfirmed] ON [dbo].[Appointment] ([DateDeclined], [DateConfirmed]) ON [PRIMARY];
+	Print 'Created dbo.Appointment.IDX_M1_Appointment_DateDeclinedDateConfirmed';
+end
+else
+begin
+	Print 'Index already exists dbo.Appointment.IDX_M1_Appointment_DateDeclinedDateConfirmed'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Appointment_DateDeclinedAppointmentGroupId' AND object_id = OBJECT_ID('dbo.Appointment'))
+begin
+DROP INDEX [IDX_M1_Appointment_DateDeclinedAppointmentGroupId] ON [dbo].[Appointment]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Appointment_DateDeclinedAppointmentGroupId' AND object_id = OBJECT_ID('dbo.Appointment'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Appointment_DateDeclinedAppointmentGroupId] ON [dbo].[Appointment] ([DateDeclined], [AppointmentGroupId]) ON [PRIMARY];
+	Print 'Created dbo.Appointment.IDX_M1_Appointment_DateDeclinedAppointmentGroupId';
+end
+else
+begin
+	Print 'Index already exists dbo.Appointment.IDX_M1_Appointment_DateDeclinedAppointmentGroupId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_AppointmentAirMonitoring_AppointmentIdAppointmentAirMonitoringID' AND object_id = OBJECT_ID('dbo.AppointmentAirMonitoring'))
+begin
+DROP INDEX [IDX_M1_AppointmentAirMonitoring_AppointmentIdAppointmentAirMonitoringID] ON [dbo].[AppointmentAirMonitoring]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_AppointmentAirMonitoring_AppointmentIdAppointmentAirMonitoringID' AND object_id = OBJECT_ID('dbo.AppointmentAirMonitoring'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_AppointmentAirMonitoring_AppointmentIdAppointmentAirMonitoringID] ON [dbo].[AppointmentAirMonitoring] ([AppointmentID], [AppointmentAirMonitoringID]) ON [PRIMARY];
+	Print 'Created dbo.AppointmentAirMonitoring.IDX_M1_AppointmentAirMonitoring_AppointmentIdAppointmentAirMonitoringID';
+end
+else
+begin
+	Print 'Index already exists dbo.AppointmentAirMonitoring.IDX_M1_AppointmentAirMonitoring_AppointmentIdAppointmentAirMonitoringID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_AppointmentAirMonitoringType_AppointmentAirMonitoringID' AND object_id = OBJECT_ID('dbo.AppointmentAirMonitoringType'))
+begin
+DROP INDEX [IDX_M1_AppointmentAirMonitoringType_AppointmentAirMonitoringID] ON [dbo].[AppointmentAirMonitoringType]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_AppointmentAirMonitoringType_AppointmentAirMonitoringID' AND object_id = OBJECT_ID('dbo.AppointmentAirMonitoringType'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_AppointmentAirMonitoringType_AppointmentAirMonitoringID] ON [dbo].[AppointmentAirMonitoringType] ([AppointmentAirMonitoringID]) INCLUDE ([AirTestTypeID]) ON [PRIMARY];
+	Print 'Created dbo.AppointmentAirMonitoringType.IDX_M1_AppointmentAirMonitoringType_AppointmentAirMonitoringID';
+end
+else
+begin
+	Print 'Index already exists dbo.AppointmentAirMonitoringType.IDX_M1_AppointmentAirMonitoringType_AppointmentAirMonitoringID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_AppointmentSurvey_DueDate' AND object_id = OBJECT_ID('dbo.AppointmentSurvey'))
+begin
+DROP INDEX [IDX_M1_AppointmentSurvey_DueDate] ON [dbo].[AppointmentSurvey]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_AppointmentSurvey_DueDate' AND object_id = OBJECT_ID('dbo.AppointmentSurvey'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_AppointmentSurvey_DueDate] ON [dbo].[AppointmentSurvey] ([DueDate]) INCLUDE ([AppointmentID], [AppointmentSurveyID]) ON [PRIMARY];
+	Print 'Created dbo.AppointmentSurvey.IDX_M1_AppointmentSurvey_DueDate';
+end
+else
+begin
+	Print 'Index already exists dbo.AppointmentSurvey.IDX_M1_AppointmentSurvey_DueDate'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Client_Restricted' AND object_id = OBJECT_ID('dbo.Client'))
+begin
+DROP INDEX [IDX_M1_Client_Restricted] ON [dbo].[Client]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Client_Restricted' AND object_id = OBJECT_ID('dbo.Client'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Client_Restricted] ON [dbo].[Client] ([Restricted]) ON [PRIMARY];
+	Print 'Created dbo.Client.IDX_M1_Client_Restricted';
+end
+else
+begin
+	Print 'Index already exists dbo.Client.IDX_M1_Client_Restricted'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Element_ElementTypeID' AND object_id = OBJECT_ID('dbo.Element'))
+begin
+DROP INDEX [IDX_M1_Element_ElementTypeID] ON [dbo].[Element]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Element_ElementTypeID' AND object_id = OBJECT_ID('dbo.Element'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Element_ElementTypeID] ON [dbo].[Element] ([ElementTypeID]) INCLUDE ([SampleID]) ON [PRIMARY];
+	Print 'Created dbo.Element.IDX_M1_Element_ElementTypeID';
+end
+else
+begin
+	Print 'Index already exists dbo.Element.IDX_M1_Element_ElementTypeID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Element_SampleID' AND object_id = OBJECT_ID('dbo.Element'))
+begin
+DROP INDEX [IDX_M1_Element_SampleID] ON [dbo].[Element]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Element_SampleID' AND object_id = OBJECT_ID('dbo.Element'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Element_SampleID] ON [dbo].[Element] ([SampleID]) INCLUDE ([AirSampleID], [AirTestID], [ElementDateTime], [ElementID], [ElementIntID], [ElementIntMeaningExtendedID], [ElementIntMeaningID], [ElementIntMeaningSubOptionID], [ElementText], [ElementTypeID], [ImportID], [RegisterID], [RemovalID]) ON [PRIMARY];
+	Print 'Created dbo.Element.IDX_M1_Element_SampleID';
+end
+else
+begin
+	Print 'Index already exists dbo.Element.IDX_M1_Element_SampleID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Employee_BranchOfficeIDFullName' AND object_id = OBJECT_ID('dbo.Employee'))
+begin
+DROP INDEX [IDX_M1_Employee_BranchOfficeIDFullName] ON [dbo].[Employee]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Employee_BranchOfficeIDFullName' AND object_id = OBJECT_ID('dbo.Employee'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Employee_BranchOfficeIDFullName] ON [dbo].[Employee] ([BranchOfficeID], [FullName]) INCLUDE ([Deleted]) ON [PRIMARY];
+	Print 'Created dbo.Employee.IDX_M1_Employee_BranchOfficeIDFullName';
+end
+else
+begin
+	Print 'Index already exists dbo.Employee.IDX_M1_Employee_BranchOfficeIDFullName'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_EmployeeAuthorisation_AirTest' AND object_id = OBJECT_ID('dbo.EmployeeAuthorisation'))
+begin
+DROP INDEX [IDX_M1_EmployeeAuthorisation_AirTest] ON [dbo].[EmployeeAuthorisation]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_EmployeeAuthorisation_AirTest' AND object_id = OBJECT_ID('dbo.EmployeeAuthorisation'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_EmployeeAuthorisation_AirTest] ON [dbo].[EmployeeAuthorisation] ([AirtestTypeId], [Enabled], [ExpiryDate]) INCLUDE ([EmployeeID]) ON [PRIMARY];
+	Print 'Created dbo.EmployeeAuthorisation.IDX_M1_EmployeeAuthorisation_AirTest';
+end
+else
+begin
+	Print 'Index already exists dbo.EmployeeAuthorisation.IDX_M1_EmployeeAuthorisation_AirTest'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_GuidSamples_ClientIdSiteId' AND object_id = OBJECT_ID('dbo.GuidSamples'))
+begin
+DROP INDEX [IDX_M1_GuidSamples_ClientIdSiteId] ON [dbo].[GuidSamples]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_GuidSamples_ClientIdSiteId' AND object_id = OBJECT_ID('dbo.GuidSamples'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_GuidSamples_ClientIdSiteId] ON [dbo].[GuidSamples] ([ClientId], [SiteId]) ON [PRIMARY];
+	Print 'Created dbo.GuidSamples.IDX_M1_GuidSamples_ClientIdSiteId';
+end
+else
+begin
+	Print 'Index already exists dbo.GuidSamples.IDX_M1_GuidSamples_ClientIdSiteId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Job_ClientIdJobIdSiteId' AND object_id = OBJECT_ID('dbo.Job'))
+begin
+DROP INDEX [IDX_M1_Job_ClientIdJobIdSiteId] ON [dbo].[Job]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Job_ClientIdJobIdSiteId' AND object_id = OBJECT_ID('dbo.Job'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Job_ClientIdJobIdSiteId] ON [dbo].[Job] ([ClientID]) INCLUDE ([JobID], [SiteID]) ON [PRIMARY];
+	Print 'Created dbo.Job.IDX_M1_Job_ClientIdJobIdSiteId';
+end
+else
+begin
+	Print 'Index already exists dbo.Job.IDX_M1_Job_ClientIdJobIdSiteId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_JobEmployeeAppointment_StartTimeEndTime' AND object_id = OBJECT_ID('dbo.JobEmployeeAppointment'))
+begin
+DROP INDEX [IDX_M1_JobEmployeeAppointment_StartTimeEndTime] ON [dbo].[JobEmployeeAppointment]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_JobEmployeeAppointment_StartTimeEndTime' AND object_id = OBJECT_ID('dbo.JobEmployeeAppointment'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_JobEmployeeAppointment_StartTimeEndTime] ON [dbo].[JobEmployeeAppointment] ([StartTime], [EndTime]) INCLUDE ([JobEmployeeAppointmentID], [JobEmployeeID]) ON [PRIMARY];
+	Print 'Created dbo.JobEmployeeAppointment.IDX_M1_JobEmployeeAppointment_StartTimeEndTime';
+end
+else
+begin
+	Print 'Index already exists dbo.JobEmployeeAppointment.IDX_M1_JobEmployeeAppointment_StartTimeEndTime'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_JobEmployeeAppointment_JobEmployeeId' AND object_id = OBJECT_ID('dbo.JobEmployeeAppointment'))
+begin
+DROP INDEX [IDX_M1_JobEmployeeAppointment_JobEmployeeId] ON [dbo].[JobEmployeeAppointment]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_JobEmployeeAppointment_JobEmployeeId' AND object_id = OBJECT_ID('dbo.JobEmployeeAppointment'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_JobEmployeeAppointment_JobEmployeeId] ON [dbo].[JobEmployeeAppointment] ([JobEmployeeID]) ON [PRIMARY];
+	Print 'Created dbo.JobEmployeeAppointment.IDX_M1_JobEmployeeAppointment_JobEmployeeId';
+end
+else
+begin
+	Print 'Index already exists dbo.JobEmployeeAppointment.IDX_M1_JobEmployeeAppointment_JobEmployeeId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Legionella_LegionellaID' AND object_id = OBJECT_ID('dbo.Legionella'))
+begin
+DROP INDEX [IDX_M1_Legionella_LegionellaID] ON [dbo].[Legionella]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Legionella_LegionellaID' AND object_id = OBJECT_ID('dbo.Legionella'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Legionella_LegionellaID] ON [dbo].[Legionella] ([LegionellaID]) INCLUDE ([JobEmployeeID]) ON [PRIMARY];
+	Print 'Created dbo.Legionella.IDX_M1_Legionella_LegionellaID';
+end
+else
+begin
+	Print 'Index already exists dbo.Legionella.IDX_M1_Legionella_LegionellaID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Legionella_JobEmployeeId' AND object_id = OBJECT_ID('dbo.Legionella'))
+begin
+DROP INDEX [IDX_M1_Legionella_JobEmployeeId] ON [dbo].[Legionella]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Legionella_JobEmployeeId' AND object_id = OBJECT_ID('dbo.Legionella'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Legionella_JobEmployeeId] ON [dbo].[Legionella] ([JobEmployeeID]) INCLUDE ([LegionellaID]) ON [PRIMARY];
+	Print 'Created dbo.Legionella.IDX_M1_Legionella_JobEmployeeId';
+end
+else
+begin
+	Print 'Index already exists dbo.Legionella.IDX_M1_Legionella_JobEmployeeId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaAsset_LegionellaId' AND object_id = OBJECT_ID('dbo.LegionellaAsset'))
+begin
+DROP INDEX [IDX_M1_LegionellaAsset_LegionellaId] ON [dbo].[LegionellaAsset]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaAsset_LegionellaId' AND object_id = OBJECT_ID('dbo.LegionellaAsset'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_LegionellaAsset_LegionellaId] ON [dbo].[LegionellaAsset] ([LegionellaID]) ON [PRIMARY];
+	Print 'Created dbo.LegionellaAsset.IDX_M1_LegionellaAsset_LegionellaId';
+end
+else
+begin
+	Print 'Index already exists dbo.LegionellaAsset.IDX_M1_LegionellaAsset_LegionellaId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaAssetOutletDataCollection_Cover' AND object_id = OBJECT_ID('dbo.LegionellaAssetOutletDataCollection'))
+begin
+DROP INDEX [IDX_M1_LegionellaAssetOutletDataCollection_Cover] ON [dbo].[LegionellaAssetOutletDataCollection]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaAssetOutletDataCollection_Cover' AND object_id = OBJECT_ID('dbo.LegionellaAssetOutletDataCollection'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_LegionellaAssetOutletDataCollection_Cover] ON [dbo].[LegionellaAssetOutletDataCollection] ([LegionellaAssetOutletQuestionID], [Deleted], [LegionellaLocationID]) INCLUDE ([DataInt], [DataText], [LegionellaAssetID], [LegionellaAssetOutletDataCollectionID], [LegionellaAssetOutletQuestionOptionOrInsertID], [LegionellaID], [LegionellaOutletID]) ON [PRIMARY];
+	Print 'Created dbo.LegionellaAssetOutletDataCollection.IDX_M1_LegionellaAssetOutletDataCollection_Cover';
+end
+else
+begin
+	Print 'Index already exists dbo.LegionellaAssetOutletDataCollection.IDX_M1_LegionellaAssetOutletDataCollection_Cover'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaAssetOutletQuestionID_Deleted_LegionellaLocationID' AND object_id = OBJECT_ID('dbo.LegionellaAssetOutletDataCollection'))
+begin
+DROP INDEX [IDX_M1_LegionellaAssetOutletQuestionID_Deleted_LegionellaLocationID] ON [dbo].[LegionellaAssetOutletDataCollection]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaAssetOutletQuestionID_Deleted_LegionellaLocationID' AND object_id = OBJECT_ID('dbo.LegionellaAssetOutletDataCollection'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_LegionellaAssetOutletQuestionID_Deleted_LegionellaLocationID] ON [dbo].[LegionellaAssetOutletDataCollection] ([LegionellaAssetOutletQuestionID], [Deleted], [LegionellaLocationID]) INCLUDE ([LegionellaID]) ON [PRIMARY];
+	Print 'Created dbo.LegionellaAssetOutletDataCollection.IDX_M1_LegionellaAssetOutletQuestionID_Deleted_LegionellaLocationID';
+end
+else
+begin
+	Print 'Index already exists dbo.LegionellaAssetOutletDataCollection.IDX_M1_LegionellaAssetOutletQuestionID_Deleted_LegionellaLocationID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaAssetOutletQuestionID_Deleted_QuestionLegionellaID' AND object_id = OBJECT_ID('dbo.LegionellaAssetOutletDataCollection'))
+begin
+DROP INDEX [IDX_M1_LegionellaAssetOutletQuestionID_Deleted_QuestionLegionellaID] ON [dbo].[LegionellaAssetOutletDataCollection]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaAssetOutletQuestionID_Deleted_QuestionLegionellaID' AND object_id = OBJECT_ID('dbo.LegionellaAssetOutletDataCollection'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_LegionellaAssetOutletQuestionID_Deleted_QuestionLegionellaID] ON [dbo].[LegionellaAssetOutletDataCollection] ([LegionellaAssetOutletQuestionID], [Deleted], [LegionellaID]) INCLUDE ([DataInt], [DataText], [LegionellaAssetID], [LegionellaAssetOutletDataCollectionID], [LegionellaAssetOutletQuestionOptionOrInsertID], [LegionellaLocationID], [LegionellaOutletID]) ON [PRIMARY];
+	Print 'Created dbo.LegionellaAssetOutletDataCollection.IDX_M1_LegionellaAssetOutletQuestionID_Deleted_QuestionLegionellaID';
+end
+else
+begin
+	Print 'Index already exists dbo.LegionellaAssetOutletDataCollection.IDX_M1_LegionellaAssetOutletQuestionID_Deleted_QuestionLegionellaID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaMonitoringDataCache_JobId' AND object_id = OBJECT_ID('dbo.LegionellaMonitoringDataCache'))
+begin
+DROP INDEX [IDX_M1_LegionellaMonitoringDataCache_JobId] ON [dbo].[LegionellaMonitoringDataCache]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaMonitoringDataCache_JobId' AND object_id = OBJECT_ID('dbo.LegionellaMonitoringDataCache'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_LegionellaMonitoringDataCache_JobId] ON [dbo].[LegionellaMonitoringDataCache] ([JobID]) ON [PRIMARY];
+	Print 'Created dbo.LegionellaMonitoringDataCache.IDX_M1_LegionellaMonitoringDataCache_JobId';
+end
+else
+begin
+	Print 'Index already exists dbo.LegionellaMonitoringDataCache.IDX_M1_LegionellaMonitoringDataCache_JobId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaTask_LegionellaAssetId' AND object_id = OBJECT_ID('dbo.LegionellaTask'))
+begin
+DROP INDEX [IDX_M1_LegionellaTask_LegionellaAssetId] ON [dbo].[LegionellaTask]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaTask_LegionellaAssetId' AND object_id = OBJECT_ID('dbo.LegionellaTask'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_LegionellaTask_LegionellaAssetId] ON [dbo].[LegionellaTask] ([LegionellaAssetID]) INCLUDE ([LegionellaTaskID]) ON [PRIMARY];
+	Print 'Created dbo.LegionellaTask.IDX_M1_LegionellaTask_LegionellaAssetId';
+end
+else
+begin
+	Print 'Index already exists dbo.LegionellaTask.IDX_M1_LegionellaTask_LegionellaAssetId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaTaskEvent_Deleted' AND object_id = OBJECT_ID('dbo.LegionellaTaskEvent'))
+begin
+DROP INDEX [IDX_M1_LegionellaTaskEvent_Deleted] ON [dbo].[LegionellaTaskEvent]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaTaskEvent_Deleted' AND object_id = OBJECT_ID('dbo.LegionellaTaskEvent'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_LegionellaTaskEvent_Deleted] ON [dbo].[LegionellaTaskEvent] ([Deleted]) ON [PRIMARY];
+	Print 'Created dbo.LegionellaTaskEvent.IDX_M1_LegionellaTaskEvent_Deleted';
+end
+else
+begin
+	Print 'Index already exists dbo.LegionellaTaskEvent.IDX_M1_LegionellaTaskEvent_Deleted'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaTaskEvent_LegionellaTaskID' AND object_id = OBJECT_ID('dbo.LegionellaTaskEvent'))
+begin
+DROP INDEX [IDX_M1_LegionellaTaskEvent_LegionellaTaskID] ON [dbo].[LegionellaTaskEvent]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_LegionellaTaskEvent_LegionellaTaskID' AND object_id = OBJECT_ID('dbo.LegionellaTaskEvent'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_LegionellaTaskEvent_LegionellaTaskID] ON [dbo].[LegionellaTaskEvent] ([LegionellaTaskID]) ON [PRIMARY];
+	Print 'Created dbo.LegionellaTaskEvent.IDX_M1_LegionellaTaskEvent_LegionellaTaskID';
+end
+else
+begin
+	Print 'Index already exists dbo.LegionellaTaskEvent.IDX_M1_LegionellaTaskEvent_LegionellaTaskID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_NoAccess_JobIDCreated' AND object_id = OBJECT_ID('dbo.NoAccess'))
+begin
+DROP INDEX [IDX_M1_NoAccess_JobIDCreated] ON [dbo].[NoAccess]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_NoAccess_JobIDCreated' AND object_id = OBJECT_ID('dbo.NoAccess'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_NoAccess_JobIDCreated] ON [dbo].[NoAccess] ([JobID], [Created]) ON [PRIMARY];
+	Print 'Created dbo.NoAccess.IDX_M1_NoAccess_JobIDCreated';
+end
+else
+begin
+	Print 'Index already exists dbo.NoAccess.IDX_M1_NoAccess_JobIDCreated'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Note_NoteTypeId' AND object_id = OBJECT_ID('dbo.Note'))
+begin
+DROP INDEX [IDX_M1_Note_NoteTypeId] ON [dbo].[Note]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Note_NoteTypeId' AND object_id = OBJECT_ID('dbo.Note'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Note_NoteTypeId] ON [dbo].[Note] ([NoteTypeId]) INCLUDE ([DateCreated], [EmployeeId], [IsStarred], [ItemId], [MinutesWorked], [NoteId]) ON [PRIMARY];
+	Print 'Created dbo.Note.IDX_M1_Note_NoteTypeId';
+end
+else
+begin
+	Print 'Index already exists dbo.Note.IDX_M1_Note_NoteTypeId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Notification_EmployeeIdToDateReadDateDeleted' AND object_id = OBJECT_ID('dbo.Notification'))
+begin
+DROP INDEX [IDX_M1_Notification_EmployeeIdToDateReadDateDeleted] ON [dbo].[Notification]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Notification_EmployeeIdToDateReadDateDeleted' AND object_id = OBJECT_ID('dbo.Notification'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Notification_EmployeeIdToDateReadDateDeleted] ON [dbo].[Notification] ([EmployeeIdTo], [DateRead], [DateDeleted]) ON [PRIMARY];
+	Print 'Created dbo.Notification.IDX_M1_Notification_EmployeeIdToDateReadDateDeleted';
+end
+else
+begin
+	Print 'Index already exists dbo.Notification.IDX_M1_Notification_EmployeeIdToDateReadDateDeleted'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_orgInstruction_Completed' AND object_id = OBJECT_ID('dbo.orgInstruction'))
+begin
+DROP INDEX [IDX_M1_orgInstruction_Completed] ON [dbo].[orgInstruction]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_orgInstruction_Completed' AND object_id = OBJECT_ID('dbo.orgInstruction'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_orgInstruction_Completed] ON [dbo].[orgInstruction] ([Completed], [Deleted], [orgCode], [orgInstructionID], [orgStateID], [Scheduled]) ON [PRIMARY];
+	Print 'Created dbo.orgInstruction.IDX_M1_orgInstruction_Completed';
+end
+else
+begin
+	Print 'Index already exists dbo.orgInstruction.IDX_M1_orgInstruction_Completed'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_orgInstruction_orgStateID' AND object_id = OBJECT_ID('dbo.orgInstruction'))
+begin
+DROP INDEX [IDX_M1_orgInstruction_orgStateID] ON [dbo].[orgInstruction]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_orgInstruction_orgStateID' AND object_id = OBJECT_ID('dbo.orgInstruction'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_orgInstruction_orgStateID] ON [dbo].[orgInstruction] ([orgStateID], [Deleted], [DateApproved], [orgErrorCodeID], [Scheduled]) ON [PRIMARY];
+	Print 'Created dbo.orgInstruction.IDX_M1_orgInstruction_orgStateID';
+end
+else
+begin
+	Print 'Index already exists dbo.orgInstruction.IDX_M1_orgInstruction_orgStateID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_orgInstruction_JobId' AND object_id = OBJECT_ID('dbo.orgInstruction'))
+begin
+DROP INDEX [IDX_M1_orgInstruction_JobId] ON [dbo].[orgInstruction]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_orgInstruction_JobId' AND object_id = OBJECT_ID('dbo.orgInstruction'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_orgInstruction_JobId] ON [dbo].[orgInstruction] ([JobID], [Completed], [Deleted]) INCLUDE ([Created], [EmployeeId], [GenerationType], [orgInstructionID], [orgPriorityID], [orgStateID]) ON [PRIMARY];
+	Print 'Created dbo.orgInstruction.IDX_M1_orgInstruction_JobId';
+end
+else
+begin
+	Print 'Index already exists dbo.orgInstruction.IDX_M1_orgInstruction_JobId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Quote_AcceptedRejectedReminderDate' AND object_id = OBJECT_ID('dbo.Quote'))
+begin
+DROP INDEX [IDX_M1_Quote_AcceptedRejectedReminderDate] ON [dbo].[Quote]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Quote_AcceptedRejectedReminderDate' AND object_id = OBJECT_ID('dbo.Quote'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Quote_AcceptedRejectedReminderDate] ON [dbo].[Quote] ([Accepted], [Rejected], [ReminderDate]) ON [PRIMARY];
+	Print 'Created dbo.Quote.IDX_M1_Quote_AcceptedRejectedReminderDate';
+end
+else
+begin
+	Print 'Index already exists dbo.Quote.IDX_M1_Quote_AcceptedRejectedReminderDate'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_QuoteEmployee_QuoteIDEmployeeID' AND object_id = OBJECT_ID('dbo.QuoteEmployee'))
+begin
+DROP INDEX [IDX_M1_QuoteEmployee_QuoteIDEmployeeID] ON [dbo].[QuoteEmployee]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_QuoteEmployee_QuoteIDEmployeeID' AND object_id = OBJECT_ID('dbo.QuoteEmployee'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_QuoteEmployee_QuoteIDEmployeeID] ON [dbo].[QuoteEmployee] ([QuoteID], [EmployeeID]) INCLUDE ([QuoteEmployeeID]) ON [PRIMARY];
+	Print 'Created dbo.QuoteEmployee.IDX_M1_QuoteEmployee_QuoteIDEmployeeID';
+end
+else
+begin
+	Print 'Index already exists dbo.QuoteEmployee.IDX_M1_QuoteEmployee_QuoteIDEmployeeID'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Register_RegisterFinish' AND object_id = OBJECT_ID('dbo.Register'))
+begin
+DROP INDEX [IDX_M1_Register_RegisterFinish] ON [dbo].[Register]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Register_RegisterFinish' AND object_id = OBJECT_ID('dbo.Register'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Register_RegisterFinish] ON [dbo].[Register] ([RegisterFinish]) INCLUDE ([JobEmployeeID]) ON [PRIMARY];
+	Print 'Created dbo.Register.IDX_M1_Register_RegisterFinish';
+end
+else
+begin
+	Print 'Index already exists dbo.Register.IDX_M1_Register_RegisterFinish'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Sample_QCDiaryDateFlag' AND object_id = OBJECT_ID('dbo.Sample'))
+begin
+DROP INDEX [IDX_M1_Sample_QCDiaryDateFlag] ON [dbo].[Sample]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Sample_QCDiaryDateFlag' AND object_id = OBJECT_ID('dbo.Sample'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Sample_QCDiaryDateFlag] ON [dbo].[Sample] ([QCDiaryDateFlag]) INCLUDE ([SampleID]) ON [PRIMARY];
+	Print 'Created dbo.Sample.IDX_M1_Sample_QCDiaryDateFlag';
+end
+else
+begin
+	Print 'Index already exists dbo.Sample.IDX_M1_Sample_QCDiaryDateFlag'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Sample_Cover' AND object_id = OBJECT_ID('dbo.Sample'))
+begin
+DROP INDEX [IDX_M1_Sample_Cover] ON [dbo].[Sample]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_Sample_Cover' AND object_id = OBJECT_ID('dbo.Sample'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_Sample_Cover] ON [dbo].[Sample] ([AsSample]) INCLUDE ([DateAnalysed], [DateCheckedIn], [LaboratoryId], [RoomID], [SampleClassificationID], [SampleRef], [SampleResultID]) ON [PRIMARY];
+	Print 'Created dbo.Sample.IDX_M1_Sample_Cover';
+end
+else
+begin
+	Print 'Index already exists dbo.Sample.IDX_M1_Sample_Cover'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleComputedData_RecommendedActionCover' AND object_id = OBJECT_ID('dbo.SampleComputedData'))
+begin
+DROP INDEX [IDX_M1_SampleComputedData_RecommendedActionCover] ON [dbo].[SampleComputedData]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleComputedData_RecommendedActionCover' AND object_id = OBJECT_ID('dbo.SampleComputedData'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_SampleComputedData_RecommendedActionCover] ON [dbo].[SampleComputedData] ([SampleId], [RecommendedAction]) INCLUDE ([ClientId], [RecommendedActionColour], [RecommendedActionSortOrder], [SiteId]) ON [PRIMARY];
+	Print 'Created dbo.SampleComputedData.IDX_M1_SampleComputedData_RecommendedActionCover';
+end
+else
+begin
+	Print 'Index already exists dbo.SampleComputedData.IDX_M1_SampleComputedData_RecommendedActionCover'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleComputedData_RiskCover' AND object_id = OBJECT_ID('dbo.SampleComputedData'))
+begin
+DROP INDEX [IDX_M1_SampleComputedData_RiskCover] ON [dbo].[SampleComputedData]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleComputedData_RiskCover' AND object_id = OBJECT_ID('dbo.SampleComputedData'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_SampleComputedData_RiskCover] ON [dbo].[SampleComputedData] ([SampleId], [RiskScore]) INCLUDE ([ClientId], [JobId], [RiskScoreGroup], [RiskScoreGroupColour], [RiskScoreGroupId], [RiskScoreSortOrder], [SiteId]) ON [PRIMARY];
+	Print 'Created dbo.SampleComputedData.IDX_M1_SampleComputedData_RiskCover';
+end
+else
+begin
+	Print 'Index already exists dbo.SampleComputedData.IDX_M1_SampleComputedData_RiskCover'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_IdSampleId' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+DROP INDEX [IDX_M1_SampleTest_IdSampleId] ON [dbo].[SampleTest]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_IdSampleId' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_SampleTest_IdSampleId] ON [dbo].[SampleTest] ([_id], [_sampleID]) INCLUDE ([_employeeID], [_testCreatedOn], [sampleTestCollectionID], [sampleTestID]) ON [PRIMARY];
+	Print 'Created dbo.SampleTest.IDX_M1_SampleTest_IdSampleId';
+end
+else
+begin
+	Print 'Index already exists dbo.SampleTest.IDX_M1_SampleTest_IdSampleId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_NameCreatedOn' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+DROP INDEX [IDX_M1_SampleTest_NameCreatedOn] ON [dbo].[SampleTest]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_NameCreatedOn' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_SampleTest_NameCreatedOn] ON [dbo].[SampleTest] ([_name], [_testCreatedOn]) INCLUDE ([_employeeID], [_sampleID], [sampleTestID]) WHERE ([_name]='AnalysisTest') ON [PRIMARY];
+	Print 'Created dbo.SampleTest.IDX_M1_SampleTest_NameCreatedOn';
+end
+else
+begin
+	Print 'Index already exists dbo.SampleTest.IDX_M1_SampleTest_NameCreatedOn'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_CancelledOnSavedName' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+DROP INDEX [IDX_M1_SampleTest_CancelledOnSavedName] ON [dbo].[SampleTest]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_CancelledOnSavedName' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_SampleTest_CancelledOnSavedName] ON [dbo].[SampleTest] ([_testCancelledOn], [_wasSaved], [_name], [_testCreatedOn]) INCLUDE ([_employeeID], [_sampleID], [_sessionRef], [sampleTestCollectionID], [sampleTestID]) ON [PRIMARY];
+	Print 'Created dbo.SampleTest.IDX_M1_SampleTest_CancelledOnSavedName';
+end
+else
+begin
+	Print 'Index already exists dbo.SampleTest.IDX_M1_SampleTest_CancelledOnSavedName'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_Name' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+DROP INDEX [IDX_M1_SampleTest_Name] ON [dbo].[SampleTest]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_Name' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_SampleTest_Name] ON [dbo].[SampleTest] ([_name]) INCLUDE ([_id], [_sampleID], [_testCreatedOn]) ON [PRIMARY];
+	Print 'Created dbo.SampleTest.IDX_M1_SampleTest_Name';
+end
+else
+begin
+	Print 'Index already exists dbo.SampleTest.IDX_M1_SampleTest_Name'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_SampleId' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+DROP INDEX [IDX_M1_SampleTest_SampleId] ON [dbo].[SampleTest]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTest_SampleId' AND object_id = OBJECT_ID('dbo.SampleTest'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_SampleTest_SampleId] ON [dbo].[SampleTest] ([_sampleID]) INCLUDE ([_employeeID], [_name], [_sessionRef], [_testCreatedOn], [_wasSaved], [sampleTestCollectionID]) ON [PRIMARY];
+	Print 'Created dbo.SampleTest.IDX_M1_SampleTest_SampleId';
+end
+else
+begin
+	Print 'Index already exists dbo.SampleTest.IDX_M1_SampleTest_SampleId'
+end
+
+go
+if 1 = 0 AND exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTestCollectionSession' AND object_id = OBJECT_ID('dbo.SampleTestCollectionSession'))
+begin
+DROP INDEX [IDX_M1_SampleTestCollectionSession] ON [dbo].[SampleTestCollectionSession]
+end
+go
+
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTestCollectionSession' AND object_id = OBJECT_ID('dbo.SampleTestCollectionSession'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_SampleTestCollectionSession] ON [dbo].[SampleTestCollectionSession] ([sampleTestCollectionID]) INCLUDE ([sessionref]) ON [PRIMARY];
+	Print 'Created dbo.SampleTestCollectionSession.IDX_M1_SampleTestCollectionSession';
+end
+else
+begin
+	Print 'Index already exists dbo.SampleTestCollectionSession.IDX_M1_SampleTestCollectionSession'
+end
+
+go
+
+-- ****************************************END OF PERFORMANCE INDXES****************************************
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'QualityControlSampleList_ForMvc') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[QualityControlSampleList_ForMvc] AS BEGIN SET NOCOUNT ON; END')
+End
+
+go
+
+ --   QualityControlSampleList_ForMvc @startdate = '25 NOV 2020' , @enddate = '25 NOV 2020 23:59:59'
+
+alter PROCEDURE [dbo].[QualityControlSampleList_ForMvc]
+    @startdate [datetime] =NULL,
+    @enddate [datetime] =NULL,
+    @clientid [int] =NULL,
+    @ProjectId int =NULL,
+    @siteid int =NULL,
+    @employeeId int= 0,
+    @forceUpdateCounts bit = 1
+AS
+BEGIN
+set transaction ISOLATION level READ uncommitted 
+
+SET NOCOUNT ON 
+--update QCOutnstandingCountByDay for some bizare reason!
+DECLARE @internalstartdate [datetime],@internalenddate [datetime]
+
+DECLARE @maxpoints int
+SET @maxpoints = (SELECT Max(i__MaxDailyPoints) FROM Config)
+
+DECLARE @ceilingpercentage decimal(5, 3)
+SET @ceilingpercentage = (SELECT Max(i__QcCeilingPercentage) FROM Config)
+
+SET @internalstartdate = @startdate
+SET @internalenddate = @enddate
+
+declare @internalemployeeId as int 
+set @internalemployeeId = @employeeId
+
+IF @internalemployeeId IS NULL
+BEGIN
+	set @internalemployeeid = 0
+END
+declare @internalforceUpdateCounts as int
+set @internalforceUpdateCounts = @forceUpdateCounts
+
+IF @internalstartdate IS NULL 
+BEGIN
+    set @internalstartdate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 00:00:00' as datetime)
+END 
+
+IF @internalenddate IS NULL 
+BEGIN
+    set @internalenddate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 23:59:59' as datetime)
+END 
+
+if (CONVERT(VARCHAR(8),@internalenddate,108) = '00:00:00')
+begin 
+    set @internalenddate = cast(CONVERT(VARCHAR(11),@internalenddate,106) + ' 23:59:59' as datetime)
+END 
+
+--DECLARE #SampleTable TABLE (SessionRef VARCHAR(50),SampleID INT, OrderIdentifier INT, TimeIdentifier INT,CreatedDate DATE,CreatedDateTime DATETIME, sampleTestCollectionID INT, SampleTestID INT,datasaved INT, _name VARCHAR(MAX), EmployeeID INT)
+create table #SampleTable  (Id int identity(1,1) Primary Key CLUSTERED, SessionRef VARCHAR(50) COLLATE DATABASE_DEFAULT,SampleID INT, OrderIdentifier INT, TimeIdentifier INT,CreatedDate DATE,CreatedDateTime DATETIME, sampleTestCollectionID INT, SampleTestID INT,datasaved INT, _name VARCHAR(MAX) COLLATE DATABASE_DEFAULT, EmployeeID INT)
+Insert into #SampleTable (SessionRef,SampleID,OrderIdentifier, TimeIdentifier,CreatedDate,CreatedDateTime,sampleTestCollectionID,SampleTestID,datasaved,_name,EmployeeID)
+SELECT 
+	test_st._sessionRef,
+	test_st._sampleID,
+	ROW_NUMBER() OVER (Partition By test_st._sampleID,test_st._EmployeeID Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [OrderIdentifier],
+	ROW_NUMBER() OVER (Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [TimeIdentifier],
+	[test_st].[_testCreatedOn] [_testCreatedOn],
+	[test_st].[_testCreatedOn] [_testCreatedOn],
+	test_st.[sampleTestCollectionID],
+	test_st.[sampleTestID],
+	test_st._wasSaved [datasaved],
+	[test_st].[_name],
+	[test_st]._employeeID
+FROM 
+	sampletest test_st 
+	INNER JOIN Sample s ON test_st._sampleID=s.SampleID
+	INNER JOIN SampleTestCollection stc ON test_st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
+	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = test_st.sampleTestCollectionID
+		AND
+		test_st._SessionRef = stcs.sessionref
+WHERE
+	((test_st.[_name] ='AnalysisTest') OR (test_st.[_name] ='AnalysisQC'))
+	AND (test_st.[_testCancelledOn] IS NULL)
+	AND [test_st].[_wasSaved] = 1
+	AND ([test_st].[_testCreatedOn] BETWEEN @internalstartdate AND @internalenddate) 
+	AND (test_st._employeeID = @internalemployeeId OR @internalemployeeId = 0)
+Order By
+	test_st._sampleID
+Option(OPTIMIZE FOR (@internalstartdate='20 NOV 2020',@internalenddate = '20 NOV 2020 23:59:59'))
+
+--DECLARE #SampleRowNumber TABLE (SampleID INT, RowNumber INT)
+create table #SampleRowNumber (SampleID INT, RowNumber INT Primary Key CLUSTERED)
+Insert into #SampleRowNumber (SampleID, RowNumber)
+Select
+	st.SampleID, ROW_NUMBER() OVER (PARTITION BY MAX(st.CreatedDate) ORDER BY MAX(st.CreatedDateTime), MAX(st.SampleTestID)) [rownumber]
+FROM 
+	#SampleTable st
+GROUP BY
+	st.SampleID
+
+--DECLARE @OriginalTest TABLE (SampleTestID INT,SampleID INT, EmployeeID INT, CreatedDate DATE, Analysed DATETIME)
+create table #OriginalTest (Id int identity(1,1) Primary Key CLUSTERED,SampleTestID INT,SampleID INT, EmployeeID INT, CreatedDate DATE, Analysed DATETIME)
+Insert into #OriginalTest (SampleTestID,SampleID,EmployeeID,CreatedDate,Analysed)
+Select main.SampleTestID,main.SampleID, main.EmployeeID, main.CreatedDate, main.Analysed
+FROM
+(Select
+	_ori.SampleTestID,ROW_NUMBER() OVER (PARTITION BY st.SampleID ORDER BY _ori._testCreatedOn DESC) [OrderIdentifier],st.SampleID, _ori._employeeID [EmployeeID], _ori._testCreatedOn [CreatedDate], stcs.sample_dateanalysed [Analysed]
+FROM
+	#SampleTable st 
+	LEFT OUTER JOIN SampleTest _ori ON st.SampleID=_ori._sampleID 
+	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
+		AND
+		st.SessionRef = stcs.sessionref
+Where
+	_ori._testCreatedOn <= st.CreatedDateTime
+		AND
+	_ori._name = 'AnalysisTest' --AND 
+) main
+Where
+	main.OrderIdentifier=1
+
+--DECLARE #SampleAllResult TABLE (SampleID INT, _testCreatedOn DATE, RowNumber INT,sampleTestCollectionSessionID INT)
+CREATE TABLE #SampleAllResult  (Id int identity(1,1) Primary Key CLUSTERED,SampleID INT, _testCreatedOn DATE, RowNumber INT,sampleTestCollectionSessionID INT)
+Insert into #SampleAllResult (SampleID, RowNumber,sampleTestCollectionSessionID)
+Select
+	srn.SampleID, srn.RowNumber [rownumber],MAX(stcs.sampleTestCollectionSessionID)
+FROM
+	#SampleRowNumber srn
+	INNER JOIN #SampleTable st ON srn.SampleID=st.SampleID
+	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
+		AND
+		st.SessionRef = stcs.sessionref
+		AND
+		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
+Group By
+	srn.SampleID,srn.RowNumber
+
+--DECLARE @QCSample TABLE (SampleTestID INT,SampleID INT, EmployeeID INT,sampleTestCollectionSessionID INT, Analysed DATETIME)
+CREATE TABLE #QCSample (Id int identity(1,1) Primary Key CLUSTERED,SampleTestID INT,SampleID INT, EmployeeID INT,sampleTestCollectionSessionID INT, Analysed DATETIME)
+Insert into #QCSample (SampleTestID,SampleID,EmployeeID,sampleTestCollectionSessionID,Analysed)
+Select 
+	main.SampleTestID, main.SampleID, main.EmployeeID, main.sampleTestCollectionSessionID, main.Analysed
+FROM
+(Select
+	st.SampleTestID,st.SampleID, st.EmployeeID,stcs.sampleTestCollectionSessionID, stcs.sample_dateanalysed [Analysed],
+	ROW_NUMBER() OVER (Partition By st.SampleID Order By st.CreatedDateTime DESC) [OrderIdentifier]
+FROM
+	#SampleTable st
+	INNER JOIN SampleTestCollection stc ON st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
+	INNER JOIN SampleTestCollectionSession stcs ON 
+		stcs.sampleTestCollectionID = st.sampleTestCollectionID
+			AND
+		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
+		--	AND 
+		--stcs.sessionref = st.SessionRef
+Where
+	st._name = 'AnalysisQC'
+) main
+Where main.OrderIdentifier=1
+
+--DECLARE #FutureSamples TABLE (SampleID INT, EmployeeID INT, _name VARCHAR(MAX) COLLATE DATABASE_DEFAULT, TestCreatedOn DATETIME)
+CREATE TABLE #FutureSamples (Id int identity(1,1) Primary Key CLUSTERED, SampleID INT, EmployeeID INT, _name VARCHAR(MAX) COLLATE DATABASE_DEFAULT, TestCreatedOn DATETIME)
+Insert into #FutureSamples
+Select main._SampleID, main._EmployeeID, main._Name, main._TestCreatedOn
+FROM
+(
+Select
+	test_st._sampleID, test_st._employeeID, test_st._name, test_st._testCreatedOn
+FROM
+	sampletest test_st
+	INNER JOIN #SampleTable st ON st.SampleID=test_st._SampleID
+Where
+	test_st._testCancelledOn IS NULL
+) main
+
+
+--DECLARE @FutureQCSample TABLE (SampleID INT, EmployeeID INT, TestCreatedOn VARCHAR(MAX))
+create table #FutureQCSample (Id int identity(1,1) Primary Key CLUSTERED,SampleID INT, EmployeeID INT, TestCreatedOn VARCHAR(MAX) COLLATE DATABASE_DEFAULT)
+Insert into #FutureQCSample (SampleID,EmployeeID, TestCreatedOn)
+Select main.SampleID, main.EmployeeID, main.TestCreatedOn
+FROM
+(Select
+	st.SampleID, st.EmployeeID, fs.TestCreatedOn, ROW_NUMBER() OVER (Partition By st.SampleID Order By fs.TestCreatedOn DESC) [OrderIdentifier] --NEED TO MAKE THIS STUFF
+FROM
+	#SampleTable st
+	INNER JOIN #FutureSamples fs ON st.SampleID=fs.SampleID AND fs._name='AnalysisQC'
+Where
+	st._name = 'AnalysisTest'
+) main
+Where
+	main.OrderIdentifier=1
+
+--DECLARE A TABLE VALUE SO WE CAN TALLY UP POINTS
+--DECLARE @ResultSet TABLE (EmployeeID INT,[otSampleTestID] INT,[OriginalAnalystEmployeeID] INT,[qcEmployeeID] INT,[stSampleTestID] INT,[qcSampleTestID] INT,[Test No] INT,[SampleID] INT,[analysed] INT,[OriginalAnalystName] VARCHAR(MAX),[qc] INT,[datasaved] BIT,[qcdInFuture] INT,[sampleTestCollectionSessionID] INT,[sampleref] VARCHAR(MAX),[totalsofar] INT,[rownumber] INT,[OverMaxPoints] INT,[Points] INT, [Star] BIT,[sampleClassificationDetails] VARCHAR(MAX),[sampleresultdetails] VARCHAR(MAX),[loggedSampleClassificationExtendedID] INT,[loggedSampleClassificationID] INT,[loggedSampleResultID] INT,[testCreatedOn] DATE,[JobID] INT,[jobno] VARCHAR(MAX),[FullName] VARCHAR(MAX),[Approved] INT,[allowcheck] INT,[futuredates_string] VARCHAR(MAX),[CreatedDate] DATE,[AnalysedToday] INT,[qcdToday] INT,[otCreatedDate] DATE)
+CREATE TABLE #ResultSet (Id int identity(1,1) Primary Key CLUSTERED,EmployeeID INT,[otSampleTestID] INT,[OriginalAnalystEmployeeID] INT,[qcEmployeeID] INT,[stSampleTestID] INT,[qcSampleTestID] INT,[Test No] INT,[SampleID] INT,[analysed] INT,[OriginalAnalystName] VARCHAR(MAX),[qc] INT,[datasaved] BIT,[qcdInFuture] INT,[sampleTestCollectionSessionID] INT,[sampleref] VARCHAR(MAX),[totalsofar] INT,[rownumber] INT,[OverMaxPoints] INT,[Points] INT, [Star] BIT,[sampleClassificationDetails] VARCHAR(MAX),[sampleresultdetails] VARCHAR(MAX),[loggedSampleClassificationExtendedID] INT,[loggedSampleClassificationID] INT,[loggedSampleResultID] INT,[testCreatedOn] DATE,[JobID] INT,[jobno] VARCHAR(MAX),[FullName] VARCHAR(MAX),[Approved] INT,[allowcheck] INT,[futuredates_string] VARCHAR(MAX),[CreatedDate] DATE,[AnalysedToday] INT,[qcdToday] INT,[otCreatedDate] DATE)
+Insert into #ResultSet (EmployeeID,[OriginalAnalystEmployeeID],[qcEmployeeID],[otSampleTestID],[stSampleTestID],[qcSampleTestID],[Test No],[SampleID],[analysed],[OriginalAnalystName],[qc],[datasaved],[qcdInFuture],[sampleTestCollectionSessionID],[sampleref],[totalsofar],[rownumber],[OverMaxPoints],[Points],[Star],[sampleClassificationDetails],[sampleresultdetails],[loggedSampleClassificationExtendedID],[loggedSampleClassificationID],[loggedSampleResultID],[testCreatedOn],[JobID],[jobno],[FullName],[Approved],[allowcheck],[futuredates_string],[CreatedDate],[AnalysedToday],[qcdToday],[otCreatedDate])
+Select 
+	e.EmployeeID,
+	OriginalAnalyst.EmployeeID [OriginalAnalystEmployeeID],
+	qc.EmployeeID [qcEmployeeID],
+	ot.SampleTestID [otSampleTestID],
+	st.SampleTestID [stSampleTestID],
+	CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END [qcSampleTestID],
+	ROW_NUMBER() OVER (Partition By e.FullName Order by s.DateAnalysed) [Test No],
+	st.SampleID,
+	CASE WHEN (((IsNull(ot.EmployeeID,0) = st.EmployeeID) AND st.CreatedDate = ot.CreatedDate) OR (ot.EmployeeID = qc.EmployeeID)) THEN 1 ELSE 0 END [analysed],
+	OriginalAnalyst.FullName [OriginalAnalystName],
+	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 1 ELSE 0 END [qc],
+	CASE WHEN st.SampleTestID=IsNull(qc.SampleTestID,st.SampleTestID) AND IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND (stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef) THEN 1 ELSE 0 END [datasaved], -- NO LONGER USED?
+	CASE WHEN fqc.EmployeeID IS NULL THEN 0 ELSE 1 END [qcdInFuture],
+	stcs.sampleTestCollectionSessionID,
+	s.SampleRef [sampleref],
+	NULL [totalsofar],
+	sar.RowNumber [rownumber],
+	--SUM(sar.RowNumber) OVER(PARTITION BY e.FullName ORDER BY s.DateAnalysed ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)  -- ONLY 2012 :/
+	NULL as [OverMaxPoints],
+	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) AND ot.CreatedDate=st.CreatedDate THEN scePoints.Points * 2 ELSE scePoints.Points END [Points],
+	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) THEN 1 ELSE 0 END [Star],
+	sce.SampleClassification [sampleClassificationDetails],
+	sr.SampleResult [sampleresultDetails],
+	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationExtendedID END [loggedSampleClassificationExtendedID],
+	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationID END [loggedSampleClassificationID],
+	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleResultID END [loggedSampleResultID],
+	dbo.formatteamsdate(st.CreatedDate,1) [testCreatedOn],
+	j.JobID [JobID],
+	dbo.FormatTeamsReference('J',j.JobNo) [jobno],
+	e.FullName,
+	case when (not j.SampleResultEmployeeID IS NULL AND not j.SampleContentEmployeeID IS NULL) then 1 else 0 end [Approved],
+	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 0 ELSE 1 END [allowcheck],
+	IsNull(fqc.TestCreatedOn,'') [futuredates_string],
+	st.CreatedDate [CreatedDate],
+	CASE WHEN ot.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [AnalysedToday],
+	CASE WHEN qc.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [qcdToday],
+	ot.CreatedDate [otCreatedDate]
+FROM 
+	#SampleTable st
+	LEFT OUTER JOIN #OriginalTest ot ON st.SampleID = ot.SampleID
+	LEFT OUTER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = ot.EmployeeID
+	
+	LEFT OUTER JOIN #SampleAllResult sar ON st.SampleID=sar.SampleID
+	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.SampleTestCollectionSessionID=sar.SampleTestCollectionSessionID
+	
+	LEFT OUTER JOIN #QCSample qc ON st.SampleID=qc.SampleID-- AND qc.EmployeeID=st.EmployeeID
+	
+	
+	LEFT OUTER JOIN #FutureQCSample fqc ON fqc.SampleID=st.SampleID
+		AND fqc.TestCreatedOn > cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
+	
+	INNER JOIN Employee e ON st.EmployeeID = e.EmployeeID
+	INNER JOIN Sample s ON s.SampleID = st.SampleID
+	
+	
+	--INNER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = s.EmployeeID
+	INNER JOIN Room rm ON rm.RoomID = s.RoomID
+	INNER JOIN Register r ON rm.RegisterID=r.RegisterID
+	INNER JOIN JobEmployee je ON r.JobEmployeeID = je.JobEmployeeID
+	INNER JOIN Job j ON je.JobID = j.JobID
+	
+	LEFT OUTER JOIN SampleClassificationExtended sce ON sce.SampleClassificationExtendedID = s.SampleClassificationExtendedID
+	LEFT OUTER JOIN SampleResult sr ON sr.SampleResultID = s.SampleResultID
+	
+	LEFT OUTER JOIN SampleClassificationExtendedPoints scePoints  ON scePoints.SampleClassificationExtendedPointsID=s.SampleClassificationExtendedPointsID
+	
+Where 
+	OrderIdentifier = 1
+		AND
+	(
+		CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) THEN 
+			CASE WHEN ot.EmployeeID=qc.EmployeeID THEN CASE WHEN st.EmployeeID = qc.EmployeeID THEN 1 ELSE 0 END ELSE 1 END
+		ELSE 
+			1
+		END = 1
+	)
+		AND
+	(st.EmployeeID = @internalemployeeId OR @internalemployeeId = 0)
+
+--DECLARE #Mode0Table TABLE ([_day] DATETIME,[c] INT,[qcd] INT,[qcdone] INT,[points] INT,[EmployeeID] INT,[FullName] VARCHAR(MAX),[QCCountNeededMethod1] INT, [QCCountNeededMethod1_Outstanding] INT, [QCCountNeededMethod2] INT, [QCCountNeededMethod2_Outstanding] INT, [checked_count] INT, [samplecount] INT, [ac] INT)
+CREATE TABLE #Mode0Table ([_day] DATETIME,[c] INT,[qcd] INT,[qcdone] INT,[points] INT,[EmployeeID] INT,[FullName] VARCHAR(MAX),[QCCountNeededMethod1] INT, [QCCountNeededMethod1_Outstanding] INT, [QCCountNeededMethod2] INT, [QCCountNeededMethod2_Outstanding] INT, [checked_count] INT, [samplecount] INT, [ac] INT)
+Insert into #Mode0Table
+Select 
+	main._day,
+	SUM(main.c) [c],
+	SUM(main.qcd) [qcd],
+	SUM(main.qcdone) [qcdone],
+	SUM(main.points) [points],
+	main.EmployeeID [EmployeeID],
+	main.FullName [FullName],
+	--MIN(main.MaxPoints),
+	CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod1],
+	CASE WHEN  CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END > 0 THEN
+		CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) ElSE 0 END - SUM(main.checked_count)
+	ELSE
+		0
+	END [QCCountNeededMethod1_Outstanding],
+	--SUM(main.QCCountNeededMethod1_Outstanding - main.checked_count) [QCCountNeededMethod1_Outstanding],
+	CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod2],
+	SUM(CASE WHEN main.QCCountNeededMethod2_Outstanding - main.checked_count > 0 THEN main.QCCountNeededMethod2_Outstanding - main.checked_count ELSE 0 END) [QCCountNeededMethod2_Outstanding],
+	IsNull(SUM(main.checked_count),0) [checked_count],
+	IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) [samplecount],
+	ISNULL(SUM(main.ac),0) [ac]
+	--*/
+FROM
+(
+	Select
+		a.allEmployees,
+		a._day,
+		CASE WHEN ISNULL(inner_main.c,qconly.c) > 0 THEN ISNULL(inner_main.c,qconly.c) ELSE 0 END [c],
+		CASE WHEN qconly.qcd IS NOT NULL THEN IsNull(inner_main.qcd,qconly.qcdone) ELSE qconly.qcdone END [qcd],
+		ISNULL(inner_main.qcdone,0) [qcdone],
+		ISNULL(inner_main.points,0) [points],
+		a.allEmployees [EmployeeID],
+		e.FullName,
+		inner_main.MaxPoints,
+		ISNULL(inner_main.QCCountNeededMethod1,qconly.QCCountNeededMethod1) [QCCountNeededMethod1],
+		CASE WHEN inner_main.QCCountNeededMethod1_Outstanding > 0 THEN inner_main.QCCountNeededMethod1_Outstanding ELSE 0 END [QCCountNeededMethod1_Outstanding],
+		ISNULL(inner_main.QCCountNeededMethod2,qconly.QCCountNeededMethod2) [QCCountNeededMethod2],
+		CASE WHEN inner_main.QCCountNeededMethod2_Outstanding > 0 THEN inner_main.QCCountNeededMethod2_Outstanding ELSE 0 END [QCCountNeededMethod2_Outstanding],
+		--ISNULL(CASE WHEN IsNull(inner_main.qcd,qconly.qcd) > 0 THEN checked.[count] END,0)
+		inner_main.checked [checked_count],
+		inner_main.samplecount [samplecount],
+		inner_main.ac+qconly.ac [ac]
+	FROM
+	(
+		Select DISTINCT CAST(CreatedDate as DATETIME) [_day],EmployeeID [allEmployees] FROM #ResultSet
+			UNION
+		Select DISTINCT CAST(CreatedDate as DATETIME) [_day],OriginalAnalystEmployeeID [allEmployees] FROM #ResultSet
+	) a
+	INNER JOIN Employee e ON e.EmployeeID = a.allEmployees
+	LEFT OUTER JOIN 
+	(
+		Select
+			SUM(rs.Analysed) [c],
+			ISNULL(qcd.qcd,0) [qcd],
+			SUM(rs.[qc]) [qcdone],
+			SUM(rs.Points) [points],
+			rs.EmployeeID [EmployeeID],
+			rs.FullName [FullName],
+			MIN(CASE WHEN rs.OverMaxPoints = 1 THEN rs.totalsofar ELSE 99999 END) [MaxPoints],
+			CASE WHEN SUM(rs.Points) > @maxpoints THEN
+				CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
+			ELSE
+				0
+			END [QCCountNeededMethod1],
+			CASE WHEN SUM(rs.Points) > @maxpoints THEN
+				IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
+			Else
+				0
+			END [QCCountNeededMethod1_Outstanding],
+			CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
+			CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
+			SUM(CASE WHEN rs.OriginalAnalystEmployeeID <> rs.qcEmployeeID THEN 1 ELSE 0 END) [checked_count],
+			CEILING(COUNT(
+				CASE WHEN rs.totalsofar > @maxpoints Then
+					rs.SampleID
+				End)) [samplecount],
+			COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
+				rs.SampleID
+			End) [ac],
+			--SUM(CASE WHEN (checked.EmployeeID != rs.EmployeeID AND checked.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND checked.EmployeeID = rs.EmployeeID) Then 1 ELSE 0 END) [checked]
+			COUNT(checked.SampleID) [checked]
+		FROM
+			(
+				Select 
+					rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[OriginalAnalystName],rs.Analysed,rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],
+					CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],
+					rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
+					CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
+						RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
+					ELSE
+						CONVERT(varchar(11), rs.[testCreatedOn], 106)
+					END [testCreatedOn]
+					,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
+				FROM 
+					#ResultSet rs
+					INNER JOIN #ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
+				GROUP BY
+					rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
+			) rs
+			OUTER APPLY
+			(
+				Select EmployeeID, SampleID, MAX(qcdToday) [qcdToday]
+				FROM
+				(Select EmployeeID,SampleID, 1 [qcdToday] FROM #QCSample
+					UNION
+				Select EmployeeID,SampleID, 0 [qcdToday] FROM #FutureQCSample) main
+				Where
+					rs.SampleID = main.SampleID AND rs.qc=0
+					AND
+					(
+						(main.EmployeeID != rs.EmployeeID AND main.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND main.EmployeeID = rs.EmployeeID)
+					)
+				Group By EmployeeID, SampleID
+			) checked
+			LEFT OUTER JOIN 
+			(
+				Select 
+					qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
+				FROM
+					#ResultSet qc
+				Where
+					qc.qc = 1 --OR qc.qcdInFuture = 1
+				GROUP BY
+					qc.OriginalAnalystEmployeeID
+			) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID AND rs.qc=0
+		Group By
+			rs.CreatedDate,rs.FullName,rs.EmployeeID,qcd.qcd,qcd.self_qcd
+	) inner_main ON inner_main.EmployeeID=a.allEmployees
+	LEFT OUTER JOIN 
+	(
+		Select
+			ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
+			COUNT(rs.SampleID) [qcd],
+			SUM(rs.[qc]) [qcdone],
+			SUM(rs.Points) [points],
+			rs.OriginalAnalystEmployeeID [EmployeeID],
+			rs.FullName [FullName],
+			CASE WHEN SUM(rs.Points) > @maxpoints THEN
+				CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
+			ELSE
+				0
+			END [QCCountNeededMethod1],
+			CASE WHEN SUM(rs.Points) > @maxpoints THEN
+				IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
+			Else
+				0
+			END [QCCountNeededMethod1_Outstanding],
+			CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
+			CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
+			0 [checked_count],
+			CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End)) [samplecount],
+			COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
+				rs.SampleID
+			End) [ac]
+		FROM
+			(
+				Select 
+					rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName] [FullName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],0 [totalsofar],rs.[rownumber],0 [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
+					CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
+						RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
+					ELSE
+						CONVERT(varchar(11), rs.[testCreatedOn], 106)
+					END [testCreatedOn]
+					,rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
+				FROM 
+					#ResultSet rs
+				GROUP BY
+					rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
+			) rs
+			LEFT OUTER JOIN 
+			(
+				Select 
+					qc.EmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
+				FROM
+					#ResultSet qc
+				Where
+					qc.qc = 1 OR qc.qcdInFuture = 1
+				GROUP BY
+					qc.EmployeeID
+			) qcd ON rs.OriginalAnalystEmployeeID=qcd.EmployeeID
+		Group By
+			rs.CreatedDate,rs.FullName,rs.OriginalAnalystEmployeeID,qcd.qcd,qcd.self_qcd
+	) qconly  ON qconly.EmployeeID=a.allEmployees
+) main
+GROUP BY
+	main.[_day],main.EmployeeID,main.FullName
+Order By
+	main.EmployeeID
+		
+If @internalforceUpdateCounts = 1 AND @internalemployeeId = 0 BEGIN
+	DECLARE @QCOutstandingCountByDayID INT = (Select top 1 QCOutstandingCountByDayID FROM QCOutstandingCountByDay Where theDay=@internalstartdate)
+	IF(@QCOutstandingCountByDayID = 0) BEGIN
+		Insert into QCOutstandingCountByDay (theDay,Total) Select m0t._day,SUM(m0t.QCCountNeededMethod2_Outstanding) FROM #Mode0Table m0t GROUP BY m0t._day
+	END
+	IF(@QCOutstandingCountByDayID > 0) BEGIN
+		DECLARE @CurrentTotal INT = (Select Total FROM QCOutstandingCountByDay Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID)
+		If ((Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM #Mode0Table m0t GROUP BY m0t._day) != @CurrentTotal) BEGIN
+			Update QCOutstandingCountByDay Set Total = (Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM #Mode0Table m0t GROUP BY m0t._day) Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID
+		END
+	END		
+END	
+		
+Select * FROM #Mode0Table m0t Where (m0t.EmployeeID = @internalemployeeId OR @internalemployeeId=0) Order by m0t.EmployeeID
+
+SET NOCOUNT OFF
+
+END
+
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'QualityControlSampleList_2') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[QualityControlSampleList_2] AS BEGIN SET NOCOUNT ON; END')
+End
+GO
+
+ALTER PROCEDURE [dbo].[QualityControlSampleList_2]
+    @startdate [datetime] =NULL,
+    @enddate [datetime] =NULL,
+    @clientid [int] =NULL,
+    @ProjectId int =NULL,
+    @siteid int =NULL,
+    @employeeId int= 0,
+    @mode int = 1,
+    @forceUpdateCounts bit = 1	
+AS
+BEGIN
+set transaction ISOLATION level READ uncommitted 
+
+SET NOCOUNT ON 
+--update QCOutnstandingCountByDay for some bizare reason!
+DECLARE @internalstartdate [datetime],@internalenddate [datetime]
+
+DECLARE @maxpoints int
+SET @maxpoints = (SELECT Max(i__MaxDailyPoints) FROM Config)
+
+DECLARE @ceilingpercentage decimal(5, 3)
+SET @ceilingpercentage = (SELECT Max(i__QcCeilingPercentage) FROM Config)
+
+SET @internalstartdate = @startdate
+SET @internalenddate = @enddate
+
+declare @internalemployeeId as int 
+set @internalemployeeId = @employeeId
+
+IF @internalemployeeId IS NULL
+BEGIN
+	set @internalemployeeid = 0
+END
+declare @internalmode as int
+set @internalmode = @mode
+
+declare @internalforceUpdateCounts as int
+set @internalforceUpdateCounts = @forceUpdateCounts
+
+IF @internalstartdate IS NULL 
+BEGIN
+    set @internalstartdate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 00:00:00' as datetime)
+END 
+
+IF @internalenddate IS NULL 
+BEGIN
+    set @internalenddate = cast(CONVERT(VARCHAR(11),GETDATE(),106) + ' 23:59:59' as datetime)
+END 
+
+if (CONVERT(VARCHAR(8),@internalenddate,108) = '00:00:00')
+begin 
+    set @internalenddate = cast(CONVERT(VARCHAR(11),@internalenddate,106) + ' 23:59:59' as datetime)
+END 
+
+If @InternalMode = 3 BEGIN
+	Select
+		rs.theDay  [_day],
+		rs.Total [c]	
+	FROM
+		QCOutstandingCountByDay rs
+	Where 
+		rs.theDay = @internalstartdate
+END
+
+
+If @InternalMode < 3 BEGIN
+
+--DECLARE @SampleTable TABLE (SessionRef VARCHAR(50),SampleID INT, OrderIdentifier INT, TimeIdentifier INT,CreatedDate DATE,CreatedDateTime DATETIME, sampleTestCollectionID INT, SampleTestID INT,datasaved INT, _name VARCHAR(MAX), EmployeeID INT)
+create table #SampleTable (Id int identity(1,1) Primary Key,SessionRef VARCHAR(50) COLLATE DATABASE_DEFAULT,SampleID INT, OrderIdentifier INT, TimeIdentifier INT,CreatedDate DATE,CreatedDateTime DATETIME, sampleTestCollectionID INT, SampleTestID INT,datasaved INT, _name VARCHAR(MAX) COLLATE DATABASE_DEFAULT, EmployeeID INT) 
+Insert into #SampleTable (SessionRef,SampleID,OrderIdentifier, TimeIdentifier,CreatedDate,CreatedDateTime,sampleTestCollectionID,SampleTestID,datasaved,_name,EmployeeID)
+SELECT 
+	test_st._sessionRef,
+	test_st._sampleID,
+	ROW_NUMBER() OVER (Partition By test_st._sampleID,test_st._EmployeeID Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [OrderIdentifier],
+	ROW_NUMBER() OVER (Order By [test_st].[_testCreatedOn] DESC, [test_st].SampleTestID DESC) [TimeIdentifier],
+	[test_st].[_testCreatedOn] [_testCreatedOn],
+	[test_st].[_testCreatedOn] [_testCreatedOn],
+    test_st.[sampleTestCollectionID],
+    test_st.[sampleTestID],
+    test_st._wasSaved [datasaved],
+    [test_st].[_name],
+    [test_st]._employeeID
+FROM 
+    sampletest test_st 
+    INNER JOIN Sample s ON test_st._sampleID=s.SampleID
+    INNER JOIN SampleTestCollection stc ON test_st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
+    LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = test_st.sampleTestCollectionID
+		AND
+		test_st._SessionRef = stcs.sessionref
+WHERE
+    ((test_st.[_name] ='AnalysisTest') OR (test_st.[_name] ='AnalysisQC'))
+    AND (test_st.[_testCancelledOn] IS NULL)
+    AND [test_st].[_wasSaved] = 1
+    AND ([test_st].[_testCreatedOn] BETWEEN @internalstartdate AND @internalenddate) 
+    AND (test_st._employeeID = @internalemployeeId OR @internalemployeeId = 0)
+Order By
+	test_st._sampleID
+Option(OPTIMIZE FOR (@internalstartdate='20 NOV 2020',@internalenddate = '20 NOV 2020 23:59:59'))
+
+--DECLARE @SampleRowNumber TABLE (SampleID INT, RowNumber INT)
+create table #SampleRowNumber (Id int identity(1,1) Primary Key,SampleID INT, RowNumber INT)
+
+Insert into #SampleRowNumber (SampleID, RowNumber)
+Select
+	st.SampleID, ROW_NUMBER() OVER (PARTITION BY MAX(st.CreatedDate) ORDER BY MAX(st.CreatedDateTime), MAX(st.SampleTestID)) [rownumber]
+FROM 
+	#SampleTable st
+GROUP BY
+	st.SampleID
+
+--DECLARE @OriginalTest TABLE (SampleTestID INT,SampleID INT, EmployeeID INT, CreatedDate DATE, Analysed DATETIME)
+create table #OriginalTest (Id int identity(1,1) Primary Key,SampleTestID INT,SampleID INT, EmployeeID INT, CreatedDate DATE, Analysed DATETIME)
+Insert into #OriginalTest (SampleTestID,SampleID,EmployeeID,CreatedDate,Analysed)
+Select main.SampleTestID,main.SampleID, main.EmployeeID, main.CreatedDate, main.Analysed
+FROM
+(Select
+	_ori.SampleTestID,ROW_NUMBER() OVER (PARTITION BY st.SampleID ORDER BY _ori._testCreatedOn DESC) [OrderIdentifier],st.SampleID, _ori._employeeID [EmployeeID], _ori._testCreatedOn [CreatedDate], stcs.sample_dateanalysed [Analysed]
+FROM
+	#SampleTable st 
+	LEFT OUTER JOIN SampleTest _ori ON st.SampleID=_ori._sampleID 
+	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
+		AND
+		st.SessionRef = stcs.sessionref
+Where
+	_ori._testCreatedOn <= st.CreatedDateTime
+		AND
+	_ori._name = 'AnalysisTest' --AND 
+) main
+Where
+	main.OrderIdentifier=1
+
+--DECLARE @SampleAllResult TABLE (SampleID INT, _testCreatedOn DATE, RowNumber INT,sampleTestCollectionSessionID INT)
+create table #SampleAllResult (Id int identity(1,1) Primary Key,SampleID INT, _testCreatedOn DATE, RowNumber INT,sampleTestCollectionSessionID INT)
+Insert into #SampleAllResult (SampleID, RowNumber,sampleTestCollectionSessionID)
+Select
+	srn.SampleID, srn.RowNumber [rownumber],MAX(stcs.sampleTestCollectionSessionID)
+FROM
+	#SampleRowNumber srn
+	INNER JOIN #SampleTable st ON srn.SampleID=st.SampleID
+	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.sampleTestCollectionID = st.sampleTestCollectionID
+		AND
+		st.SessionRef = stcs.sessionref
+		AND
+		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
+Group By
+	srn.SampleID,srn.RowNumber
+
+--DECLARE #QCSample TABLE (SampleTestID INT,SampleID INT, EmployeeID INT,sampleTestCollectionSessionID INT, Analysed DATETIME)
+create table #QCSample (Id int identity(1,1) Primary Key,SampleTestID INT,SampleID INT, EmployeeID INT,sampleTestCollectionSessionID INT, Analysed DATETIME)
+Insert into #QCSample (SampleTestID,SampleID,EmployeeID,sampleTestCollectionSessionID,Analysed)
+Select 
+	main.SampleTestID, main.SampleID, main.EmployeeID, main.sampleTestCollectionSessionID, main.Analysed
+FROM
+(Select
+	st.SampleTestID,st.SampleID, st.EmployeeID,stcs.sampleTestCollectionSessionID, stcs.sample_dateanalysed [Analysed],
+	ROW_NUMBER() OVER (Partition By st.SampleID Order By st.CreatedDateTime DESC) [OrderIdentifier]
+FROM
+	#SampleTable st
+	INNER JOIN SampleTestCollection stc ON st.sampleTestCollectionID = stc.sampleTestCollectionID AND stc.deleted IS NULL
+	INNER JOIN SampleTestCollectionSession stcs ON 
+		stcs.sampleTestCollectionID = st.sampleTestCollectionID
+			AND
+		stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
+		--	AND 
+		--stcs.sessionref = st.SessionRef
+Where
+	st._name = 'AnalysisQC'
+) main
+Where main.OrderIdentifier=1
+
+--DECLARE @FutureSamples TABLE (SampleID INT, EmployeeID INT, _name VARCHAR(MAX), TestCreatedOn DATETIME)
+create table #FutureSamples (Id int identity(1,1) Primary Key,SampleID INT, EmployeeID INT, _name VARCHAR(MAX) COLLATE DATABASE_DEFAULT, TestCreatedOn DATETIME)
+Insert into #FutureSamples
+Select main._SampleID, main._EmployeeID, main._Name, main._TestCreatedOn
+FROM
+(
+Select
+	test_st._sampleID, test_st._employeeID, test_st._name, test_st._testCreatedOn
+FROM
+	sampletest test_st
+	INNER JOIN #SampleTable st ON st.SampleID=test_st._SampleID
+Where
+	test_st._testCancelledOn IS NULL
+) main
+
+
+--DECLARE @FutureQCSample TABLE (SampleID INT, EmployeeID INT, TestCreatedOn VARCHAR(MAX))
+create table #FutureQCSample  (Id int identity(1,1) Primary Key,SampleID INT, EmployeeID INT, TestCreatedOn VARCHAR(MAX) COLLATE DATABASE_DEFAULT)
+Insert into #FutureQCSample (SampleID,EmployeeID, TestCreatedOn)
+Select main.SampleID, main.EmployeeID, main.TestCreatedOn
+FROM
+(Select
+	st.SampleID, st.EmployeeID, fs.TestCreatedOn, ROW_NUMBER() OVER (Partition By st.SampleID Order By fs.TestCreatedOn DESC) [OrderIdentifier] --NEED TO MAKE THIS STUFF
+FROM
+	#SampleTable st
+	INNER JOIN #FutureSamples fs ON st.SampleID=fs.SampleID AND fs._name='AnalysisQC'
+Where
+	st._name = 'AnalysisTest'
+) main
+Where
+	main.OrderIdentifier=1
+
+--DECLARE A TABLE VALUE SO WE CAN TALLY UP POINTS
+--DECLARE @ResultSet TABLE (EmployeeID INT,[otSampleTestID] INT,[OriginalAnalystEmployeeID] INT,[qcEmployeeID] INT,[stSampleTestID] INT,[qcSampleTestID] INT,[Test No] INT,[SampleID] INT,[analysed] INT,[OriginalAnalystName] VARCHAR(MAX),[qc] INT,[datasaved] BIT,[qcdInFuture] INT,[sampleTestCollectionSessionID] INT,[sampleref] VARCHAR(MAX),[totalsofar] INT,[rownumber] INT,[OverMaxPoints] INT,[Points] INT, [Star] BIT,[sampleClassificationDetails] VARCHAR(MAX),[sampleresultdetails] VARCHAR(MAX),[loggedSampleClassificationExtendedID] INT,[loggedSampleClassificationID] INT,[loggedSampleResultID] INT,[testCreatedOn] DATE,[JobID] INT,[jobno] VARCHAR(MAX),[FullName] VARCHAR(MAX),[Approved] INT,[allowcheck] INT,[futuredates_string] VARCHAR(MAX),[CreatedDate] DATE,[AnalysedToday] INT,[qcdToday] INT,[otCreatedDate] DATE)
+create table #ResultSet (Id int identity(1,1) Primary Key,EmployeeID INT,[otSampleTestID] INT,[OriginalAnalystEmployeeID] INT,[qcEmployeeID] INT,[stSampleTestID] INT,[qcSampleTestID] INT,[Test No] INT,[SampleID] INT,[analysed] INT,[OriginalAnalystName] VARCHAR(MAX),[qc] INT,[datasaved] BIT,[qcdInFuture] INT,[sampleTestCollectionSessionID] INT,[sampleref] VARCHAR(MAX),[totalsofar] INT,[rownumber] INT,[OverMaxPoints] INT,[Points] INT, [Star] BIT,[sampleClassificationDetails] VARCHAR(MAX),[sampleresultdetails] VARCHAR(MAX),[loggedSampleClassificationExtendedID] INT,[loggedSampleClassificationID] INT,[loggedSampleResultID] INT,[testCreatedOn] DATE,[JobID] INT,[jobno] VARCHAR(MAX),[FullName] VARCHAR(MAX) COLLATE DATABASE_DEFAULT,[Approved] INT,[allowcheck] INT,[futuredates_string] VARCHAR(MAX) COLLATE DATABASE_DEFAULT,[CreatedDate] DATE,[AnalysedToday] INT,[qcdToday] INT,[otCreatedDate] DATE)
+Insert into #ResultSet (EmployeeID,[OriginalAnalystEmployeeID],[qcEmployeeID],[otSampleTestID],[stSampleTestID],[qcSampleTestID],[Test No],[SampleID],[analysed],[OriginalAnalystName],[qc],[datasaved],[qcdInFuture],[sampleTestCollectionSessionID],[sampleref],[totalsofar],[rownumber],[OverMaxPoints],[Points],[Star],[sampleClassificationDetails],[sampleresultdetails],[loggedSampleClassificationExtendedID],[loggedSampleClassificationID],[loggedSampleResultID],[testCreatedOn],[JobID],[jobno],[FullName],[Approved],[allowcheck],[futuredates_string],[CreatedDate],[AnalysedToday],[qcdToday],[otCreatedDate])
+Select 
+	e.EmployeeID,
+	OriginalAnalyst.EmployeeID [OriginalAnalystEmployeeID],
+	qc.EmployeeID [qcEmployeeID],
+	ot.SampleTestID [otSampleTestID],
+	st.SampleTestID [stSampleTestID],
+	CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END [qcSampleTestID],
+	ROW_NUMBER() OVER (Partition By e.FullName Order by s.DateAnalysed) [Test No],
+	st.SampleID,
+	CASE WHEN (((IsNull(ot.EmployeeID,0) = st.EmployeeID) AND st.CreatedDate = ot.CreatedDate) OR (ot.EmployeeID = qc.EmployeeID)) THEN 1 ELSE 0 END [analysed],
+	OriginalAnalyst.FullName [OriginalAnalystName],
+	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 1 ELSE 0 END [qc],
+	CASE WHEN st.SampleTestID=IsNull(qc.SampleTestID,st.SampleTestID) AND IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND (stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef) THEN 1 ELSE 0 END [datasaved], -- NO LONGER USED?
+	CASE WHEN fqc.EmployeeID IS NULL THEN 0 ELSE 1 END [qcdInFuture],
+	stcs.sampleTestCollectionSessionID,
+	s.SampleRef [sampleref],
+	NULL [totalsofar],
+	sar.RowNumber [rownumber],
+	--SUM(sar.RowNumber) OVER(PARTITION BY e.FullName ORDER BY s.DateAnalysed ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)  -- ONLY 2012 :/
+	NULL as [OverMaxPoints],
+	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) AND ot.CreatedDate=st.CreatedDate THEN scePoints.Points * 2 ELSE scePoints.Points END [Points],
+	CASE WHEN OriginalAnalyst.EmployeeID = IsNull(qc.EmployeeID,-1) THEN 1 ELSE 0 END [Star],
+	sce.SampleClassification [sampleClassificationDetails],
+	sr.SampleResult [sampleresultDetails],
+	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationExtendedID END [loggedSampleClassificationExtendedID],
+	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleClassificationID END [loggedSampleClassificationID],
+	CASE WHEN IsNull(qc.EmployeeID,st.EmployeeID)=st.EmployeeID AND stcs.sample_dateanalysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) AND stcs.sessionref=st.SessionRef THEN stcs.Sample_SampleResultID END [loggedSampleResultID],
+	dbo.formatteamsdate(st.CreatedDate,1) [testCreatedOn],
+	j.JobID [JobID],
+	dbo.FormatTeamsReference('J',j.JobNo) [jobno],
+	e.FullName,
+	case when (not j.SampleResultEmployeeID IS NULL AND not j.SampleContentEmployeeID IS NULL) then 1 else 0 end [Approved],
+	CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) AND st._name = 'AnalysisQC' THEN 0 ELSE 1 END [allowcheck],
+	IsNull(fqc.TestCreatedOn,'') [futuredates_string],
+	st.CreatedDate [CreatedDate],
+	CASE WHEN ot.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [AnalysedToday],
+	CASE WHEN qc.Analysed BETWEEN cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 00:00:00' AS datetime) AND cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime) THEN 1 ELSE 0 END [qcdToday],
+	ot.CreatedDate [otCreatedDate]
+FROM 
+	#SampleTable st
+	LEFT OUTER JOIN #OriginalTest ot ON st.SampleID = ot.SampleID
+	LEFT OUTER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = ot.EmployeeID
+	
+	LEFT OUTER JOIN #SampleAllResult sar ON st.SampleID=sar.SampleID
+	LEFT OUTER JOIN SampleTestCollectionSession stcs ON stcs.SampleTestCollectionSessionID=sar.SampleTestCollectionSessionID
+	
+	LEFT OUTER JOIN #QCSample qc ON st.SampleID=qc.SampleID-- AND qc.EmployeeID=st.EmployeeID
+	
+	
+	LEFT OUTER JOIN #FutureQCSample fqc ON fqc.SampleID=st.SampleID
+		AND fqc.TestCreatedOn > cast(CONVERT(varchar(11),st.CreatedDate,106) + ' 23:59:59' AS datetime)
+	
+	INNER JOIN Employee e ON st.EmployeeID = e.EmployeeID
+	INNER JOIN Sample s ON s.SampleID = st.SampleID
+	
+	
+	--INNER JOIN Employee OriginalAnalyst ON OriginalAnalyst.EmployeeID = s.EmployeeID
+	INNER JOIN Room rm ON rm.RoomID = s.RoomID
+	INNER JOIN Register r ON rm.RegisterID=r.RegisterID
+	INNER JOIN JobEmployee je ON r.JobEmployeeID = je.JobEmployeeID
+	INNER JOIN Job j ON je.JobID = j.JobID
+	
+	LEFT OUTER JOIN SampleClassificationExtended sce ON sce.SampleClassificationExtendedID = s.SampleClassificationExtendedID
+	LEFT OUTER JOIN SampleResult sr ON sr.SampleResultID = s.SampleResultID
+	
+	LEFT OUTER JOIN SampleClassificationExtendedPoints scePoints  ON scePoints.SampleClassificationExtendedPointsID=s.SampleClassificationExtendedPointsID
+	
+Where 
+	OrderIdentifier = 1
+		AND
+	(
+		CASE WHEN ot.SampleTestID <> COALESCE(CASE WHEN st.EmployeeID = qc.EmployeeID THEN qc.SampleTestID END,st.SampleTestID,ot.SampleTestID) THEN 
+			CASE WHEN ot.EmployeeID=qc.EmployeeID THEN CASE WHEN st.EmployeeID = qc.EmployeeID THEN 1 ELSE 0 END ELSE 1 END
+		ELSE 
+			1
+		END = 1
+	)
+		AND
+	(st.EmployeeID = @internalemployeeId OR @internalemployeeId = 0)
+
+/*
+	Select 
+		checked.SampleID
+	FROM
+		#ResultSet rs
+		OUTER APPLY
+		(
+			Select EmployeeID, SampleID, MAX(qcdToday) [qcdToday]
+			FROM
+			(Select EmployeeID,SampleID, 1 [qcdToday] FROM #QCSample
+				UNION
+			Select EmployeeID,SampleID, 0 [qcdToday] FROM #FutureQCSample) main
+			Where
+				rs.SampleID = main.SampleID AND rs.qc=0
+				AND
+				(
+					(main.EmployeeID != rs.EmployeeID AND main.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND main.EmployeeID = rs.EmployeeID)
+				)
+			Group By EmployeeID, SampleID
+		) checked
+	Where rs.EmployeeID=8 AND checked.SampleID IS NOT NULL
+*/	
+
+	If @InternalMode = 0 BEGIN
+		DECLARE @InternalMode0Table TABLE ([_day] DATETIME,[c] INT,[qcd] INT,[qcdone] INT,[points] INT,[EmployeeID] INT,[FullName] VARCHAR(MAX) COLLATE DATABASE_DEFAULT,[QCCountNeededMethod1] INT, [QCCountNeededMethod1_Outstanding] INT, [QCCountNeededMethod2] INT, [QCCountNeededMethod2_Outstanding] INT, [checked_count] INT, [samplecount] INT, [ac] INT)
+		Insert into @InternalMode0Table
+		Select 
+			main._day,
+			SUM(main.c) [c],
+			SUM(main.qcd) [qcd],
+			SUM(main.qcdone) [qcdone],
+			SUM(main.points) [points],
+			main.EmployeeID [EmployeeID],
+			main.FullName [FullName],
+			--MIN(main.MaxPoints),
+			CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod1],
+			CASE WHEN  CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) Else 0 END > 0 THEN
+				CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING((SUM(main.Points) - CASE WHEN MIN(main.MaxPoints) = @maxpoints+1 THEN @maxpoints+1 ELSE @maxpoints END) * @ceilingpercentage),0) ElSE 0 END - SUM(main.checked_count)
+			ELSE
+				0
+			END [QCCountNeededMethod1_Outstanding],
+			--SUM(main.QCCountNeededMethod1_Outstanding - main.checked_count) [QCCountNeededMethod1_Outstanding],
+			CASE WHEN SUM(main.Points) > @maxpoints THEN IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) Else 0 END [QCCountNeededMethod2],
+			SUM(CASE WHEN main.QCCountNeededMethod2_Outstanding - main.checked_count > 0 THEN main.QCCountNeededMethod2_Outstanding - main.checked_count ELSE 0 END) [QCCountNeededMethod2_Outstanding],
+			IsNull(SUM(main.checked_count),0) [checked_count],
+			IsNull(CEILING(SUM(main.samplecount) * @ceilingpercentage),0) [samplecount],
+			ISNULL(SUM(main.ac),0) [ac]
+			--*/
+		FROM
+		(
+			Select
+				a.allEmployees,
+				a._day,
+				CASE WHEN ISNULL(inner_main.c,qconly.c) > 0 THEN ISNULL(inner_main.c,qconly.c) ELSE 0 END [c],
+				CASE WHEN qconly.qcd IS NOT NULL THEN IsNull(inner_main.qcd,qconly.qcdone) ELSE qconly.qcdone END [qcd],
+				ISNULL(inner_main.qcdone,0) [qcdone],
+				ISNULL(inner_main.points,0) [points],
+				a.allEmployees [EmployeeID],
+				e.FullName,
+				inner_main.MaxPoints,
+				ISNULL(inner_main.QCCountNeededMethod1,qconly.QCCountNeededMethod1) [QCCountNeededMethod1],
+				CASE WHEN inner_main.QCCountNeededMethod1_Outstanding > 0 THEN inner_main.QCCountNeededMethod1_Outstanding ELSE 0 END [QCCountNeededMethod1_Outstanding],
+				ISNULL(inner_main.QCCountNeededMethod2,qconly.QCCountNeededMethod2) [QCCountNeededMethod2],
+				CASE WHEN inner_main.QCCountNeededMethod2_Outstanding > 0 THEN inner_main.QCCountNeededMethod2_Outstanding ELSE 0 END [QCCountNeededMethod2_Outstanding],
+				--ISNULL(CASE WHEN IsNull(inner_main.qcd,qconly.qcd) > 0 THEN checked.[count] END,0)
+				inner_main.checked [checked_count],
+				inner_main.samplecount [samplecount],
+				inner_main.ac+qconly.ac [ac]
+			FROM
+			(
+				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],EmployeeID [allEmployees] FROM #ResultSet
+					UNION
+				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],OriginalAnalystEmployeeID [allEmployees] FROM #ResultSet
+			) a
+			INNER JOIN Employee e ON e.EmployeeID = a.allEmployees
+			LEFT OUTER JOIN 
+			(
+				Select
+					SUM(rs.Analysed) [c],
+					ISNULL(qcd.qcd,0) [qcd],
+					SUM(rs.[qc]) [qcdone],
+					SUM(rs.Points) [points],
+					rs.EmployeeID [EmployeeID],
+					rs.FullName [FullName],
+					MIN(CASE WHEN rs.OverMaxPoints = 1 THEN rs.totalsofar ELSE 99999 END) [MaxPoints],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN
+						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
+					ELSE
+						0
+					END [QCCountNeededMethod1],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN
+						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
+					Else
+						0
+					END [QCCountNeededMethod1_Outstanding],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
+					SUM(CASE WHEN rs.OriginalAnalystEmployeeID <> rs.qcEmployeeID THEN 1 ELSE 0 END) [checked_count],
+					CEILING(COUNT(
+						CASE WHEN rs.totalsofar > @maxpoints Then
+							rs.SampleID
+						End)) [samplecount],
+					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
+						rs.SampleID
+					End) [ac],
+					--SUM(CASE WHEN (checked.EmployeeID != rs.EmployeeID AND checked.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND checked.EmployeeID = rs.EmployeeID) Then 1 ELSE 0 END) [checked]
+					COUNT(checked.SampleID) [checked]
+				FROM
+					(
+						Select 
+							rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[OriginalAnalystName],rs.Analysed,rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],
+							CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],
+							rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
+							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
+								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
+							ELSE
+								CONVERT(varchar(11), rs.[testCreatedOn], 106)
+							END [testCreatedOn]
+							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
+						FROM 
+							#ResultSet rs
+							INNER JOIN #ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
+						GROUP BY
+							rs.EmployeeID,rs.OriginalAnalystEmployeeID,rs.qcEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate, rs.[qcdToday], rs.AnalysedToday
+					) rs
+					OUTER APPLY
+					(
+						Select EmployeeID, SampleID, MAX(qcdToday) [qcdToday]
+						FROM
+						(Select EmployeeID,SampleID, 1 [qcdToday] FROM #QCSample
+							UNION
+						Select EmployeeID,SampleID, 0 [qcdToday] FROM #FutureQCSample) main
+						Where
+							rs.SampleID = main.SampleID AND rs.qc=0
+							AND
+							(
+								(main.EmployeeID != rs.EmployeeID AND main.qcdToday=1) OR (rs.AnalysedToday = 1 AND rs.qcdInFuture = 1 AND main.EmployeeID = rs.EmployeeID)
+							)
+						Group By EmployeeID, SampleID
+					) checked
+					LEFT OUTER JOIN 
+					(
+						Select 
+							qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
+						FROM
+							#ResultSet qc
+						Where
+							qc.qc = 1 --OR qc.qcdInFuture = 1
+						GROUP BY
+							qc.OriginalAnalystEmployeeID
+					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID AND rs.qc=0
+				Group By
+					rs.CreatedDate,rs.FullName,rs.EmployeeID,qcd.qcd,qcd.self_qcd
+			) inner_main ON inner_main.EmployeeID=a.allEmployees
+			LEFT OUTER JOIN 
+			(
+				Select
+					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
+					COUNT(rs.SampleID) [qcd],
+					SUM(rs.[qc]) [qcdone],
+					SUM(rs.Points) [points],
+					rs.OriginalAnalystEmployeeID [EmployeeID],
+					rs.FullName [FullName],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN
+						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
+					ELSE
+						0
+					END [QCCountNeededMethod1],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN
+						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
+					Else
+						0
+					END [QCCountNeededMethod1_Outstanding],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
+					0 [checked_count],
+					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End)) [samplecount],
+					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
+						rs.SampleID
+					End) [ac]
+				FROM
+					(
+						Select 
+							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName] [FullName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],0 [totalsofar],rs.[rownumber],0 [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
+							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
+								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
+							ELSE
+								CONVERT(varchar(11), rs.[testCreatedOn], 106)
+							END [testCreatedOn]
+							,rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
+						FROM 
+							#ResultSet rs
+						GROUP BY
+							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
+					) rs
+					LEFT OUTER JOIN 
+					(
+						Select 
+							qc.EmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
+						FROM
+							#ResultSet qc
+						Where
+							qc.qc = 1 OR qc.qcdInFuture = 1
+						GROUP BY
+							qc.EmployeeID
+					) qcd ON rs.OriginalAnalystEmployeeID=qcd.EmployeeID
+				Group By
+					rs.CreatedDate,rs.FullName,rs.OriginalAnalystEmployeeID,qcd.qcd,qcd.self_qcd
+			) qconly  ON qconly.EmployeeID=a.allEmployees
+		) main
+		GROUP BY
+			main.[_day],main.EmployeeID,main.FullName
+		Order By
+			main.EmployeeID
+		
+		If @internalforceUpdateCounts = 1 AND @internalemployeeId = 0 BEGIN
+			DECLARE @QCOutstandingCountByDayID INT = (Select top 1 QCOutstandingCountByDayID FROM QCOutstandingCountByDay Where theDay=@internalstartdate)
+			IF(@QCOutstandingCountByDayID = 0) BEGIN
+				Insert into QCOutstandingCountByDay (theDay,Total) Select m0t._day,SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @InternalMode0Table m0t GROUP BY m0t._day
+			END
+			IF(@QCOutstandingCountByDayID > 0) BEGIN
+				DECLARE @CurrentTotal INT = (Select Total FROM QCOutstandingCountByDay Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID)
+				If ((Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @InternalMode0Table m0t GROUP BY m0t._day) != @CurrentTotal) BEGIN
+					Update QCOutstandingCountByDay Set Total = (Select SUM(m0t.QCCountNeededMethod2_Outstanding) FROM @InternalMode0Table m0t GROUP BY m0t._day) Where QCOutstandingCountByDayID=@QCOutstandingCountByDayID
+				END
+			END		
+		END	
+		
+		Select * FROM @InternalMode0Table m0t Where (m0t.EmployeeID = @internalemployeeId OR @internalemployeeId=0) Order by m0t.EmployeeID
+	END
+	
+	If @InternalMode = 1 BEGIN
+		Select 
+			rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],
+			--rs.[sampleTestCollectionSessionID],
+			--rs.otSampleTestID,
+			--rs.stSampleTestID,
+			--rs.qcSampleTestID,
+			rs.[sampleref],
+			CAST(SUM(rs2.[Points]) as varchar) + CASE WHEN rs.[Star] = 1 THEN '*' ELSE '' END [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
+			CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
+				RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
+			ELSE
+				CONVERT(varchar(11), rs.[testCreatedOn], 106)
+			END [testCreatedOn]
+			,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string]
+		FROM 
+			#ResultSet rs
+			INNER JOIN #ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
+		GROUP BY
+			rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleTestCollectionSessionID],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string]
+			--,rs.otSampleTestID,
+			--rs.stSampleTestID,
+			--rs.qcSampleTestID
+		Order By
+			--rs.rownumber,
+			rs.FullName
+			, rs.rownumber
+	END
+
+	If @InternalMode = 2 BEGIN
+			Select
+				main._day,SUM(main.QCCountNeededMethod1),SUM(main.QCCountNeededMethod2)
+			FROM
+			(
+			Select
+					CAST(rs.CreatedDate as DATETIME) [_day],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN
+						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
+					ELSE
+						0
+					END [QCCountNeededMethod1],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2]
+				FROM
+					(
+						Select 
+							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
+							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
+								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
+							ELSE
+								CONVERT(varchar(11), rs.[testCreatedOn], 106)
+							END [testCreatedOn]
+							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
+						FROM 
+							#ResultSet rs
+							INNER JOIN #ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber AND rs.CreatedDate=rs2.CreatedDate
+						GROUP BY
+							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
+					) rs
+					LEFT OUTER JOIN 
+					(
+						Select 
+							qc.CreatedDate,qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
+						FROM
+							#ResultSet qc
+						Where
+							qc.qc = 1 --OR qc.qcdInFuture = 1
+						GROUP BY
+							qc.CreatedDate,qc.OriginalAnalystEmployeeID
+					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID AND rs.CreatedDate=qcd.CreatedDate
+				Group By
+					rs.CreatedDate,rs.EmployeeID
+			) main
+		GROUP BY
+			main._day
+	END
+	
+	
+	If @InternalMode = 3 BEGIN
+		Select 
+			main._day,
+			SUM(CASE WHEN main.QCCountNeededMethod2_Outstanding > 0 THEN main.QCCountNeededMethod2_Outstanding ELSE 0 END) [c]
+		FROM
+		(
+			Select
+				a._day,
+				CASE WHEN inner_main.c > 0 THEN inner_main.c ELSE 0 END [c],
+				IsNull(inner_main.qcd,qconly.qcd) [qcd],
+				ISNULL(inner_main.qcdone,qconly.qcdone) [qcdone],
+				ISNULL(inner_main.points,qconly.points) [points],
+				a.allEmployees [EmployeeID],
+				e.FullName,
+				ISNULL(inner_main.QCCountNeededMethod1,qconly.QCCountNeededMethod1) [QCCountNeededMethod1],
+				CASE WHEN inner_main.QCCountNeededMethod1_Outstanding > 0 THEN inner_main.QCCountNeededMethod1_Outstanding ELSE 0 END [QCCountNeededMethod1_Outstanding],
+				ISNULL(inner_main.QCCountNeededMethod2,qconly.QCCountNeededMethod2) [QCCountNeededMethod2],
+				CASE WHEN inner_main.QCCountNeededMethod2_Outstanding > 0 THEN inner_main.QCCountNeededMethod2_Outstanding ELSE 0 END [QCCountNeededMethod2_Outstanding],
+				ISNULL(inner_main.checked_count,qconly.checked_count) [checked_count],
+				ISNULL(inner_main.samplecount,qconly.samplecount) [samplecount],
+				ISNULL(inner_main.ac,qconly.ac) [ac]
+			FROM
+			(
+				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],EmployeeID [allEmployees] FROM #ResultSet
+					UNION
+				Select DISTINCT CAST(CreatedDate as DATETIME) [_day],OriginalAnalystEmployeeID [allEmployees] FROM #ResultSet
+			) a
+			INNER JOIN Employee e ON e.EmployeeID = a.allEmployees
+			LEFT OUTER JOIN 
+			(
+				Select
+					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
+					ISNULL(qcd.qcd,0) [qcd],
+					SUM(rs.[qc]) [qcdone],
+					SUM(rs.Points) [points],
+					rs.EmployeeID [EmployeeID],
+					rs.FullName [FullName],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN
+						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
+					ELSE
+						0
+					END [QCCountNeededMethod1],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN
+						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
+					Else
+						0
+					END [QCCountNeededMethod1_Outstanding],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
+					ISNULL(qcd.self_qcd,0) [checked_count],
+					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
+						rs.SampleID
+					End) * @ceilingpercentage) [samplecount],
+					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
+						rs.SampleID
+					End) [ac]
+				FROM
+					(
+						Select 
+							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],SUM(rs2.[Points]) [totalsofar],rs.[rownumber],CASE WHEN SUM(rs2.[Points])  > @maxpoints THEN 1 ELSE 0 END [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
+							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
+								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
+							ELSE
+								CONVERT(varchar(11), rs.[testCreatedOn], 106)
+							END [testCreatedOn]
+							,rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
+						FROM 
+							#ResultSet rs
+							INNER JOIN #ResultSet rs2 ON rs.EmployeeID=rs2.EmployeeID AND rs.rownumber >= rs2.rownumber
+						GROUP BY
+							rs.EmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[FullName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
+					) rs
+					LEFT OUTER JOIN 
+					(
+						Select 
+							qc.OriginalAnalystEmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
+						FROM
+							#ResultSet qc
+						Where
+							qc.qc = 1 OR qc.qcdInFuture = 1
+						GROUP BY
+							qc.OriginalAnalystEmployeeID
+					) qcd ON rs.EmployeeID=qcd.OriginalAnalystEmployeeID
+				Group By
+					rs.CreatedDate,rs.FullName,rs.EmployeeID,qcd.qcd,qcd.self_qcd
+			) inner_main ON inner_main.EmployeeID=a.allEmployees
+			LEFT OUTER JOIN 
+			(
+				Select
+					ISNULL(COUNT(rs.SampleID) - SUM(rs.[qc]),0) [c],
+					COUNT(rs.SampleID) [qcd],
+					SUM(rs.[qc]) [qcdone],
+					SUM(rs.Points) [points],
+					rs.OriginalAnalystEmployeeID [EmployeeID],
+					rs.FullName [FullName],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN
+						CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage)
+					ELSE
+						0
+					END [QCCountNeededMethod1],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN
+						IsNull(CEILING((SUM(rs.Points) - @maxpoints) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0),0)
+					Else
+						0
+					END [QCCountNeededMethod1_Outstanding],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) ELSE 0 END [QCCountNeededMethod2],
+					CASE WHEN SUM(rs.Points) > @maxpoints THEN CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then rs.SampleID End) * @ceilingpercentage) - ISNULL(qcd.self_qcd,0) ELSE 0 END [QCCountNeededMethod2_Outstanding],
+					ISNULL(qcd.self_qcd,0) [checked_count],
+					CEILING(COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
+						rs.SampleID
+					End) * @ceilingpercentage) [samplecount],
+					COUNT(CASE WHEN rs.totalsofar > @maxpoints Then
+						rs.SampleID
+					End) [ac]
+				FROM
+					(
+						Select 
+							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName] [FullName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[Points] [Points],0 [totalsofar],rs.[rownumber],0 [OverMaxPoints],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],
+							CASE WHEN DAY(rs.[testCreatedOn]) < 10 THEN
+								RIGHT(CONVERT(varchar(11), rs.[testCreatedOn], 106),LEN(CONVERT(varchar(11), rs.[testCreatedOn], 106))-1)
+							ELSE
+								CONVERT(varchar(11), rs.[testCreatedOn], 106)
+							END [testCreatedOn]
+							,rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string], rs.CreatedDate
+						FROM 
+							#ResultSet rs
+						GROUP BY
+							rs.OriginalAnalystEmployeeID,rs.[Test No],rs.[SampleID],rs.[analysed],rs.[OriginalAnalystName],rs.[qc],rs.[datasaved],rs.[qcdInFuture],rs.[sampleref],rs.[totalsofar],rs.[rownumber],rs.[OverMaxPoints],rs.[Points],rs.[Star],rs.[sampleClassificationDetails],rs.[sampleresultdetails],rs.[loggedSampleClassificationExtendedID],rs.[loggedSampleClassificationID],rs.[loggedSampleResultID],rs.[testCreatedOn],rs.[JobID],rs.[jobno],rs.[OriginalAnalystName],rs.[Approved],rs.[allowcheck],rs.[futuredates_string],rs.CreatedDate
+					) rs
+					LEFT OUTER JOIN 
+					(
+						Select 
+							qc.EmployeeID, COUNT(qc.SampleID) [qcd], SUM(CASE WHEN qc.OriginalAnalystEmployeeID = qc.EmployeeID THEN 1 ELSE 0 END) [self_qcd]
+						FROM
+							#ResultSet qc
+						Where
+							qc.qc = 1 OR qc.qcdInFuture = 1
+						GROUP BY
+							qc.EmployeeID
+					) qcd ON rs.OriginalAnalystEmployeeID=qcd.EmployeeID
+				Group By
+					rs.CreatedDate,rs.FullName,rs.OriginalAnalystEmployeeID,qcd.qcd,qcd.self_qcd
+			) qconly  ON qconly.EmployeeID=a.allEmployees
+		) main
+		Group By
+			main._day
+	END
+	
+	END
+
+SET NOCOUNT OFF
+
+END
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'AirTestingTypesHaveAuthorisedEmployees') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[AirTestingTypesHaveAuthorisedEmployees] AS BEGIN SET NOCOUNT ON; END')
+End
+GO
+
+ALTER procedure [dbo].[AirTestingTypesHaveAuthorisedEmployees](@EmployeeIds as varchar(5000), @AirTestTypeIds as varchar(5000),@TargetDate as date,@LineDelimiter as varchar(50))
+as
+begin
+set nocount on
+create table #Employee(EmployeeId int PRIMARY KEY)
+create table #AirTestType(AirTestTypeId int PRIMARY KEY)
+declare @Result as table (ValidationResult varchar(5000))
+declare @ValidationResult as varchar(5000) = ''
+
+insert into #Employee (EmployeeId)
+select distinct cast(s as int) from dbo.SplitString(@EmployeeIds,',')
+
+insert into #AirTestType (AirTestTypeId)
+select distinct cast(s as int) from dbo.SplitString(@AirTestTypeIds,',')
+
+set @TargetDate = coalesce(@TargetDate,getdate())
+
+
+	-- Get the authorisations where the expiry date is not set
+	select distinct
+		auth.AirTestTypeID,
+		auth.AirTestType 
+	into 
+		#AuthorisedTypes
+	from
+	(
+	select 
+			ea.EmployeeId,
+			att.AirTestTypeID,			
+			att.Description as AirTestType,
+			case when ea.Enabled = 1 and ea.ExpiryDate is null then 1 else 
+			case when ea.Enabled = 1 and ea.ExpiryDate > @targetDate then 1 else 0 end end as HasAuthorisation
+	from		
+		#AirTestType atts
+		inner join AirTestType att on atts.AirTestTypeID = att.AirTestTypeId
+		inner join EmployeeAuthorisation ea on ea.AirtestTypeId = att.AirTestTypeID   																																																		
+						and ea.Enabled = 1
+						and att.Deleted is null	
+						and att.AirTestTypeID = atts.AirTestTypeId
+	where
+		ea.EmployeeID in (select EmployeeId from #Employee)		 										
+	) as auth
+	where
+		auth.HasAuthorisation = 1
+
+	select 
+		@ValidationResult = @ValidationResult + att.Description + @LineDelimiter
+	from 
+		#AirTestType atts
+		left outer join AirTestType att on atts.AirTestTypeID = att.AirTestTypeId
+	where 
+		atts.AirTestTypeId not in (select AirTestTypeId from #AuthorisedTypes)
+	if @ValidationResult != '' 
+	begin 
+		set @ValidationResult = 'None of the selected employes is authorised for the following air test types : '+@LineDelimiter+@ValidationResult
+	end
+
+	select @ValidationResult as Result
+end
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'V' AND name = 'MobileUnitSummary')
+BEGIN
+    EXEC('CREATE VIEW[dbo].[MobileUnitSummary] AS SELECT 1 GO')
+END
+GO
+
+USE [TEAMS]
+GO
+
+/****** Object:  View [dbo].[MobileUnitSummary]    Script Date: 03/12/2020 13:42:08 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+
+
+ALTER VIEW [dbo].[MobileUnitSummary]
+As
+
+-- Get a list of all of the different tablets (including tablets with different Mobile V2 Types (e.g. survey, air, legionella))
+WITH 
+MobileUnits (SystemName, Category) AS
+(
+	SELECT
+		DISTINCT
+		mat.SystemName,
+		mat.Category
+	FROM
+		MobileAuditTrail mat
+	WHERE
+		mat.[DateCreated] BETWEEN CONVERT(varchar(20),DATEADD(day,-30,GETDATE()),106) AND CONVERT(VARCHAR(20),DATEADD(day,1,GETDATE()),106)
+			AND
+		mat.SystemName!=''
+			--AND
+		--Category <> 2
+)
+
+SELECT TOP 100 PERCENT
+	mu.SystemName [SystemName],
+	LastUsedDetails.Date [LastUsed],
+	CASE
+		WHEN Category = 1 THEN 'Mobile V1'
+		WHEN Category = 3 THEN 'Mobile V2 AirTesting'
+		WHEN Category = 4 THEN 'Mobile V2 Surveying'
+		WHEN Category = 5 THEN 'Mobile V2 Legionella'
+		ELSE
+			CASE
+				WHEN LastUsedDetails.DataScript = 'DataTransferService.cs'
+				THEN 'Mobile V1'
+				ELSE 'Mobile V2'
+			END
+	END + ' (' + LastUsedDetails.Version + ')' [SoftwareVersion],
+	ISNULL(eq.SerialNumber, '') [SerialNumber],
+	ISNULL(LastUsedDetails.Employee, '') [Employee],
+	ISNULL(LastUsedDetails.Branch, '') [UserBranch],
+	mulk.LicenceKey [LicenceKey],
+	eq.EquipmentID [EquipmentID],
+	LastUpdate.Date [LastUpdate],
+	LastUsedDetails.DataScript [DataScript]
+FROM
+	MobileUnits mu
+	LEFT JOIN Equipment eq WITH (NOLOCK) ON eq.RefNo = mu.SystemName AND eq.EquipmentCategoryID = 19
+
+	OUTER APPLY
+	(
+		SELECT
+			TOP 1
+			mat.DataQueryString [Version],
+			mat.DateCreated [Date],
+			e.FullName [Employee],
+			bo.BranchOffice [Branch],
+			mat.DataScript [DataScript],
+			eq.MobileUnitLicenceKeyID
+		FROM
+			MobileAuditTrail mat
+			LEFT OUTER JOIN Equipment eq WITH (NOLOCK) ON mat.DeviceGuid=eq.DeviceGuid
+			LEFT JOIN Employee e WITH (NOLOCK) ON mat.EmployeeID = e.EmployeeID
+			LEFT JOIN BranchOffice bo WITH (NOLOCK) ON e.BranchOfficeID = bo.BranchOfficeID
+		WHERE
+			mat.SystemName = mu.SystemName
+				AND
+			mat.Category = mu.Category
+		ORDER BY
+			mat.DateCreated DESC
+	) LastUsedDetails
+
+	LEFT JOIN MobileUnitLicenceKey mulk	WITH (NOLOCK) ON ISNULL(ISNULL(eq.MobileUnitLicenceKeyID,LastUsedDetails.MobileUnitLicenceKeyID),-1) = mulk.MobileUnitLicenceKeyID
+
+	OUTER APPLY
+	(
+		SELECT TOP 1
+			mat1.DateCreated [Date]
+		FROM
+			MobileAuditTrail mat1
+		WHERE
+			mat1.SystemName = mu.SystemName
+					AND
+			mat1.Category = mu.Category
+				AND
+			mat1.DataQueryString != LastUsedDetails.Version
+		ORDER BY
+			mat1.DateCreated DESC
+	) LastUpdate
+ORDER BY
+	mu.SystemName
+Go
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'QuoteProjectTool') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[QuoteProjectTool] AS BEGIN SET NOCOUNT ON; END')
+End
+GO
+
+USE [TEAMS]
+GO
+
+alter procedure [dbo].[QuoteProjectTool](@QuoteId as int, @newProjectId as int,@AssignQuoteToProject as bit)
+as
+begin
+SET NOCOUNT ON
+BEGIN TRY  
+BEGIN TRANSACTION
+declare @originalQuoteProjectId as int = 0
+declare @originalQuoteSiteId as int = 0
+declare @originalProjectQuoteId as int = 0
+declare @Result as varchar(50) = ''		
+declare @Message as varchar(1000) = ''
+declare @QuoteScopeOfWork as varchar(max) = ''
+declare @QuoteExclusions as varchar(max) = ''
+declare @QuoteStatus as varchar(max) = ''
+declare @originalProjectScopeOfWork as varchar(max) = ''
+declare @originalProjectExclusions as varchar(max) = ''
+declare @originalProjectNotes as varchar(max) = ''
+	--RAISERROR ('Oh no something has gone wrong !', 17, 1);
+
+	SELECT 
+		@originalQuoteProjectId = ProjectID, 
+		@originalQuoteSiteId = SiteID, 
+		@QuoteScopeOfWork = ScopeOfWork,
+		@QuoteExclusions = Exclusions,
+		@QuoteStatus = [Status]
+	FROM 
+		Quote 
+	WHERE 
+		QuoteID = @QuoteId
+
+	SELECT 
+		@originalProjectQuoteId = QuoteId,
+		@originalProjectScopeOfWork = ScopeOfWork,
+		@originalProjectNotes = Notes,
+		@originalProjectExclusions = Exclusions
+	FROM 
+		Project
+	WHERE 
+		ProjectId = @newProjectId
+
+	Update Quote set 
+		ProjectId = @newProjectId,
+		SiteID = null					 
+	where 
+		QuoteNo = @QuoteId
+
+	
+	set @Message = 'Quote Updated'
+	
+	if @AssignQuoteToProject = 1 
+	begin
+		Update Project set 
+			QuoteID = @QuoteId,
+			ScopeOfWork = @QuoteScopeOfWork,
+			Exclusions = @QuoteExclusions,
+			Notes =  @QuoteStatus
+		where 
+			ProjectID = @newProjectId    
+
+		set @Message = 'Quote and Project Updated'
+	end
+	 
+Commit TRANSACTION
+	select @Result = 'Success'				
+
+END TRY  
+BEGIN CATCH  
+
+select @Message = ERROR_MESSAGE()
+
+ROLLBACK TRANSACTION    
+
+
+select @Result = 'Error'				
+
+END CATCH;   
+
+select 
+	@Result as Result,
+	@originalProjectQuoteId as OriginalProjectQuoteId, 
+	@originalQuoteProjectId as OriginalQuoteProjectId,
+	@originalQuoteSiteId as OriginalQuoteSiteId,
+	@originalProjectScopeOfWork as OriginalProjectScopeOfWork,
+	@originalProjectExclusions as OriginalProjectExclusions,
+	@originalProjectNotes as OriginalProjectNotes,	
+	@QuoteScopeOfWork as NewProjectScopeOfWork,
+	@QuoteExclusions as NewProjectExclusions,
+	@QuoteStatus as NewProjectNotes,
+	@Message as [Message]	
+					
+end
+
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'TEAMS_SampleAnalysisClassifications') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[TEAMS_SampleAnalysisClassifications] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+ALTER PROCEDURE [dbo].[TEAMS_SampleAnalysisClassifications]
+	@ClientId INT = NULL
+
+AS
+BEGIN
+	SET NOCOUNT ON;
+	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+	SELECT
+        [PointsId]			= scep.SampleClassificationExtendedPointsID,
+        [Classification]	= scep.description,
+		[Points]			= scep.points
+    FROM
+		SampleClassificationExtendedPoints scep
+		INNER JOIN SampleClassificationExtended sce ON scep.SampleClassificationExtendedID=sce.SampleClassificationExtendedID
+    WHERE
+		(
+			CASE
+				WHEN Exists (SELECT 1 FROM ClientSpecificElementIntMeaningExtended cseime  INNER JOIN SampleClassificationExtended sce ON cseime.ElementIntMeaningExtendedID = sce.ElementIntMeaningExtendedID  WHERE cseime.ClientID = @ClientID) 
+				THEN CASE 
+						WHEN EXISTS (SELECT 1 FROM ClientSpecificElementIntMeaningExtended cseime  INNER JOIN SampleClassificationExtended SUBsce ON cseime.ElementIntMeaningExtendedID = SUBsce.ElementIntMeaningExtendedID  WHERE cseime.ClientID = @ClientID AND SUBsce.SampleClassificationExtendedID=sce.SampleClassificationExtendedID) 
+						THEN 0
+						ELSE 1
+					END
+			ELSE
+               CASE 
+					WHEN EXISTS (SELECT 1 FROM ClientSpecificElementIntMeaningExtended cseime  INNER JOIN SampleClassificationExtended SUBsce ON cseime.ElementIntMeaningExtendedID = SUBsce.ElementIntMeaningExtendedID  WHERE SUBsce.SampleClassificationExtendedID=sce.SampleClassificationExtendedID)
+					THEN 1
+					ELSE 0
+               END
+           END
+		) = 0
+    ORDER BY
+		SampleClassification
+
+END
+GO
+
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='AnalysisSection'))
+BEGIN
+	CREATE TABLE [dbo].[AnalysisSection] (
+		[AnalysisSectionID] [int] IDENTITY (1, 1) NOT NULL,
+		[Section] [varchar] (MAX) NOT NULL,
+		[SortOrder] [int] NOT NULL,
+		CONSTRAINT [PK_AnalysisSection]
+		PRIMARY KEY CLUSTERED
+		(
+			[AnalysisSectionID] ASC
+		)
+		WITH (PAD_INDEX = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, IGNORE_DUP_KEY = OFF, STATISTICS_NORECOMPUTE = OFF, DATA_COMPRESSION = NONE)
+		ON [PRIMARY]
+	) ON [PRIMARY]
+	TEXTIMAGE_ON [PRIMARY];
+END
+GO
+
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='AnalysisTest'))
+BEGIN
+	CREATE TABLE [dbo].[AnalysisTest] (
+		[AnalysisTestId] [int] IDENTITY (1, 1) NOT NULL,
+		[AnalysisSectionId] [int] NOT NULL,
+		[Test] [varchar] (MAX) NOT NULL,
+		[SortOrder] [int] NOT NULL,
+		CONSTRAINT [PK_AnalysisType]
+		PRIMARY KEY CLUSTERED
+		(
+			[AnalysisTestId] ASC
+		)
+		WITH (PAD_INDEX = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, IGNORE_DUP_KEY = OFF, STATISTICS_NORECOMPUTE = OFF, DATA_COMPRESSION = NONE)
+		ON [PRIMARY]
+	) ON [PRIMARY]
+	TEXTIMAGE_ON [PRIMARY];
+END
+GO
+
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='AnalysisTestOption'))
+BEGIN
+	CREATE TABLE [dbo].[AnalysisTestOption] (
+		[AnalysisTestOptionId] [int] IDENTITY (1, 1) NOT NULL,
+		[AnalysisTestId] [int] NOT NULL,
+		[Option] [varchar] (MAX) NOT NULL,
+		[SortOrder] [int] NOT NULL,
+		CONSTRAINT [PK_AnalysisOption]
+		PRIMARY KEY CLUSTERED
+		(
+			[AnalysisTestOptionId] ASC
+		)
+		WITH (PAD_INDEX = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, IGNORE_DUP_KEY = OFF, STATISTICS_NORECOMPUTE = OFF, DATA_COMPRESSION = NONE)
+		ON [PRIMARY]
+	) ON [PRIMARY]
+	TEXTIMAGE_ON [PRIMARY];
+END
+GO
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 473,'Quote - Weekly Flushing',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=473)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 1222,'Method Statement - Weekly Flushing',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=1222)=0 AND (SELECT COUNT(*) FROM TemplateType WHERE TemplateType LIKE 'Method Statement -%')>0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 304,473,'Weekly Flushing','Weekly Flushing',GETDATE(),5,7 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=304)=0
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 474,'Quote - Monthly Monitoring',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=474)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 1223,'Method Statement - Monthly Monitoring',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=1223)=0 AND (SELECT COUNT(*) FROM TemplateType WHERE TemplateType LIKE 'Method Statement -%')>0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 305,474,'Monthly Monitoring','Monthly Monitoring',GETDATE(),5,7 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=305)=0
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 475,'Quote - Quarterly Shower Monitoring',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=475)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 1224,'Method Statement - Quarterly Shower Monitoring',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=1224)=0 AND (SELECT COUNT(*) FROM TemplateType WHERE TemplateType LIKE 'Method Statement -%')>0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 306,475,'Quarterly Shower Monitoring','Quarterly Shower Monitoring',GETDATE(),5,7 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=306)=0
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 476,'Quote - Water Sampling',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=476)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 1225,'Method Statement - Water Sampling',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=1225)=0 AND (SELECT COUNT(*) FROM TemplateType WHERE TemplateType LIKE 'Method Statement -%')>0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 307,476,'Water Sampling','Water Sampling',GETDATE(),5,7 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=307)=0
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 477,'Quote - Water Inspection',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=477)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 1226,'Method Statement - Water Inspection',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=1226)=0 AND (SELECT COUNT(*) FROM TemplateType WHERE TemplateType LIKE 'Method Statement -%')>0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 308,477,'Water Inspection','Water Inspection',GETDATE(),5,7 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=308)=0
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 478,'Quote - Legionella Remediation',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=478)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 1227,'Method Statement - Legionella Remediation',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=1227)=0 AND (SELECT COUNT(*) FROM TemplateType WHERE TemplateType LIKE 'Method Statement -%')>0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 309,478,'Legionella Remediation','Legionella Remediation',GETDATE(),5,7 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=309)=0
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 479,'Quote - TMV Service',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=479)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 1228,'Method Statement - TMV Service',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=1228)=0 AND (SELECT COUNT(*) FROM TemplateType WHERE TemplateType LIKE 'Method Statement -%')>0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 310,479,'TMV Service','TMV Service',GETDATE(),5,7 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=310)=0
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 480,'Quote - Log Book',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=480)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 1229,'Method Statement - Log Book',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=1229)=0 AND (SELECT COUNT(*) FROM TemplateType WHERE TemplateType LIKE 'Method Statement -%')>0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 311,480,'Log Book','Log Book',GETDATE(),5,7 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=311)=0
+
+
+GO
+
+BEGIN TRANSACTION 
+	IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='SampleTypeSurveyType'))
+	BEGIN
+CREATE TABLE [dbo].[SampleTypeSurveyType](
+	[SampleTypeSurveyTypeID] [int] IDENTITY NOT NULL,
+	[SurveyTypeID] INT NOT NULL,
+	[SampleTypeID] INT NOT NULL,
+ CONSTRAINT [PK_SampleTypeSurveyType] PRIMARY KEY CLUSTERED 
+(
+	[SampleTypeSurveyTypeID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+) ON [PRIMARY]
+	END 
+COMMIT TRANSACTION
+GO
+
+INSERT INTO LegionellaPriorityRating (LegionellaPriorityRatingID,Description,ShortDescription,PriorityColour,SortOrder,Deleted) SELECT 6,'Monitoring Actions','Priority Level 0','D6F584',6,GETDATE() WHERE (SELECT COUNT(*) FROM LegionellaPriorityRating WHERE LegionellaPriorityRatingID=6)=0
+
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'FN' AND name = 'EmployeeListForAppointment') < 1 BEGIN	
+	EXEC('CREATE FUNCTION [dbo].[EmployeeListForAppointment] () RETURNS varchar(max) BEGIN RETURN '''' END;')
+End
+GO
+
+ALTER function [dbo].[EmployeeListForAppointment](@Appointmentid as int, @ListDelimiter as varchar(50))
+returns varchar(max)
+as
+begin	
+declare @retval as varchar(max) = ''
+    
+	
+	if Isnull(@AppointmentId,0) != 0
+	begin
+		select 
+			@retval  = @retval +ea.FullName+@ListDelimiter
+		from 
+			AppointmentEmployee ae
+			inner join Employee ea on ea.EmployeeID = ae.EmployeeID and ae.AppointmentID = @Appointmentid
+		order by
+			ea.FullName					
+	end
+
+	if @retval != '' 
+	begin
+		set @retval = left(@retval,len(@retval)-1)
+	end
+	return @retval
+end
+
+GO
+
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_OtherServicesWorkInProgress') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[Paged_OtherServicesWorkInProgress] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
+
+ALTER PROCEDURE [dbo].[Paged_OtherServicesWorkInProgress]
+	-- Paging
+    @PerPage INT = 15,
+    @CurrentPage INT = 1,
+
+	-- Standard filters
+    @ClientID INT = 0,
+    @ProjectID INT = 0,
+    @SiteID INT = 0,
+	@Filter VARCHAR(MAX) = '',
+	@LoggedInEmployeeID INT = 0,
+
+	-- User selected filters
+    @FilterStartDate DATETIME = NULL,
+    @FilterFinishDate DATETIME = NULL,
+    @BranchOfficeID INT = 0,
+    @EmployeeID INT = 0,
+	@QuoteVisitTypeID INT = 0
+
+WITH RECOMPILE
+AS
+BEGIN
+	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+    SET NOCOUNT ON;
+    
+DECLARE @UseDefaultOrdering INT = 0
+declare @delim as varchar(50)
+set @delim = ', '
+
+-- Set default variable values if not passed in.
+SELECT
+    @FilterStartDate = ISNULL(@FilterStartDate, CAST(DATEADD(YY, -1, GETDATE()) AS DATE)),
+    @FilterFinishDate = ISNULL(@FilterFinishDate, CAST(CAST(CAST(DATEADD(M, 3, GETDATE()) AS DATE) AS VARCHAR(100)) + ' 23:59:59.997' AS DATETIME))
+
+DECLARE
+	@LegionellaEnabled BIT = (SELECT CASE WHEN DateDeleted IS NULL THEN 1 ELSE 0 END FROM TeamsV2Tab WHERE TabText = 'Legionella' AND TeamsV2SectionID = 5 AND DateDeleted IS NULL)
+
+DECLARE @RestrictedClientIDs TABLE (IndexID INT IDENTITY(1,1), ClientID INT, EmployeeRestrictedClientAccessID INT)
+INSERT INTO @RestrictedClientIDs (ClientID, EmployeeRestrictedClientAccessID)
+SELECT
+	c.ClientID,
+	Access.EmployeeRestrictedClientAccessID
+FROM
+	Client c
+	OUTER APPLY
+	(
+		SELECT
+			erca.EmployeeRestrictedClientAccessID
+		FROM
+			EmployeeRestrictedClientAccess erca
+		WHERE
+			erca.EmployeeID = @LoggedInEmployeeID
+				AND
+			erca.ClientID = c.ClientID
+	) Access
+WHERE
+	c.Restricted = 1
+
+
+-- Get list of jobs upfront
+DECLARE @OtherServicesJobList TABLE (JobID INT, JobNo INT, ClientID INT, SiteID INT, ProjectID INT, BranchOfficeID INT, LastNoteCreated DATETIME, Status VARCHAR(100), 
+									Created DATETIME, AppointmentID INT)
+INSERT INTO @OtherServicesJobList
+SELECT
+	j.JobID,
+	j.JobNo,
+	j.ClientID,
+	j.SiteID,
+	j.ProjectID,
+	j.BranchOfficeID,
+	j.LastNoteCreated,
+	j.Status,
+	j.Created,
+	MAX(a.AppointmentID)	
+FROM
+	Job j
+	INNER JOIN Quote q ON j.JobId = q.JobID
+	LEFT JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID
+	INNER JOIN Appointment a ON q.QuoteID = a.QuoteID AND a.AppointmentTypeID NOT IN (1, 3, 9)		
+WHERE	
+	a.ManuallyMarkWorkDone = 0
+		AND
+	a.DateDeclined IS NULL
+		AND
+	a.DateConfirmed IS NOT NULL
+		AND 
+	((j.ClientID = @ClientID) OR @ClientID = 0)
+		AND
+	((j.ProjectID = @ProjectID) OR @ProjectID = 0)
+		AND
+	((j.SiteID = @SiteID) OR @SiteID = 0)
+		AND
+	((j.BranchOfficeID = @BranchOfficeID) OR @BranchOfficeID = 0)
+		AND
+	a.StartTime BETWEEN @FilterStartDate AND @FilterFinishDate
+		AND
+	((qt.QuoteVisitTypeID = @QuoteVisitTypeID) OR @QuoteVisitTypeID = 0)
+		AND
+	j.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+GROUP BY
+	j.JobID,	
+	j.JobNo,	
+	j.ClientID,
+	j.SiteID,
+	j.ProjectID,
+	j.BranchOfficeID,
+	j.LastNoteCreated,
+	j.Status,
+	j.Created,
+	a.AppointmentID
+	
+	
+
+IF @LegionellaEnabled = 0
+BEGIN
+	INSERT INTO @OtherServicesJobList
+SELECT
+	j.JobID,
+	j.JobNo,
+	j.ClientID,
+	j.SiteID,
+	j.ProjectID,
+	j.BranchOfficeID,
+	j.LastNoteCreated,
+	j.Status,
+	j.Created,
+	MAX(a.AppointmentID)	
+FROM
+	Job j
+	INNER JOIN Quote q ON j.JobId = q.JobID
+	LEFT JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID
+	INNER JOIN Appointment a ON q.QuoteID = a.QuoteID AND a.AppointmentTypeID = 9			
+WHERE
+	a.ManuallyMarkWorkDone = 0
+		AND
+	a.DateDeclined IS NULL
+		AND
+	a.DateConfirmed IS NOT NULL
+		AND 
+	((j.ClientID = @ClientID) OR @ClientID = 0)
+		AND
+	((j.ProjectID = @ProjectID) OR @ProjectID = 0)
+		AND
+	((j.SiteID = @SiteID) OR @SiteID = 0)
+		AND
+	((j.BranchOfficeID = @BranchOfficeID) OR @BranchOfficeID = 0)
+		AND
+	a.StartTime BETWEEN @FilterStartDate AND @FilterFinishDate
+		AND
+	((qt.QuoteVisitTypeID = @QuoteVisitTypeID) OR @QuoteVisitTypeID = 0)
+		AND
+	j.ClientID NOT IN (SELECT ClientID FROM @RestrictedClientIDs WHERE EmployeeRestrictedClientAccessID IS NULL)
+GROUP BY
+	j.JobID,
+	j.JobNo,
+	j.ClientID,
+	j.SiteID,
+	j.ProjectID,
+	j.BranchOfficeID,
+	j.LastNoteCreated,
+	j.Status,
+	j.Created,
+	a.AppointmentID	
+END
+
+-- Get all of the data needed for the procedure
+DECLARE @OtherServicesJobData TABLE (IndexID INT IDENTITY(1,1), QuoteVisitTypeID INT, ReportType VARCHAR(MAX), QuoteID INT, StartDate DATETIME, DueDate DATETIME, JobID INT, JobNo INT,
+									LastNoteCreated DATETIME, BranchOfficeID INT, ProjectID INT, Created DATETIME, ClientID INT, Client VARCHAR(MAX), SiteID INT, PostCode VARCHAR(50),
+									UPRN VARCHAR(50), Address VARCHAR(MAX), Status VARCHAR(100), AppointmentId INT)
+
+INSERT INTO @OtherServicesJobData
+SELECT
+	qt.QuoteVisitTypeID,
+	COALESCE(ac.Description, qvt.Description, qt.QuoteType),
+	q.QuoteID,
+	a.StartTime,
+	ag.DueDate,
+	j.JobID,
+	j.JobNo,
+	j.LastNoteCreated,
+	j.BranchOfficeID,
+	j.ProjectID,
+	j.Created,
+	j.ClientID,
+	c.Client,
+	j.SiteID,
+	si.Postcode,
+	si.UPRN,
+	si.Address,
+	j.Status,
+	a.AppointmentId	
+FROM
+	@OtherServicesJobList j
+	INNER JOIN Client c ON j.ClientID = c.ClientID
+	LEFT JOIN Site si ON j.SiteID = si.SiteID
+	INNER JOIN Quote q ON j.JobID = q.JobID
+	INNER JOIN QuoteType qt ON q.QuoteTypeID = qt.QuoteTypeID
+	INNER JOIN Appointment a ON j.AppointmentID = a.AppointmentID	
+	LEFT JOIN AppointmentGeneral ag ON a.AppointmentID = ag.AppointmentID
+	LEFT JOIN AppointmentCategory ac ON a.AppointmentCategoryID = ac.AppointmentCategoryID
+	LEFT JOIN QuoteVisitType qvt ON qt.QuoteVisitTypeID = qvt.QuoteVisitTypeID
+WHERE
+	(
+		CASE WHEN LEN(@Filter) = 0 THEN 1 ELSE
+			CASE
+				WHEN (
+						si.Address LIKE '%' + @Filter + '%'
+							OR
+						si.Postcode LIKE '%' + @Filter + '%'
+							OR
+						si.Address + ', ' + si.Postcode LIKE '%' + @Filter + '%'
+							OR
+						si.UPRN = @Filter
+					) THEN 1 ELSE 0
+			END
+		END = 1
+	)
+    
+-- Get the total number of rows.
+DECLARE @TotalRowNumber INT = (SELECT COUNT(*) FROM @OtherServicesJobData);
+    
+-- Use a CTE to setup paging.
+WITH Paging AS
+(
+    SELECT
+        CASE WHEN @PerPage = 0
+            THEN 1
+            ELSE ((a.IndexID - 1) / @PerPage) + 1
+        END [Page],
+        CASE WHEN @PerPage = 0
+            THEN 1
+            ELSE CAST(CEILING(COUNT(*) OVER (PARTITION BY '') * 1.00 / @PerPage) AS INT)
+        END [Pages],
+        a.*		
+    FROM
+        (
+            SELECT * FROM @OtherServicesJobData
+        ) a
+) 
+
+
+
+-- Start the main select
+SELECT
+	@TotalRowNumber [TotalRowNumber],
+	p.*,
+	dbo.EmployeeListForAppointment(p.AppointmentID,@delim) as EmployeeNames
+FROM
+	Paging p
+WHERE
+	(
+		(p.IndexID BETWEEN (@CurrentPage - 1) * @PerPage + 1 AND @CurrentPage * @PerPage)
+			OR
+		(@PerPage = 0 AND @CurrentPage = 0)
+    )
+    
+    SET NOCOUNT OFF;
+END
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'SurveyDataValidationChecks') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[SurveyDataValidationChecks] AS BEGIN SET NOCOUNT ON; END')
+End
+GO
+
+ALTER PROCEDURE [dbo].[SurveyDataValidationChecks]
+	@JobID INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+	CREATE TABLE #Issues (IssueDescription VARCHAR(MAX), [Required] BIT)	
+	INSERT INTO #Issues (IssueDescription, [Required])
+	
+	EXEC EnterpriseSurveyDataValidationChecks @JobID = @JobID
+
+	SELECT
+		IssueDescription, [Required]
+	FROM
+		#Issues
+
+	DROP TABLE #Issues
+
+    SET NOCOUNT OFF;
+END
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'EnterpriseSurveyDataValidationChecks') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[EnterpriseSurveyDataValidationChecks] AS BEGIN SET NOCOUNT ON; END')
+End
+GO
+
+ALTER PROCEDURE [dbo].[EnterpriseSurveyDataValidationChecks]
+	@JobID INT 
+AS
+BEGIN
+    SET NOCOUNT ON;
+	DECLARE @CompanyName VARCHAR(MAX) = (SELECT s__CompanyName from Config)
+	DECLARE @EnterpriseClient INT =(SELECT 1 FROM job j INNER JOIN Client c on j.clientid = c.clientid WHERE j.jobid = @JobID AND c.EnterpriseServerCode IS NOT NULL)
+
+	IF (@CompanyName = 'Northstar Environmental Ltd' OR @CompanyName = 'Tersus' OR @CompanyName = 'Bureau Veritas UK' OR @CompanyName = 'Riverside Environmental Services' OR @CompanyName = 'Derry Consultancy M1C' ) AND @EnterpriseClient = 1
+	BEGIN
+		DECLARE @ClientID INT = (SELECT ClientID FROM Job WHERE JobID=@JobID)
+		DECLARE @ExtendedSubOptionForClient TABLE (ElementTypeID INT, ElementIntMeaningExtendedID INT, ElementIntMeaningSubOptionID INT)
+		INSERT INTO @ExtendedSubOptionForClient (ElementTypeID,ElementIntMeaningExtendedID,ElementIntMeaningSubOptionID)
+		Select 
+			cse.ElementTypeID,cseime.ElementIntMeaningExtendedID,cseimso.ElementIntMeaningSubOptionID
+		FROM 
+			ClientSpecificElement cse
+			LEFT OUTER JOIN
+			(
+				SELECT
+					cse.ElementTypeID,eime.ElementIntMeaningExtendedID
+				FROM
+					ClientSpecificElement cse
+					INNER JOIN ClientSpecificElementIntMeaningExtended cseime ON cse.ClientID=cseime.ClientID 
+					INNER JOIN ElementIntMeaningExtended eime ON eime.ElementIntMeaningExtendedID=cseime.ElementIntMeaningExtendedID AND cse.ElementTypeID=eime.ElementTypeID
+				WHERE
+					cse.ClientID=@ClientID
+			) cseime ON cse.ElementTypeID=cseime.ElementTypeID AND cse.UseElementIntMeaningExtended=1
+				LEFT OUTER JOIN
+			(
+				SELECT
+					cse.ElementTypeID,eimso.ElementIntMeaningSubOptionID
+				FROM
+					ClientSpecificElement cse
+					INNER JOIN ElementIntMeaningSubOption eimso ON eimso.ElementTypeID=cse.ElementTypeID
+				WHERE
+					cse.ClientID=@ClientID
+			) cseimso ON cse.ElementTypeID=cseimso.ElementTypeID AND cse.UseElementIntMeaningSubOption=1
+		WHERE 
+			cse.ClientID=@ClientID
+
+		INSERT INTO #Issues ([IssueDescription],[Required])
+		SELECT 
+			CASE WHEN MAX(esofc.ElementIntMeaningExtendedID) IS NOT NULL THEN
+				CASE WHEN MAX(e.ElementIntMeaningExtendedID) IS NULL THEN 
+					'The ''' + et.ElementName + ''' does not match the setup required by the Enterprise client. RegisterItemNo: ' + CAST(s.RegisterItemNo as varchar) + 
+					CASE WHEN s.SampleRef IS NOT NULL THEN
+						', SampleRef: ' + CASE WHEN s.AsSample = 1 THEN 'As ' ELSE '' END + s.SampleRef 
+					ELSE 
+						'' 
+					END
+				END
+			ELSE
+				CASE WHEN MAX(e.ElementIntMeaningSubOptionID) IS NULL THEN 
+					''		
+				END
+			END [IssueDescription], 1 [Required]
+		FROM 
+			Job j
+			INNER JOIN ClientSpecificElement cse ON j.ClientID=cse.ClientID
+			INNER JOIN JobEmployee je ON je.JobID = j.JobID
+			INNER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
+			--INNER JOIN Survey su ON su.SurveyID = r.SurveyID
+			INNER JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
+			INNER JOIN Room rm ON fp.FloorplanID = rm.FloorplanID
+			INNER JOIN Sample s ON s.RoomID = rm.RoomID
+			INNER JOIN element e ON e.SampleID = s.SampleID AND cse.ElementTypeID=e.ElementTypeID
+			INNER JOIN ElementType et ON e.ElementTypeID=et.ElementTypeID
+			INNER JOIN @ExtendedSubOptionForClient esofc ON esofc.ElementTypeID=e.ElementTypeID
+		WHERE 
+			j.JobID = @JobID
+				AND
+			CASE WHEN esofc.ElementIntMeaningExtendedID IS NULL AND esofc.ElementIntMeaningSubOptionID IS NULL THEN
+				0
+			ELSE
+				CASE WHEN esofc.ElementIntMeaningExtendedID IS NOT NULL THEN
+					CASE WHEN e.ElementIntMeaningExtendedID IS NULL THEN 1 ELSE 0 END
+				ELSE
+					CASE WHEN e.ElementIntMeaningSubOptionID IS NULL THEN 1 ELSE 0 END
+				END
+			END = 1
+		GROUP BY
+			s.SampleID, s.SampleRef, s.RegisterItemNo, s.AsSample,et.ElementName
+	END
+    SET NOCOUNT OFF;
+END
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GUID_ApplyReinspectionGUID_ByJob') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[GUID_ApplyReinspectionGUID_ByJob] AS BEGIN SET NOCOUNT ON; END')
+End
+GO
+
+
+ALTER PROCEDURE [dbo].[GUID_ApplyReinspectionGUID_ByJob] 
+	@JobID INT,
+	@OriginalJobID INT,
+	@Return INT output
+AS
+BEGIN
+	DECLARE @RANDOMNULLCOMPARESTRING VARCHAR(50) = 'JHASJIJIDJASJIASDJIIPQNSJPASD'
+
+	SET NOCOUNT ON;
+	
+	DECLARE @ClientID INT =	(Select ClientID FROM Job Where JobID=@JobID)
+	DECLARE @SiteID INT =	(Select SiteID FROM Job Where JobID=@JobID)
+
+	/*	#######################################
+		Get the data for the original report!
+		#######################################    */
+	
+	DECLARE @ReinspectionData TABLE 
+	(
+		RegisterID INT, RegisterGUID VARCHAR(MAX),RegisterGUIDVersion INT,RegisterCreated DATETIME,
+		FloorplanID INT, FloorplanGUID VARCHAR(MAX),FloorplanGUIDVersion INT,FloorplanCreated DATETIME,
+		RoomID INT, RoomGUID VARCHAR(MAX),RoomGUIDVersion INT,RoomCreated DATETIME,
+		SampleID INT, SampleRef VARCHAR(MAX),SampleGUID VARCHAR(MAX),SampleGUIDVersion INT,SampleCreated DATETIME, ItemNo INT, ReinspectionState INT
+	)
+	
+	DECLARE @ori_Sample TABLE
+	(
+		RegisterID INT,RegisterGUID VARCHAR(MAX),BuildingDesignation VARCHAR(MAX),
+		FloorplanID INT,FloorNumber INT,FloorplanGUID VARCHAR(MAX),
+		RoomID INT,RoomDescription VARCHAR(MAX),RoomNC INT,RoomGUID VARCHAR(MAX),
+		SampleID INT, SampleRef VARCHAR(MAX),SampleGUID VARCHAR(MAX),SampleGUIDVersion INT,ItemNo INT,SampleDescription VARCHAR(MAX)
+	)
+	Insert into @ori_Sample (RegisterID,RegisterGUID,BuildingDesignation,FloorplanID,FloorNumber,FloorplanGUID,RoomID,RoomDescription,RoomNC,RoomGUID,SampleID,SampleRef,SampleGUID,SampleGUIDVersion,ItemNo,SampleDescription)
+	SELECT 
+		r.RegisterID,r.GUID,IsNull(r.BuildingDesignation,@RANDOMNULLCOMPARESTRING),fp.FloorplanID,fp.FloorNumber,fp.GUID,rm.RoomID,rm.Description,rm.Number,rm.GUID,s.SampleID,s.SampleRef,s.GUID,s.GUIDVersion,s.RegisterItemNo,e2.ElementText
+	FROM Job j
+		LEFT OUTER JOIN JobEmployee je ON je.JobID = j.JobID
+		LEFT OUTER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID		
+		LEFT OUTER JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
+		LEFT OUTER JOIN Room rm ON r.RegisterID = rm.RegisterID
+		LEFT OUTER JOIN Sample s ON s.RoomID = rm.RoomID
+		LEFT OUTER JOIN Element e2 ON s.SampleID=e2.SampleID AND e2.ElementTypeID=2
+	WHERE j.JobID = @OriginalJobID --AND r.GUID IS NOT NULL AND  AND rm.GUID IS NOT NULL AND s.GUID IS NOT NULL
+	
+	;with cte_IDList (RegisterID,RegisterGUID,RegisterCreated,BuildingDesignation,FloorplanID,FloorplanGUID,FloorNumber,RoomID,RoomGUID,RoomDescription,RoomNC,SampleID,SampleGUID,AsSample,SampleRef,ItemNo,SampleCreated,SampleDescription, ReinspectionState)
+	as
+	(
+		SELECT 
+			r.RegisterID,r.GUID,r.RegisterStart,IsNull(r.BuildingDesignation,@RANDOMNULLCOMPARESTRING),fp.FloorplanID,fp.GUID,fp.FloorNumber,rm.RoomID,rm.GUID,rm.Description,rm.Number,s.SampleID,s.GUID,s.AsSample,s.SampleRef,s.RegisterItemNo,s.DateCreated,e2.ElementText, e48.ElementIntID
+		FROM Job j
+			LEFT OUTER JOIN JobEmployee je ON je.JobID = j.JobID
+			LEFT OUTER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID			
+			LEFT OUTER JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
+			LEFT OUTER JOIN Room rm ON r.RegisterID = rm.RegisterID
+			LEFT OUTER JOIN Sample s ON s.RoomID = rm.RoomID
+			LEFT OUTER JOIN Element e2 ON s.SampleID=e2.SampleID AND e2.ElementTypeID=2
+			LEFT OUTER JOIN Element e48 ON s.SampleID=e48.SampleID AND e48.ElementTypeID=48
+		WHERE j.JobID = @JobID 
+		--AND (r.GUID IS NULL OR fp.GUID IS NULL OR rm.GUID IS NULL OR s.GUID IS NULL)
+	), 
+	--Need another list to contain all the guid data from the original - need to expand the field in these two to include matching data.
+	
+	/*
+		#######################################
+		Will need to do each of the levels seperately. 
+		Will require reverse-order processing while matching on the Floor number, Room description, sample ref / as sample / register item no / (sample description - this might need to be removed later).
+		First matching samples, then rooms, then floorplans then lastly register
+		#######################################    */
+	ori_Register (RegisterID,RegisterGUID,RegisterGUIDVersion,BuildingDesignation)
+	as
+	(
+		SELECT 
+			r.RegisterID,r.GUID,r.GUIDVersion,IsNull(r.BuildingDesignation,@RANDOMNULLCOMPARESTRING)
+		FROM Job j
+			LEFT OUTER JOIN JobEmployee je ON je.JobID = j.JobID
+			LEFT OUTER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
+		WHERE j.JobID = @OriginalJobID AND r.GUID IS NOT NULL
+	), ori_Floorplan (RegisterID,RegisterGUID,BuildingDesignation,FloorplanID,FloorNumber,FloorplanGUID,FloorplanGUIDVersion)
+	as
+	(
+		SELECT 
+			r.RegisterID,r.GUID,IsNull(r.BuildingDesignation,@RANDOMNULLCOMPARESTRING),fp.FloorplanID,fp.FloorNumber,fp.GUID,fp.GUIDVersion
+		FROM Job j
+			LEFT OUTER JOIN JobEmployee je ON je.JobID = j.JobID
+			LEFT OUTER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID			
+			LEFT OUTER JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
+		WHERE j.JobID = @OriginalJobID AND r.GUID IS NOT NULL AND fp.GUID IS NOT NULL
+	), ori_Room (RegisterID,RegisterGUID,BuildingDesignation,FloorplanID,FloorNumber,FloorplanGUID,RoomID,RoomDescription,RoomNC,RoomGUID,RoomGUIDVersion)
+	as
+	(
+		SELECT 
+			r.RegisterID,
+			r.GUID,
+			IsNull(r.BuildingDesignation,@RANDOMNULLCOMPARESTRING),
+			fp.FloorplanID,
+			fp.FloorNumber,
+			fp.GUID,
+			rm.RoomID,
+			rm.Description,
+			rm.Number,
+			rm.GUID,rm.GUIDVersion
+		FROM Job j
+			LEFT OUTER JOIN JobEmployee je ON je.JobID = j.JobID
+			LEFT OUTER JOIN Register r ON r.JobEmployeeID = je.JobEmployeeID
+			LEFT OUTER JOIN Survey su ON su.SurveyID = r.SurveyID
+			LEFT OUTER JOIN Floorplan fp ON fp.RegisterID = r.RegisterID
+			LEFT OUTER JOIN Room rm ON r.RegisterID = rm.RegisterID
+		WHERE j.JobID = @OriginalJobID AND r.GUID IS NOT NULL AND rm.GUID IS NOT NULL
+	) 
+	
+		
+
+	Insert into @ReinspectionData (RegisterID,RegisterGUID,RegisterGuidVersion,RegisterCreated,FloorplanID,FloorplanGUID,FloorplanGUIDVersion,FloorplanCreated,RoomID,RoomGUID,RoomGUIDVersion,RoomCreated,SampleID,SampleRef,SampleGUID,SampleGUIDVersion,SampleCreated,ItemNo, ReinspectionState)
+	Select	ids.RegisterID,
+			ori_Building.RegisterGUID,
+			ori_Building.RegisterGUIDVersion,
+			ids.RegisterCreated,
+			isnull(ids.FloorplanID,0),
+			ori_Floorplan.FloorplanGUID,
+			ori_Floorplan.FloorplanGUIDVersion,
+			fp.FloorplanCreated,
+			isnull(ids.RoomID,0),
+			ori_Room.RoomGUID,
+			ori_Room.RoomGUIDVersion,
+			rm.RoomCreated,
+			isnull(ids.SampleID,0),
+			ids.SampleRef,
+			oriSample.SampleGUID,
+			oriSample.SampleGUIDVersion,
+			ids.SampleCreated,
+			ids.ItemNo,
+			ids.ReinspectionState
+	FROM
+		cte_IDList ids
+		LEFT OUTER JOIN
+		(
+			Select FloorplanID,MIN(sub.SampleCreated) [FloorplanCreated] FROM cte_IDList sub GROUP BY sub.FloorplanID
+		) fp ON ids.FloorplanID=fp.FloorplanID
+		LEFT OUTER JOIN
+		(
+			Select RoomID,MIN(sub.SampleCreated) [RoomCreated] FROM cte_IDList sub GROUP BY sub.RoomID
+		) rm ON ids.RoomID=rm.RoomID
+		OUTER APPLY
+		(
+			Select o.RegisterGUID,o.RegisterGUIDVersion FROM ori_Register o Where (o.BuildingDesignation=ids.BuildingDesignation AND (Select COUNT(*) FROM ori_Register Where BuildingDesignation=o.BuildingDesignation)=1)
+		) ori_Building
+		OUTER APPLY
+		(
+			Select o.FloorplanGUID,o.FloorplanGUIDVersion FROM ori_Floorplan o Where o.FloorNumber=ids.FloorNumber AND (o.BuildingDesignation=ids.BuildingDesignation AND (Select COUNT(*) FROM ori_Register Where BuildingDesignation=o.BuildingDesignation)=1)
+		) ori_Floorplan
+		OUTER APPLY
+		(
+			Select o.RoomGUID,o.RoomGUIDVersion FROM ori_Room o Where (o.RoomDescription=ids.RoomDescription AND o.RoomNC = ids.RoomNC) AND Isnull(o.FloorNumber,0)=isnull(ids.FloorNumber,0) AND (o.BuildingDesignation=ids.BuildingDesignation AND (Select COUNT(*) FROM ori_Register Where BuildingDesignation=o.BuildingDesignation)=1)
+		) ori_Room
+		OUTER APPLY
+		(
+			Select o.SampleGUID,o.SampleGUIDVersion FROM @ori_Sample o Where 
+				o.ItemNo=ids.ItemNo 
+					AND 
+				(
+					(o.SampleDescription=ids.SampleDescription AND o.RoomNC=ids.RoomNC) 
+						OR 
+					(o.SampleRef = REPLACE(ids.SampleRef,'*','') AND ids.AsSample=0) 
+						OR 
+					(o.SampleRef = REPLACE(ids.SampleRef,'*','') AND o.RoomNC=ids.RoomNC AND ids.AsSample=1)
+				) 
+					AND 
+				o.RoomDescription=ids.RoomDescription 
+					AND 
+				isnull(o.FloorNumber,0)=isnull(ids.FloorNumber,0)
+					AND 
+				(o.BuildingDesignation=ids.BuildingDesignation AND (Select COUNT(*) FROM ori_Register Where BuildingDesignation=o.BuildingDesignation)=1)
+		) oriSample
+	
+	/*	#######################################
+		Now using the seperate lists we need to match up the ID list in order to confirm the data matches on all levels.	
+		#######################################    */	
+	IF (Select COUNT(*) FROM @ReinspectionData Where ((SampleRef IS NOT NULL AND SampleRef NOT LIKE '%*%') OR ReinspectionState=8) AND SampleGUID IS NULL) > 0 BEGIN
+		--GUID THEM!
+		DECLARE @GuidComplete INT = (Select COUNT(*) FROM @ReinspectionData Where RegisterGUID IS NULL AND ((SampleRef IS NOT NULL AND SampleRef NOT LIKE '%*%') OR ReinspectionState=8))
+		WHILE @GuidComplete > 0
+		BEGIN
+			print 'Applying Register GUID ' 
+			DECLARE @RegisterGUID VARCHAR(MAX) = 
+			(
+				Select top 1 
+					'000000000000-' +
+					c.s__ServerCode + '-' + 
+					r.SystemName + '-' +
+					tc.TableCode + '-' + 
+					dbo.FormatGUIDDateTime(js.RegisterCreated) [GUID]
+				FROM @ReinspectionData js
+					INNER JOIN Register r WITH (NOLOCK) ON r.RegisterID=js.RegisterID
+					LEFT OUTER JOIN TableCode tc WITH (NOLOCK) ON TableName = 'Register'
+					CROSS JOIN Config c
+				Where
+					js.RegisterGUID IS NULL
+				GROUP BY
+					js.RegisterID, js.RegisterCreated,c.s__ServerCode,r.SystemName,tc.TableCode
+				Order by js.RegisterID
+			)
+			IF (Select COUNT(*) FROM Register Where GUID=@RegisterGUID)>0 BEGIN
+				Update @ReinspectionData Set RegisterCreated=u.RegisterCreated
+				FROM @ReinspectionData
+				INNER JOIN
+				(
+					Select top 1 js.RegisterID [_RegisterID], DATEADD(SS,1,js.RegisterCreated) [RegisterCreated] FROM @ReinspectionData js Where js.RegisterGUID IS NULL GROUP BY js.RegisterID,js.RegisterCreated Order by js.RegisterID
+				) u ON u._RegisterID=RegisterID
+			END
+			ELSE
+				Update @ReinspectionData Set RegisterGUID=@RegisterGUID,RegisterGuidVersion=0
+				FROM @ReinspectionData
+				INNER JOIN
+				(
+					Select top 1 js.RegisterID [_RegisterID], js.RegisterCreated FROM @ReinspectionData js Where js.RegisterGUID IS NULL GROUP BY js.RegisterID,js.RegisterCreated Order by js.RegisterID
+				) u ON u._RegisterID=RegisterID
+
+			Set @GuidComplete = (Select COUNT(*) FROM @ReinspectionData Where RegisterGUID IS NULL AND ((SampleRef IS NOT NULL AND SampleRef NOT LIKE '%*%') OR ReinspectionState=8))
+		END
+		--	END REGISTER GUIDS#########################
+		
+		--	FLOORPLAN GUIDS#########################
+			SET @GuidComplete = (Select COUNT(*) FROM @ReinspectionData Where FloorplanGUID IS NULL AND ((SampleRef IS NOT NULL AND SampleRef NOT LIKE '%*%') OR ReinspectionState=8))
+			WHILE @GuidComplete > 0
+			BEGIN
+				print 'Applying Floorplan GUID ' 
+				DECLARE @FloorplanGUID VARCHAR(MAX) = 
+				(
+					Select top 1 
+						'000000000000-' +
+						c.s__ServerCode + '-' + 
+						r.SystemName + '-' +
+						tc.TableCode + '-' + 
+						dbo.FormatGUIDDateTime(js.FloorplanCreated) [GUID]
+					FROM @ReinspectionData js
+						INNER JOIN Register r WITH (NOLOCK) ON r.RegisterID=js.RegisterID
+						LEFT OUTER JOIN TableCode tc WITH (NOLOCK) ON TableName = 'Floorplan'
+						CROSS JOIN Config c
+					Where
+						js.FloorplanGUID IS NULL
+					GROUP BY
+						js.FloorplanID,js.FloorplanCreated,c.s__ServerCode,r.SystemName,tc.TableCode
+					Order by js.FloorplanID
+				)
+				IF (Select COUNT(*) FROM Floorplan Where GUID=@FloorplanGUID)>0 BEGIN
+					Update @ReinspectionData Set FloorplanCreated=u.FloorplanCreated
+					FROM @ReinspectionData
+					INNER JOIN
+					(
+						Select top 1 js.FloorplanID [_FloorplanID], DATEADD(SS,1,js.FloorplanCreated) [FloorplanCreated] FROM @ReinspectionData js Where js.FloorplanGUID IS NULL GROUP BY js.FloorplanID,js.FloorplanCreated Order by js.FloorplanID
+					) u ON u._FloorplanID=FloorplanID
+				END
+				ELSE
+					Update @ReinspectionData Set FloorplanGUID=@FloorplanGUID,FloorplanGUIDVersion=0
+					FROM @ReinspectionData
+					INNER JOIN
+					(
+						Select top 1 js.FloorplanID [_FloorplanID], js.FloorplanCreated FROM @ReinspectionData js Where js.FloorplanGUID IS NULL GROUP BY js.FloorplanID,js.FloorplanCreated Order by js.FloorplanID
+					) u ON u._FloorplanID=FloorplanID
+
+				--Set @GuidComplete = (Select COUNT(*) FROM @ReinspectionData Where FloorplanGUID IS NULL AND ((SampleRef IS NOT NULL AND SampleRef NOT LIKE '%*%') OR ReinspectionState=8))
+				Set @GuidComplete = @GuidComplete - 1
+			END
+			--	END FLOORPLAN GUIDS#########################
+			
+			--	ROOM GUIDS#########################
+			SET @GuidComplete = (Select COUNT(*) FROM @ReinspectionData Where ROOMGUID IS NULL AND ((SampleRef IS NOT NULL AND SampleRef NOT LIKE '%*%') OR ReinspectionState=8))
+			WHILE @GuidComplete > 0
+			BEGIN
+			print 'Applying Room GUID ' 
+				DECLARE @RoomGUID VARCHAR(MAX) = 
+				(
+					Select top 1 
+						'000000000000-' +
+						c.s__ServerCode + '-' + 
+						r.SystemName + '-' +
+						tc.TableCode + '-' + 
+						dbo.FormatGUIDDateTime(js.RoomCreated) [GUID]
+					FROM @ReinspectionData js
+						INNER JOIN Register r WITH (NOLOCK) ON r.RegisterID=js.RegisterID
+						LEFT OUTER JOIN TableCode tc WITH (NOLOCK) ON TableName = 'Room'
+						CROSS JOIN Config c
+					Where
+						js.RoomGUID IS NULL
+					GROUP BY
+						js.RoomID,js.RoomCreated,c.s__ServerCode,r.SystemName,tc.TableCode
+					Order by js.RoomID
+				)
+				IF (Select COUNT(*) FROM Room Where GUID=@RoomGUID)>0 BEGIN
+					Update @ReinspectionData Set RoomCreated=u.RoomCreated
+					FROM @ReinspectionData
+					INNER JOIN
+					(
+						Select top 1 js.RoomID [_RoomID], DATEADD(SS,1,js.RoomCreated) [RoomCreated] FROM @ReinspectionData js Where js.RoomGUID IS NULL GROUP BY js.RoomID,js.RoomCreated Order by js.RoomID
+					) u ON u._RoomID=RoomID
+				END
+				ELSE
+					Update @ReinspectionData Set RoomGUID=@RoomGUID,RoomGuidVersion=0
+					FROM @ReinspectionData
+					INNER JOIN
+					(
+						Select top 1 js.RoomID [_RoomID], js.RoomCreated FROM @ReinspectionData js Where js.RoomGUID IS NULL GROUP BY js.RoomID,js.RoomCreated Order by js.RoomID
+					) u ON u._RoomID=RoomID
+
+				Set @GuidComplete = (Select COUNT(*) FROM @ReinspectionData Where RoomGUID IS NULL AND ((SampleRef IS NOT NULL AND SampleRef NOT LIKE '%*%') OR ReinspectionState=8))				
+			END
+			--	END ROOM GUIDS#########################
+			
+			--	SAMPLE GUIDS#########################
+			SET @GuidComplete = (Select COUNT(*) FROM @ReinspectionData Where SampleGUID IS NULL AND ((SampleRef IS NOT NULL AND SampleRef NOT LIKE '%*%') OR ReinspectionState=8))
+			WHILE @GuidComplete > 0
+			BEGIN
+				print 'Applying Sample GUID ' 
+				DECLARE @SampleGUID VARCHAR(MAX) = 
+				(
+					Select top 1 
+						'000000000000-' +
+						c.s__ServerCode + '-' + 
+						r.SystemName + '-' +
+						tc.TableCode + '-' + 
+						dbo.FormatGUIDDateTime(js.SampleCreated) [GUID]
+					FROM @ReinspectionData js
+						INNER JOIN Register r WITH (NOLOCK) ON r.RegisterID=js.RegisterID
+						LEFT OUTER JOIN TableCode tc WITH (NOLOCK) ON TableName = 'Sample'
+						CROSS JOIN Config c
+					Where
+						js.SampleGUID IS NULL
+					GROUP BY
+						js.SampleID,js.SampleCreated,c.s__ServerCode,r.SystemName,tc.TableCode
+					Order by js.SampleID
+				)
+				IF (Select COUNT(*) FROM Sample Where GUID=@SampleGUID)>0 BEGIN
+					Update @ReinspectionData Set SampleCreated=u.SampleCreated
+					FROM @ReinspectionData
+					INNER JOIN
+					(
+						Select top 1 js.SampleID [_SampleID], DATEADD(SS,1,js.SampleCreated) [SampleCreated] FROM @ReinspectionData js Where js.SampleGUID IS NULL GROUP BY js.SampleID,js.SampleCreated Order by js.SampleID
+					) u ON u._SampleID=SampleID
+				END
+				ELSE
+					Update @ReinspectionData Set SampleGUID=@SampleGUID,SampleGUIDVersion=0
+					FROM @ReinspectionData
+					INNER JOIN
+					(
+						Select top 1 js.SampleID [_SampleID], js.SampleCreated FROM @ReinspectionData js Where js.SampleGUID IS NULL GROUP BY js.SampleID,js.SampleCreated Order by js.SampleID
+					) u ON u._SampleID=SampleID
+
+				Set @GuidComplete = (Select COUNT(*) FROM @ReinspectionData Where SampleGUID IS NULL AND ((SampleRef IS NOT NULL AND SampleRef NOT LIKE '%*%') OR ReinspectionState=8))				
+			END
+			--	END SAMPLE GUIDS#########################
+	END
+	
+	DECLARE @registerUpdated INT = (Select COUNT(DISTINCT RegisterID) FROM @ReinspectionData) --SELECT @RowsUpdated = @RowsUpdated+@@ROWCOUNT
+	DECLARE @floorplanUpdated INT = (Select COUNT(DISTINCT FloorplanID) FROM @ReinspectionData) --SELECT @RowsUpdated = @RowsUpdated+@@ROWCOUNT
+	DECLARE @roomUpdated INT = (Select COUNT(DISTINCT RoomID) FROM @ReinspectionData) --SELECT @RowsUpdated = @RowsUpdated+@@ROWCOUNT
+	DECLARE @sampleUpdated INT = (Select COUNT(DISTINCT SampleID) FROM @ReinspectionData) --SELECT @RowsUpdated = @RowsUpdated+@@ROWCOUNT
+	DECLARE @UpdatesComplete BIT = 1
+	
+	IF (Select COUNT(*) FROM  @ReinspectionData rd INNER JOIN @ori_Sample s ON rd.SampleGUID=s.SampleGUID Where rd.RegisterGUID <> s.RegisterGUID OR rd.FloorplanGUID <> s.FloorplanGUID OR rd.RoomGUID <> s.RoomGUID) > 0 BEGIN
+		Delete @ReinspectionData
+		Set @Return = 0
+		Set @UpdatesComplete = 0
+	END
+	
+	IF (Select COUNT(*) FROM @ReinspectionData)=0 BEGIN 
+		Set @Return = 2 
+		Set @UpdatesComplete = 0
+	END
+	
+	/*	#######################################
+		Update each record updating the GUID with a where clause to make sure the GUID does not exist, keeping a track of the total number of updated rows. This needs to match the record count of those that need updating.
+		#######################################    */	
+	
+	
+	IF @UpdatesComplete = 1 BEGIN
+		BEGIN TRANSACTION
+			
+			--#### UPDATE ACTUAL TABLE RECORDS ####		
+			--IF @UpdatesComplete = 1 BEGIN
+				UPDATE Register Set GUIDVersion=u.GuidVersion+1,GUID=u.Guid FROM Register INNER JOIN (Select RegisterID,RegisterGUID [Guid],RegisterGUIDVersion [GuidVersion] FROM @ReinspectionData Where RegisterGUID IS NOT NULL GROUP BY RegisterID,RegisterGUID,RegisterGUIDVersion) u ON u.RegisterID=Register.RegisterID				
+			--	IF @@ROWCOUNT <> @registerUpdated BEGIN Set @UpdatesComplete = 0 END
+			--END
+			
+			--IF @UpdatesComplete = 1 BEGIN
+				UPDATE Floorplan Set GUIDVersion=u.GuidVersion+1,GUID=u.Guid FROM Floorplan INNER JOIN (Select FloorplanID,FloorplanGUID [Guid],FloorplanGUIDVersion [GuidVersion] FROM @ReinspectionData Where FloorplanGUID IS NOT NULL GROUP BY FloorplanID,FloorplanGUID,FloorplanGUIDVersion) u ON u.FloorplanID=Floorplan.FloorplanID
+			--	IF @@ROWCOUNT <> @floorplanUpdated BEGIN Set @UpdatesComplete = 0 END
+			--END
+			
+			--IF @UpdatesComplete = 1 BEGIN
+				UPDATE Room Set GUIDVersion=u.GuidVersion+1,GUID=u.Guid FROM Room INNER JOIN (Select RoomID,RoomGUID [Guid],RoomGUIDVersion [GuidVersion] FROM @ReinspectionData Where RoomGUID IS NOT NULL GROUP BY RoomID,RoomGUID,RoomGUIDVersion) u ON u.RoomID=Room.RoomID				
+			--	IF @@ROWCOUNT <> @roomUpdated BEGIN Set @UpdatesComplete = 0 END
+			--END
+			
+			--IF @UpdatesComplete = 1 BEGIN
+				UPDATE Sample Set GUIDVersion=u.GuidVersion+1,GUID=u.Guid FROM Sample INNER JOIN (Select SampleID,SampleGUID [Guid],SampleGUIDVersion [GuidVersion] FROM @ReinspectionData Where SampleGUID IS NOT NULL GROUP BY SampleID,SampleGUID,SampleGUIDVersion) u ON u.SampleID=Sample.SampleID
+				
+			--	IF @@ROWCOUNT <> @sampleUpdated BEGIN Set @UpdatesComplete = 0 END
+			--END
+		
+		Set @UpdatesComplete = 1
+		
+		IF @UpdatesComplete = 1
+			BEGIN
+				rollback TRANSACTION
+				Set @Return = 1
+				Exec PopulateGuidSamples @ClientId, @SiteId 
+				Exec CreateSiteSampleResultsOverviewSorting @ClientId, @SiteId
+			END
+		ELSE
+			BEGIN
+				ROLLBACK TRANSACTION
+				Set @Return = 0
+		END
+	END
+		
+	SET NOCOUNT OFF;
+END
+
+GO
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_ProjectJobSheetv2') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[Paged_ProjectJobSheetv2] AS BEGIN SET NOCOUNT ON; END')
+End
+GO
+
+ALTER PROCEDURE [dbo].[Paged_ProjectJobSheetv2]
+		
+/**********************************************************************
+** Overview: Get data for the View Project JobSheet tab - procedurised
+**		to improve performance over previous code + add paging capability
+**
+** PLEASE NOTE: The Change Log has now been removed as this has been added to SQL SVN instead.
+** Please use the latest version from SVN before making changes. Commit the changes when done.
+**********************************************************************/
+@PerPage INT = 15
+	, @CurrentPage INT = 1
+	, @ClientID INT = NULL
+	, @ProjectGroupID INT = NULL
+	, @ProjectID INT = NULL
+	, @SiteID INT = NULL
+	, @Status VARCHAR(24) = ''
+	, @Other VARCHAR(MAX) = ''
+	, @Address VARCHAR(200) = ''
+	, @PhoneCalls INT = NULL
+	, @Letters INT = NULL
+	,@NoAccessAttempts INT = NULL
+AS
+SET ANSI_WARNINGS OFF
+BEGIN
+    SET NOCOUNT ON;
+ 
+ 	declare @internalPerPage INT
+	, @internalCurrentPage INT 
+	, @internalClientID INT
+	, @internalProjectGroupID INT 
+	, @internalProjectID INT
+	, @internalSiteID INT 
+	, @internalStatus VARCHAR(24) 
+	, @internalOther VARCHAR(MAX) 
+	, @internalAddress VARCHAR(200) 
+	, @internalPhoneCalls INT
+	, @internalLetters INT 
+	,@internalNoAccessAttempts INT 
+    
+	-- tidy input variables
+	select @internalPerPage = @PerPage	
+	SELECT @internalClientID = NULLIF(@ClientID, 0)
+	SELECT @internalProjectGroupID = NULLIF(@ProjectGroupID, 0)
+	SELECT @internalProjectID = NULLIF(@ProjectID, 0)
+	SELECT @internalSiteID = NULLIF(@SiteID, 0)
+	SELECT @internalStatus = NULLIF(@Status, '')
+	SELECT @internalOther = NULLIF(@Other, '')
+	SELECT @internalAddress = NULLIF(@Address, '')
+	SELECT @internalPhoneCalls = NULLIF(@PhoneCalls, 0)
+	SELECT @internalLetters = NULLIF( @Letters, 0)
+	SELECT @InternalNoAccessAttempts = NULLIF( @NoAccessAttempts, 0)
+
+
+	--SELECT @internalPerPage 	
+	--SELECT @internalClientID 	
+	--SELECT @internalProjectGroupID	
+	--SELECT @internalProjectID 
+	--SELECT @internalSiteID 
+	--SELECT @internalStatus 	
+	--SELECT @internalOther 
+	--SELECT @internalAddress 
+	--SELECT @internalPhoneCalls 
+	--SELECT @internalLetters 
+	--SELECT  @InternalNoAccessAttempts 
+
+
+	-- ensure we have at least 1 filter ID (don't want to kill the server!)
+	IF (@internalClientID IS NULL) AND ( @InternalProjectGroupId IS NULL) AND ( @InternalProjectId IS NULL) AND ( @InternalSiteId IS NULL) BEGIN
+		RAISERROR('No ID values passed to GetProjectJobSheet', 16, 1)
+		RETURN
+	END
+	
+	-- get ProjectIDs into a table to join to, based on  @InternalProjectGroupId AND  @InternalProjectId inputs
+	CREATE TABLE #ProjectIDs (ProjectID INT PRIMARY KEY)
+	IF  Isnull(@InternalProjectId,0) != 0 
+	BEGIN	
+		INSERT
+			#ProjectIDs
+		SELECT
+			 @InternalProjectId			
+	END 
+	ELSE 
+	BEGIN		
+		INSERT
+			#ProjectIDs
+		SELECT DISTINCT
+			ProjectID
+		FROM
+			Project
+		WHERE
+			ProjectGroupId =  @InternalProjectGroupId
+	END
+	
+	
+	-- change #ProjectIDs into a comma separated string of IDs 
+	DECLARE  @InternalProjectIdsString VARCHAR(MAX)
+	SELECT  @InternalProjectIdsString = STUFF 
+	((
+		SELECT ',' + CONVERT(VARCHAR(20), ProjectID)
+		FROM #ProjectIDs
+		FOR XML PATH('')
+	), 1, 1, '')
+
+	IF @internalClientID IS NULL
+	BEGIN
+		SELECT @internalClientID = (SELECT TOP 1 p.ClientID FROM #ProjectIDs pids INNER JOIN Project p ON pids.ProjectID = p.ProjectID)
+	END
+	
+	create TABLE #ProjectJobSheet (pk int not null identity(1,1) PRIMARY KEY,[SortOrder] INT, [AppointmentId] INT, [Status] VARCHAR(MAX), [StatusDate] VARCHAR(MAX), [JobNo] VARCHAR(MAX), [Address] VARCHAR(MAX), [Postcode] VARCHAR(MAX), [Contact] VARCHAR(MAX), [Telephone] VARCHAR(MAX), [SiteEmail] VARCHAR(MAX), [JobId] INT, [SurveyTypeId] INT, [AppointmentDate] DATE, [DateSiteWorkComplete] DATETIME, [AnalysisComplete] DATE, [TotalJobs] INT, [WorkScheduled] INT, [SiteWorkComplete] INT, [Samples] INT, [SampleResults] INT, [FileName] VARCHAR(MAX), [ClientOrderNo] VARCHAR(MAX), [DateReceived] VARCHAR(MAX), [QuoteDate] VARCHAR(MAX), [uprn] VARCHAR(MAX), [SurveyType] VARCHAR(MAX), [Surveyor] VARCHAR(MAX), [SurveyStart] VARCHAR(MAX), [SurveyCompleted] VARCHAR(MAX), [AnalysisCompleted] VARCHAR(MAX), [Approved] VARCHAR(MAX), [ApprovedBy] VARCHAR(MAX), [DueDate] VARCHAR(MAX), [NoAccessAttempts] INT, [PhoneCalls] INT, [Letters] INT, [GroupName] VARCHAR(MAX), [ClientId] INT, [ProjectId] INT, [SiteId] INT, [Other] VARCHAR(MAX), [LastNoAccessDate] DATETIME, [LastJobEmployeeDate] DATETIME, [QuoteId] INT, [InvoiceDate] VARCHAR(MAX))	
+	INSERT INTO #ProjectJobSheet
+	SELECT 
+		[SortOrder], 
+		[AppointmentId], 
+		[Status], 
+		case 
+			when ((LastNoAccessDate is not null and LastJobEmployeeDate is null) or (LastNoAccessDate > LastJobEmployeeDate))
+			then 
+				 dbo.FormatTeamsDate(LastNoAccessDate,1) + ' (No access)'
+			else 
+				 dbo.FormatTeamsDate([StatusDate],1)
+		end  as [StatusDate],
+		[JobNo], 
+		[Address],
+		[Postcode],
+		[Contact],
+		[Telephone], 
+		[SiteEmail],
+		[JobId],
+		[SurveyTypeId],
+		[AppointmentDate],
+		[DateSiteWorkComplete],
+		[AnalysisComplete],
+		[TotalJobs],
+		[WorkScheduled],
+		[SiteWorkComplete],
+		[Samples],
+		[SampleResults],
+		[FileName] , 
+		[ClientOrderNo] , 
+		[DateReceived] , 
+		[QuoteDate] , 
+		[uprn] , 
+		[SurveyType] , 
+		[Surveyor] , 
+		[SurveyStart] , 
+		[SurveyCompleted] , 
+		[AnalysisCompleted] , 
+		[Approved] , 
+		[ApprovedBy] , 
+		[DueDate] , 
+		[NoAccessAttempts], 
+		[PhoneCalls], 
+		[Letters],
+		[GroupName] ,
+		[ClientId], 
+		pjs.[ProjectId],
+		[SiteId],
+		[Other] , 
+		[LastNoAccessDate],
+		[LastJobEmployeeDate],
+		[QuoteId], 
+		[InvoiceDate]  
+	FROM 
+		ProjectJobSheet pjs
+		inner join #ProjectIDs p on p.ProjectID = pjs.ProjectId
+	WHERE
+		pjs.ClientId = @internalClientID
+	
+	-- select from existing ProjectJobSheet view into a temp table
+	CREATE TABLE #JobSheetData (
+		JobSheetDataID INT IDENTITY (1,1) NOT NULL
+		, AppointmentID INT NULL
+		, JobId INT NULL
+		, SurveyTypeId INT NULL
+		, ClientId INT NULL
+		, ProjectId INT NULL
+		, SiteId INT NULL
+		, SurveyCompleted INT NULL
+		, SurveyStillDue INT NULL
+		, Approved INT NULL
+		, SurveyOnTime INT NULL
+		, SurveyOverTime INT NULL
+		, Unscheduled INT NULL
+		, SurveyCompletedRaw NVARCHAR(40) NULL
+		, DueDateRaw NVARCHAR(40) NULL
+		, ApprovedRaw NVARCHAR(40) NULL
+		, SortOrder INT NOT NULL
+		, Samples INT NULL
+		, SampleResults INT NULL
+		, [Status] VARCHAR(24)
+		, Other VARCHAR(MAX)
+		, [Address] VARCHAR(200)
+		, PhoneCalls INT NULL
+		, Letters INT NULL
+		, NoAccessAttempts INT NULL
+		, StatusFilterTypeID INT NULL
+		, StatusFilterType VARCHAR(MAX) NULL
+	)
+	
+	/**************************************************************************************************************************************
+	-- NOTE - We are using dynamic SQL because the WHERE filters are still evaluated even if the parameter to be filtered on IS NULL, which
+	--   causes a hit on performance.  NOT ideal, but performance is more important than tidy code here!
+	**************************************************************************************************************************************/
+	DECLARE @DynamicSQL NVARCHAR(MAX)
+	SELECT @DynamicSQL = '
+	INSERT
+		#JobSheetData
+	SELECT
+		pjs.AppointmentID
+		, pjs.JobId
+		, pjs.SurveyTypeId
+		, pjs.ClientId
+		, pjs.ProjectId
+		, pjs.SiteId
+		, CASE WHEN NOT SurveyCompleted IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyCompleted
+		, CASE WHEN pjs.[Status] = ''Unscheduled'' OR SortOrder = 3 THEN 0 ELSE 1 END AS SurveyStillDue
+		, CASE WHEN NOT Approved IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS Approved
+		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) <= 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOnTime
+		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) > 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOverTime
+		, CASE WHEN pjs.[Status] = ''Unscheduled'' AND SortOrder <> 3 THEN 1 ELSE 0 END AS Unscheduled
+		, SurveyCompleted
+		, DueDate
+		, Approved
+		, SortOrder
+		, Samples
+		, SampleResults
+		, pjs.[Status]
+		, pjs.Other
+		, pjs.[Address]
+		, [PhoneCalls]
+		, [Letters]
+		, pjs.NoAccessAttempts
+		, s.StatusFilterTypeID
+		, sft.[Status] As StatusFilterType
+	FROM
+		#ProjectJobSheet pjs
+		LEFT JOIN Site s ON pjs.SiteId = s.SiteID
+		LEFT JOIN StatusFilterType sft ON s.StatusFilterTypeID = sft.StatusFilterTypeID
+	WHERE
+		pjs.ProjectID IN (' +  @InternalProjectIdsString + ') '
+
+	-- add default order by
+	SELECT @DynamicSQL = @DynamicSQL + ' ORDER BY SortOrder, JobNo, Address'
+
+	-- execute the SQL
+	EXECUTE sp_executesql @DynamicSQL
+
+
+	
+	-- ClientID filter (not applied to view above as extra view filters slow performance)
+	IF @internalClientID IS NOT NULL BEGIN
+		DELETE FROM #JobSheetData WHERE ClientID <> @internalClientID
+	END
+	
+	-- SiteID filter (not applied to view above as extra view filters slow performance)
+	IF  @InternalSiteId IS NOT NULL BEGIN
+		DELETE FROM #JobSheetData WHERE SiteID <>  @InternalSiteId
+	END
+
+	--  @InternalPhoneCalls filter (not applied to view above as extra view filters slow performance)
+	IF  @InternalPhoneCalls IS NOT NULL BEGIN
+		
+		IF  @InternalPhoneCalls > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE PhoneCalls < 4
+		END
+
+		IF  @InternalPhoneCalls < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE PhoneCalls <>  @InternalPhoneCalls
+		END
+	END
+
+	--  @InternalLetters filter (not applied to view above as extra view filters slow performance)
+	IF  @InternalLetters IS NOT NULL BEGIN
+
+		IF  @InternalLetters > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE Letters < 4
+		END
+
+		IF  @InternalLetters < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE Letters <>  @InternalLetters
+		END
+	END
+	
+	--  @InternalNoAccessAttempts filter (not applied to view above as extra view filters slow performance)
+	IF  @InternalNoAccessAttempts IS NOT NULL BEGIN
+
+		IF  @InternalNoAccessAttempts > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE NoAccessAttempts < 4
+		END
+
+		IF  @InternalNoAccessAttempts < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE NoAccessAttempts <>  @InternalNoAccessAttempts
+		END
+	END
+
+	
+
+	-- calculate useful totals
+    DECLARE @SurveysCompleted INT
+    DECLARE @SurveysStillDue INT
+    DECLARE @Approved INT
+    DECLARE @SurveysOnTime INT
+    DECLARE @SurveysOverTime INT
+    DECLARE @UnScheduled INT
+    DECLARE @KPI DECIMAL(12,2)
+    DECLARE @TotalJobs_HasSampleResults INT
+    DECLARE @Approved_HasSampleResults INT
+    DECLARE @TotalRows INT
+    
+	SELECT
+		@SurveysCompleted = ISNULL(SUM(SurveyCompleted), 0)
+		, @SurveysStillDue = ISNULL(SUM(SurveyStillDue), 0) - ISNULL(SUM(SurveyCompleted), 0)
+		, @Approved = ISNULL(SUM(Approved), 0)
+		, @SurveysOnTime = ISNULL(SUM(SurveyOnTime), 0)
+		, @SurveysOverTime = ISNULL(SUM(SurveyOverTime), 0)
+		, @UnScheduled = ISNULL(SUM(UnScheduled), 0)
+		, @KPI = ISNULL(CASE WHEN COUNT(SurveyCompletedRaw) = 0 THEN 0 ELSE ROUND(SUM(CASE WHEN DueDateRaw > SurveyCompletedRaw AND SortOrder <> 3 THEN 1 ELSE 0 END)
+					/ CONVERT(FLOAT,COUNT(SurveyCompletedRaw)), 3) * 100 END, 0)
+		, @TotalRows = COUNT(1)
+	FROM 
+		#JobSheetData
+		
+	SELECT
+		@TotalJobs_HasSampleResults = ISNULL(SUM(CASE WHEN [Status] = 'Unscheduled' OR SortOrder = 3 THEN 0 ELSE 1 END), 0) 
+		, @Approved_HasSampleResults = ISNULL(SUM(CASE WHEN NOT ApprovedRaw IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END), 0)
+	FROM 
+		#JobSheetData
+	WHERE
+		Samples > 0
+		AND Samples = SampleResults
+	
+	-- return paged raw data to front end
+	-- NOTE -  @InternalStatus,  @InternalOther and  @InternalAddress filters only filter this data, not the count data
+	;WITH Paging AS 
+    ( 
+       SELECT 
+           CAST(CEILING(COUNT(*) OVER(PARTITION BY '') * 1.00 / @InternalPerPage) AS INT) AS Pages
+           , ((ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) - 1) / @InternalPerPage) + 1 AS Page
+           , ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) AS Row_Num
+           , *
+       FROM 
+       (
+			SELECT * FROM #JobSheetData jsd
+			WHERE
+				( (jsd.[Status] =  @InternalStatus) OR (jsd.[StatusFilterType] =  @InternalStatus) OR ( @InternalStatus IS NULL) )
+				AND ( (jsd.Other =  @InternalOther) OR ( @InternalOther IS NULL) )
+				AND ( (jsd.[Address] =  @InternalAddress) OR ( @InternalAddress IS NULL) )
+	   ) a
+    )	
+                
+	SELECT  
+		main.Pages
+		, main.Page
+		, main.Row_Num
+		, pjs.SortOrder
+		, pjs.AppointmentID
+		, pjs.[Status]
+		, pjs.StatusDate
+		, pjs.JobNo
+		, pjs.[Address]
+		, pjs.Postcode
+		, pjs.Contact
+		, pjs.Telephone
+		, pjs.SiteEmail
+		, pjs.JobId
+		, pjs.SurveyTypeId
+		, pjs.AppointmentDate
+		, pjs.DateSiteWorkComplete
+		, pjs.AnalysisComplete
+		, pjs.TotalJobs
+		, pjs.WorkScheduled
+		, pjs.SiteWorkComplete
+		, pjs.Samples
+		, pjs.SampleResults
+		, pjs.[FileName]
+		, pjs.ClientOrderNo
+		, pjs.DateReceived
+		, pjs.UPRN
+		, pjs.SurveyType
+		, pjs.Surveyor
+		, pjs.SurveyStart
+		, pjs.SurveyCompleted
+		, pjs.AnalysisCompleted
+		, pjs.Approved
+		, pjs.ApprovedBy
+		, pjs.DueDate
+		, pjs.NoAccessAttempts
+		, pjs.PhoneCalls
+		, pjs.Letters
+		, (SELECT STUFF(
+			(
+				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
+				FROM SiteContact sc2
+				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 1
+				FOR XML PATH('')
+			), 1, 1, '')) AS PhoneCallSiteContactIDs
+		, (SELECT STUFF(
+			(
+				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
+				FROM SiteContact sc2
+				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 2
+				FOR XML PATH('')
+			), 1, 1, '')) AS LetterSiteContactIDs
+		, pjs.GroupName
+		, pjs.ClientId
+		, pjs.ProjectId
+		, pjs.SiteId
+		, pjs.Other
+		, pjspa.ProjectAppointmentID
+		, pjs.LastNoAccessDate
+		, pjs.LastJobEmployeeDate
+		, pjs.QuoteId
+		, pjs.QuoteDate
+		, pjs.InvoiceDate
+		, main.StatusFilterTypeID
+		, main.StatusFilterType
+    FROM 
+		Paging main
+		INNER JOIN #ProjectJobSheet pjs 
+			ON ISNULL(main.AppointmentID, 0) = ISNULL(pjs.AppointmentID, 0)
+			AND ISNULL(main.JobID, 0) = ISNULL(pjs.JobID, 0)
+			AND ISNULL(main.SurveyTypeID, 0) = ISNULL(pjs.SurveyTypeID, 0)
+			AND ISNULL(main.ClientID, 0) = ISNULL(pjs.ClientID, 0)
+			AND ISNULL(main.ProjectID, 0) = ISNULL(pjs.ProjectID, 0)
+			AND ISNULL(main.SiteID, 0) = ISNULL(pjs.SiteID, 0)
+		LEFT JOIN Appointment pjspa ON pjs.AppointmentID = pjspa.AppointmentID
+    WHERE 
+		main.Row_Num BETWEEN (@CurrentPage - 1) * @InternalPerPage + 1 AND @CurrentPage * @InternalPerPage
+	ORDER BY
+		main.Row_Num
+	
+		-- drop temp tables
+	DROP TABLE #ProjectIDs
+	DROP TABLE #JobSheetData
+	
+	-- return useful counts to front end
+	SELECT
+		@SurveysStillDue AS WorkScheduled
+		, @SurveysStillDue AS SurveysStillDue
+		, @Approved AS Approved
+		, @SurveysOnTime AS SurveysOnTime
+		, @SurveysOverTime AS SurveysOverTime
+		, @UnScheduled AS UnScheduled
+		, @KPI AS KPI
+		, @TotalJobs_HasSampleResults - @Approved_HasSampleResults AS SampleAnalysisComplete
+		--, @SurveysCompleted - @TotalJobs_HasSampleResults - @Approved AS SiteWorkComplete
+		, @TotalRows - @UnScheduled - @SurveysStillDue - @TotalJobs_HasSampleResults + @Approved_HasSampleResults - @Approved AS SiteWorkComplete
+    
+    
+    SET NOCOUNT OFF;
+END
+GO
+
+
+
