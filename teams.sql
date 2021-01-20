@@ -8235,358 +8235,6 @@ GO
 UPDATE TeamsV2SubTab SET EnableMvcGrid = 1 WHERE TabText = 'Mobile Unit Summary'
 GO
 
-ALTER PROCEDURE [dbo].[Paged_ProjectJobSheet]
-	@PerPage INT = 15
-	, @CurrentPage INT = 1
-	, @ClientID INT = NULL
-	, @ProjectGroupID INT = NULL
-	, @ProjectID INT = NULL
-	, @SiteID INT = NULL
-	, @Status VARCHAR(24) = ''
-	, @Other VARCHAR(MAX) = ''
-	, @Address VARCHAR(200) = ''
-	, @PhoneCalls INT = NULL
-	, @Letters INT = NULL,
-	@NoAccessAttempts INT = NULL
-/**********************************************************************
-** Overview: Get data for the View Project JobSheet tab - procedurised
-**		to improve performance over previous code + add paging capability
-**
-** PLEASE NOTE: The Change Log has now been removed as this has been added to SQL SVN instead.
-** Please use the latest version from SVN before making changes. Commit the changes when done.
-**********************************************************************/
-AS
-SET ANSI_WARNINGS OFF
-BEGIN
-    SET NOCOUNT ON;
-    
-	-- tidy input variables
-	SELECT @ClientID = NULLIF(@ClientID, 0)
-	SELECT @ProjectGroupID = NULLIF(@ProjectGroupID, 0)
-	SELECT @ProjectID = NULLIF(@ProjectID, 0)
-	SELECT @SiteID = NULLIF(@SiteID, 0)
-	SELECT @Status = NULLIF(@Status, '')
-	SELECT @Other = NULLIF(@Other, '')
-	SELECT @Address = NULLIF(@Address, '')
-	SELECT @PhoneCalls = NULLIF(@PhoneCalls, 0)
-	SELECT @Letters = NULLIF(@Letters, 0)
-	SELECT @NoAccessAttempts = NULLIF(@NoAccessAttempts, 0)
-
-	-- ensure we have at least 1 filter ID (don't want to kill the server!)
-	IF (@ClientID IS NULL) AND (@ProjectGroupID IS NULL) AND (@ProjectID IS NULL) AND (@SiteID IS NULL) BEGIN
-		RAISERROR('No ID values passed to GetProjectJobSheet', 16, 1)
-		RETURN
-	END
-	
-	-- get ProjectIDs into a table to join to, based on @ProjectGroupID AND @ProjectID inputs
-	CREATE TABLE #ProjectIDs (ProjectID INT)
-	IF @ProjectID IS NOT NULL BEGIN
-	
-		INSERT
-			#ProjectIDs
-		SELECT
-			@ProjectID
-			
-	END ELSE BEGIN
-		
-		INSERT
-			#ProjectIDs
-		SELECT
-			ProjectID
-		FROM
-			Project
-		WHERE
-			ProjectGroupId = @ProjectGroupID
-	END
-	
-	-- change #ProjectIDs into a comma separated string of IDs 
-	DECLARE @ProjectIDsString VARCHAR(MAX)
-	SELECT @ProjectIDsString = STUFF 
-	((
-		SELECT ',' + CONVERT(VARCHAR(20), ProjectID)
-		FROM #ProjectIDs
-		FOR XML PATH('')
-	), 1, 1, '')
-	
-	-- select from existing ProjectJobSheet view into a temp table
-	CREATE TABLE #JobSheetData (
-		JobSheetDataID INT IDENTITY (1,1) NOT NULL
-		, AppointmentID INT NULL
-		, JobId INT NULL
-		, SurveyTypeId INT NULL
-		, ClientId INT NULL
-		, ProjectId INT NULL
-		, SiteId INT NULL
-		, SurveyCompleted INT NULL
-		, SurveyStillDue INT NULL
-		, Approved INT NULL
-		, SurveyOnTime INT NULL
-		, SurveyOverTime INT NULL
-		, Unscheduled INT NULL
-		, SurveyCompletedRaw NVARCHAR(40) NULL
-		, DueDateRaw NVARCHAR(40) NULL
-		, ApprovedRaw NVARCHAR(40) NULL
-		, SortOrder INT NOT NULL
-		, Samples INT NULL
-		, SampleResults INT NULL
-		, [Status] VARCHAR(24)
-		, Other VARCHAR(MAX)
-		, [Address] VARCHAR(200)
-		, PhoneCalls INT NULL
-		, Letters INT NULL
-		, NoAccessAttempts INT NULL
-		, StatusFilterTypeID INT NULL
-		, StatusFilterType VARCHAR(MAX) NULL
-	)
-	
-	/**************************************************************************************************************************************
-	-- NOTE - We are using dynamic SQL because the WHERE filters are still evaluated even if the parameter to be filtered on IS NULL, which
-	--   causes a hit on performance.  NOT ideal, but performance is more important than tidy code here!
-	**************************************************************************************************************************************/
-	DECLARE @DynamicSQL NVARCHAR(MAX)
-	SELECT @DynamicSQL = 'INSERT
-		#JobSheetData
-	SELECT
-		pjs.AppointmentID
-		, pjs.JobId
-		, pjs.SurveyTypeId
-		, pjs.ClientId
-		, pjs.ProjectId
-		, pjs.SiteId
-		, CASE WHEN NOT SurveyCompleted IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyCompleted
-		, CASE WHEN pjs.[Status] = ''Unscheduled'' OR SortOrder = 3 THEN 0 ELSE 1 END AS SurveyStillDue
-		, CASE WHEN NOT Approved IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS Approved
-		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) <= 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOnTime
-		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) > 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOverTime
-		, CASE WHEN pjs.[Status] = ''Unscheduled'' AND SortOrder <> 3 THEN 1 ELSE 0 END AS Unscheduled
-		, SurveyCompleted
-		, DueDate
-		, Approved
-		, SortOrder
-		, Samples
-		, SampleResults
-		, pjs.[Status]
-		, pjs.Other
-		, pjs.[Address]
-		, [PhoneCalls]
-		, [Letters]
-		, pjs.NoAccessAttempts
-		, s.StatusFilterTypeID
-		, sft.[Status] As StatusFilterType
-	FROM
-		ProjectJobSheet pjs
-		LEFT JOIN Site s ON pjs.SiteId = s.SiteID
-		LEFT JOIN StatusFilterType sft ON s.StatusFilterTypeID = sft.StatusFilterTypeID
-	WHERE
-		pjs.ProjectID IN (' + @ProjectIDsString + ') '
-
-	-- add default order by
-	SELECT @DynamicSQL = @DynamicSQL + ' ORDER BY SortOrder, JobNo, Address'
-
-	-- execute the SQL
-	EXECUTE sp_executesql @DynamicSQL
-	
-	-- ClientID filter (not applied to view above as extra view filters slow performance)
-	IF @ClientID IS NOT NULL BEGIN
-		DELETE FROM #JobSheetData WHERE ClientID <> @ClientID
-	END
-	
-	-- SiteID filter (not applied to view above as extra view filters slow performance)
-	IF @SiteID IS NOT NULL BEGIN
-		DELETE FROM #JobSheetData WHERE SiteID <> @SiteID
-	END
-
-	-- @PhoneCalls filter (not applied to view above as extra view filters slow performance)
-	IF @PhoneCalls IS NOT NULL BEGIN
-		
-		IF @PhoneCalls > 3 BEGIN
-			DELETE FROM #JobSheetData WHERE PhoneCalls < 4
-		END
-
-		IF @PhoneCalls < 4 BEGIN
-			DELETE FROM #JobSheetData WHERE PhoneCalls <> @PhoneCalls
-		END
-	END
-
-	-- @Letters filter (not applied to view above as extra view filters slow performance)
-	IF @Letters IS NOT NULL BEGIN
-
-		IF @Letters > 3 BEGIN
-			DELETE FROM #JobSheetData WHERE Letters < 4
-		END
-
-		IF @Letters < 4 BEGIN
-			DELETE FROM #JobSheetData WHERE Letters <> @Letters
-		END
-	END
-	
-	-- @NoAccessAttempts filter (not applied to view above as extra view filters slow performance)
-	IF @NoAccessAttempts IS NOT NULL BEGIN
-
-		IF @NoAccessAttempts > 3 BEGIN
-			DELETE FROM #JobSheetData WHERE NoAccessAttempts < 4
-		END
-
-		IF @NoAccessAttempts < 4 BEGIN
-			DELETE FROM #JobSheetData WHERE NoAccessAttempts <> @NoAccessAttempts
-		END
-	END
-
-	-- calculate useful totals
-    DECLARE @SurveysCompleted INT
-    DECLARE @SurveysStillDue INT
-    DECLARE @Approved INT
-    DECLARE @SurveysOnTime INT
-    DECLARE @SurveysOverTime INT
-    DECLARE @UnScheduled INT
-    DECLARE @KPI DECIMAL(12,2)
-    DECLARE @TotalJobs_HasSampleResults INT
-    DECLARE @Approved_HasSampleResults INT
-    DECLARE @TotalRows INT
-    
-	SELECT
-		@SurveysCompleted = ISNULL(SUM(SurveyCompleted), 0)
-		, @SurveysStillDue = ISNULL(SUM(SurveyStillDue), 0) - ISNULL(SUM(SurveyCompleted), 0)
-		, @Approved = ISNULL(SUM(Approved), 0)
-		, @SurveysOnTime = ISNULL(SUM(SurveyOnTime), 0)
-		, @SurveysOverTime = ISNULL(SUM(SurveyOverTime), 0)
-		, @UnScheduled = ISNULL(SUM(UnScheduled), 0)
-		, @KPI = ISNULL(CASE WHEN COUNT(SurveyCompletedRaw) = 0 THEN 0 ELSE ROUND(SUM(CASE WHEN DueDateRaw > SurveyCompletedRaw AND SortOrder <> 3 THEN 1 ELSE 0 END)
-					/ CONVERT(FLOAT,COUNT(SurveyCompletedRaw)), 3) * 100 END, 0)
-		, @TotalRows = COUNT(1)
-	FROM 
-		#JobSheetData
-		
-	SELECT
-		@TotalJobs_HasSampleResults = ISNULL(SUM(CASE WHEN [Status] = 'Unscheduled' OR SortOrder = 3 THEN 0 ELSE 1 END), 0) 
-		, @Approved_HasSampleResults = ISNULL(SUM(CASE WHEN NOT ApprovedRaw IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END), 0)
-	FROM 
-		#JobSheetData
-	WHERE
-		Samples > 0
-		AND Samples = SampleResults
-	
-	-- return paged raw data to front end
-	-- NOTE - @Status, @Other and @Address filters only filter this data, not the count data
-	;WITH Paging AS 
-    ( 
-       SELECT 
-           CAST(CEILING(COUNT(*) OVER(PARTITION BY '') * 1.00 / @PerPage) AS INT) AS Pages
-           , ((ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) - 1) / @PerPage) + 1 AS Page
-           , ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) AS Row_Num
-           , *
-       FROM 
-       (
-			SELECT * FROM #JobSheetData jsd
-			WHERE
-				( (jsd.[Status] = @Status) OR (jsd.[StatusFilterType] = @Status) OR (@Status IS NULL) )
-				AND ( (jsd.Other = @Other) OR (@Other IS NULL) )
-				AND ( (jsd.[Address] = @Address) OR (@Address IS NULL) )
-	   ) a
-    )	
-	SELECT  
-		main.Pages
-		, main.Page
-		, main.Row_Num
-		, pjs.SortOrder
-		, pjs.AppointmentID
-		, pjs.[Status]
-		, pjs.StatusDate
-		, pjs.JobNo
-		, pjs.[Address]
-		, pjs.Postcode
-		, pjs.Contact
-		, pjs.Telephone
-		, pjs.SiteEmail
-		, pjs.JobId
-		, pjs.SurveyTypeId
-		, pjs.AppointmentDate
-		, pjs.DateSiteWorkComplete
-		, pjs.AnalysisComplete
-		, pjs.TotalJobs
-		, pjs.WorkScheduled
-		, pjs.SiteWorkComplete
-		, pjs.Samples
-		, pjs.SampleResults
-		, pjs.[FileName]
-		, pjs.ClientOrderNo
-		, pjs.DateReceived
-		, pjs.UPRN
-		, pjs.SurveyType
-		, pjs.Surveyor
-		, pjs.SurveyStart
-		, pjs.SurveyCompleted
-		, pjs.AnalysisCompleted
-		, pjs.Approved
-		, pjs.ApprovedBy
-		, pjs.DueDate
-		, pjs.NoAccessAttempts
-		, pjs.PhoneCalls
-		, pjs.Letters
-		, (SELECT STUFF(
-			(
-				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
-				FROM SiteContact sc2
-				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 1
-				FOR XML PATH('')
-			), 1, 1, '')) AS PhoneCallSiteContactIDs
-		, (SELECT STUFF(
-			(
-				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
-				FROM SiteContact sc2
-				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 2
-				FOR XML PATH('')
-			), 1, 1, '')) AS LetterSiteContactIDs
-		, pjs.GroupName
-		, pjs.ClientId
-		, pjs.ProjectId
-		, pjs.SiteId
-		, pjs.Other
-		, pjspa.ProjectAppointmentID
-		, pjs.LastNoAccessDate
-		, pjs.LastJobEmployeeDate
-		, pjs.QuoteId
-		, pjs.QuoteDate
-		, pjs.InvoiceDate
-		, main.StatusFilterTypeID
-		, main.StatusFilterType
-    FROM 
-		Paging main
-		INNER JOIN ProjectJobSheet pjs 
-			ON ISNULL(main.AppointmentID, 0) = ISNULL(pjs.AppointmentID, 0)
-			AND ISNULL(main.JobID, 0) = ISNULL(pjs.JobID, 0)
-			AND ISNULL(main.SurveyTypeID, 0) = ISNULL(pjs.SurveyTypeID, 0)
-			AND ISNULL(main.ClientID, 0) = ISNULL(pjs.ClientID, 0)
-			AND ISNULL(main.ProjectID, 0) = ISNULL(pjs.ProjectID, 0)
-			AND ISNULL(main.SiteID, 0) = ISNULL(pjs.SiteID, 0)
-		LEFT JOIN Appointment pjspa ON pjs.AppointmentID = pjspa.AppointmentID
-    WHERE 
-		main.Row_Num BETWEEN (@CurrentPage - 1) * @PerPage + 1 AND @CurrentPage * @PerPage
-	ORDER BY
-		main.Row_Num
-	
-	-- drop temp tables
-	DROP TABLE #ProjectIDs
-	DROP TABLE #JobSheetData
-	
-	-- return useful counts to front end
-	SELECT
-		@SurveysStillDue AS WorkScheduled
-		, @SurveysStillDue AS SurveysStillDue
-		, @Approved AS Approved
-		, @SurveysOnTime AS SurveysOnTime
-		, @SurveysOverTime AS SurveysOverTime
-		, @UnScheduled AS UnScheduled
-		, @KPI AS KPI
-		, @TotalJobs_HasSampleResults - @Approved_HasSampleResults AS SampleAnalysisComplete
-		--, @SurveysCompleted - @TotalJobs_HasSampleResults - @Approved AS SiteWorkComplete
-		, @TotalRows - @UnScheduled - @SurveysStillDue - @TotalJobs_HasSampleResults + @Approved_HasSampleResults - @Approved AS SiteWorkComplete
-    
-    
-    SET NOCOUNT OFF;
-END
-GO
-
 IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='FloorplanDesignerItem') AND name='Deleted') < 1
 BEGIN
   ALTER TABLE FloorplanDesignerItem
@@ -23905,375 +23553,6 @@ BEGIN
 END
 GO
 
-IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Export_ProjectJobSheet') < 1
-BEGIN
-	EXEC('CREATE PROCEDURE [dbo].[Export_ProjectJobSheet] AS BEGIN SET NOCOUNT ON; END')
-END
-GO
-
-ALTER PROCEDURE [dbo].[Export_ProjectJobSheet]
-    @ClientID INT = NULL,
-    @ProjectGroupID INT = NULL,
-    @ProjectID INT = NULL,
-    @SiteID INT = NULL,
-    @Status VARCHAR(24) = '',
-    @Other VARCHAR(MAX) = '',
-    @Address VARCHAR(200) = '',
-    @PhoneCalls INT = NULL,
-    @Letters INT = NULL,
-    @NoAccessAttempts INT = NULL
-/**********************************************************************
-** Overview: As Paged_projectJobSheet but for exporting, so :-
-**   a) removed paging code, i.e. returns all matches
-**   b) phone calls and letters one column each (via dynamic SQL)
-** 
-** PLEASE NOTE: The Change Log has now been removed as this has been added to SQL SVN instead.
-** Please use the latest version from SVN before making changes. Commit the changes when done.
-**********************************************************************/
-
-AS
-BEGIN
-	SET ANSI_WARNINGS OFF
-	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-    SET NOCOUNT ON;
-    
-    
-	-- tidy input variables
-	SELECT @ClientID = NULLIF(@ClientID, 0)
-	SELECT @ProjectGroupID = NULLIF(@ProjectGroupID, 0)
-	SELECT @ProjectID = NULLIF(@ProjectID, 0)
-	SELECT @SiteID = NULLIF(@SiteID, 0)
-	SELECT @Status = NULLIF(@Status, '')
-	SELECT @Other = NULLIF(@Other, '')
-	SELECT @Address = NULLIF(@Address, '')
-	SELECT @PhoneCalls = NULLIF(@PhoneCalls, 0)
-	SELECT @Letters = NULLIF(@Letters, 0)
-	SELECT @NoAccessAttempts = NULLIF(@NoAccessAttempts, 0)
-	
-	-- ensure we have at least 1 filter ID (don't want to kill the server!)
-	IF (@ClientID IS NULL) AND (@ProjectGroupID IS NULL) AND (@ProjectID IS NULL) AND (@SiteID IS NULL) BEGIN
-		RAISERROR('No ID values passed to GetProjectJobSheet', 16, 1)
-		RETURN
-	END
-	
-	-- get ProjectIDs into a table to join to, based on @ProjectGroupID AND @ProjectID inputs
-	CREATE TABLE #ProjectIDs (ProjectID INT)
-	IF @ProjectID IS NOT NULL BEGIN
-	
-		INSERT
-			#ProjectIDs
-		SELECT
-			@ProjectID
-			
-	END ELSE BEGIN
-		
-		INSERT
-			#ProjectIDs
-		SELECT
-			ProjectID
-		FROM
-			Project
-		WHERE
-			ProjectGroupId = @ProjectGroupID
-		
-	END
-	
-	-- change #ProjectIDs into a comma separated string of IDs 
-	DECLARE @ProjectIDsString VARCHAR(MAX)
-	SELECT @ProjectIDsString = STUFF 
-	((
-		SELECT ',' + CONVERT(VARCHAR(20), ProjectID)
-		FROM #ProjectIDs
-		FOR XML PATH('')
-	), 1, 1, '')
-	
-	-- select from existing ProjectJobSheet view into a temp table
-	CREATE TABLE #JobSheetData (
-		JobSheetDataID INT IDENTITY (1,1) NOT NULL
-		, AppointmentID INT NULL
-		, JobId INT NULL
-		, SurveyTypeId INT NULL
-		, ClientId INT NULL
-		, ProjectId INT NULL
-		, SiteId INT NULL
-		, SurveyCompleted INT NULL
-		, SurveyStillDue INT NULL
-		, Approved INT NULL
-		, SurveyOnTime INT NULL
-		, SurveyOverTime INT NULL
-		, Unscheduled INT NULL
-		, SurveyCompletedRaw NVARCHAR(40) NULL
-		, DueDateRaw NVARCHAR(40) NULL
-		, ApprovedRaw NVARCHAR(40) NULL
-		, SortOrder INT NOT NULL
-		, Samples INT NULL
-		, SampleResults INT NULL
-		, [Status] VARCHAR(24)
-		, Other VARCHAR(MAX)
-		, [Address] VARCHAR(200)
-		, PhoneCalls INT
-		, Letters INT,
-		NoAccessAttempts INT,
-		JobNo VARCHAR(MAX),
-		GroupName VARCHAR(MAX),
-		UPRN VARCHAR(MAX),
-		Postcode VARCHAR(MAX),
-		Contact VARCHAR(MAX),
-		Telephone VARCHAR(MAX),
-		QuoteDate VARCHAR(50),
-		ClientOrderNo VARCHAR(MAX),
-		SurveyType VARCHAR(MAX),
-		Surveyor VARCHAR(MAX),
-		DueDate VARCHAR(50),
-		SurveyStart VARCHAR(50),
-		AnalysisCompleted VARCHAR(50),
-		ApprovedBy VARCHAR(MAX),
-		LastNoAccessDate DATETIME,
-		LastJobEmployeeDate DATETIME,
-		StatusDate VARCHAR(50)
-	)
-	
-	/**************************************************************************************************************************************
-	-- NOTE - We are using dynamic SQL because the WHERE filters are still evaluated even if the parameter to be filtered on IS NULL, which
-	--   causes a hit on performance.  NOT ideal, but performance is more important than tidy code here!
-	**************************************************************************************************************************************/
-	DECLARE @DynamicSQL NVARCHAR(MAX)
-	SELECT @DynamicSQL = 'INSERT
-		#JobSheetData
-	SELECT
-		pjs.AppointmentID
-		, pjs.JobId
-		, pjs.SurveyTypeId
-		, pjs.ClientId
-		, pjs.ProjectId
-		, pjs.SiteId
-		, CASE WHEN NOT SurveyCompleted IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyCompleted
-		, CASE WHEN ISNULL(sft.Status, pjs.[Status]) = ''Unscheduled'' OR SortOrder = 3 THEN 0 ELSE 1 END AS SurveyStillDue
-		, CASE WHEN NOT Approved IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS Approved
-		, CASE WHEN DueDate > SurveyCompleted AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOnTime
-		, CASE WHEN DueDate < SurveyCompleted AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOverTime
-		, CASE WHEN ISNULL(sft.Status, pjs.[Status]) = ''Unscheduled'' AND SortOrder <> 3 THEN 1 ELSE 0 END AS Unscheduled
-		, SurveyCompleted
-		, DueDate
-		, Approved
-		, SortOrder
-		, Samples
-		, SampleResults
-		, CASE 
-			WHEN SurveyCompleted IS NOT NULL THEN pjs.Status
-			ELSE ISNULL(sft.Status, pjs.[Status])
-		END [Status]
-		, pjs.Other
-		, pjs.[Address]
-		, PhoneCalls
-		, Letters,
-		pjs.NoAccessAttempts,
-		pjs.JobNo,
-		pjs.GroupName,
-		pjs.UPRN,
-		pjs.Postcode,
-		pjs.Contact,
-		pjs.Telephone,
-		pjs.QuoteDate,
-		pjs.ClientOrderNo,
-		pjs.SurveyType,
-		pjs.Surveyor,
-		pjs.DueDate,
-		pjs.SurveyStart,
-		pjs.AnalysisCompleted,
-		pjs.ApprovedBy,
-		pjs.LastNoAccessdate,
-		pjs.LastJobEmployeeDate,
-		pjs.StatusDate
-	FROM
-		ProjectJobSheet pjs
-		LEFT JOIN Site si ON pjs.SiteID = si.SiteID
-		LEFT JOIN StatusFilterType sft ON si.StatusFilterTypeID = sft.StatusFilterTypeID
-	WHERE
-		pjs.ProjectID IN (' + @ProjectIDsString + ') '
-
-	-- add default order by
-	SELECT @DynamicSQL = @DynamicSQL + ' ORDER BY SortOrder, JobNo, Address'
-
-	-- execute the SQL
-	EXECUTE sp_executesql @DynamicSQL
-	
-	-- ClientID filter (not applied to view above as extra view filters slow performance)
-	IF @ClientID IS NOT NULL BEGIN
-		DELETE FROM #JobSheetData WHERE ClientID <> @ClientID
-	END
-	
-	-- SiteID filter (not applied to view above as extra view filters slow performance)
-	IF @SiteID IS NOT NULL BEGIN
-		DELETE FROM #JobSheetData WHERE SiteID <> @SiteID
-	END
-	
-	-- @PhoneCalls filter (not applied to view above as extra view filters slow performance)
-	IF @PhoneCalls IS NOT NULL BEGIN
-		
-		IF @PhoneCalls > 3 BEGIN
-			DELETE FROM #JobSheetData WHERE PhoneCalls < 4
-		END
-
-		IF @PhoneCalls < 4 BEGIN
-			DELETE FROM #JobSheetData WHERE PhoneCalls <> @PhoneCalls
-		END
-	END
-
-	-- @Letters filter (not applied to view above as extra view filters slow performance)
-	IF @Letters IS NOT NULL BEGIN
-
-		IF @Letters > 3 BEGIN
-			DELETE FROM #JobSheetData WHERE Letters < 4
-		END
-
-		IF @Letters < 4 BEGIN
-			DELETE FROM #JobSheetData WHERE Letters <> @Letters
-		END
-	END
-	
-	-- @NoAccessAttempts filter (not applied to view above as extra view filters slow performance)
-	IF @NoAccessAttempts IS NOT NULL BEGIN
-
-		IF @NoAccessAttempts > 3 BEGIN
-			DELETE FROM #JobSheetData WHERE NoAccessAttempts < 4
-		END
-
-		IF @NoAccessAttempts < 4 BEGIN
-			DELETE FROM #JobSheetData WHERE NoAccessAttempts <> @NoAccessAttempts
-		END
-	END
-
-	-- work out max number of phone calls and letters columns required
-	DECLARE @PhoneCallsColumnCount INT
-	DECLARE @LettersColumnCount INT
-	SELECT
-		@PhoneCallsColumnCount = MAX(main.PhoneCalls)
-		, @LettersColumnCount = MAX(main.Letters)
-	FROM 
-		#JobSheetData main	
-    WHERE 
-		( (main.[Status] = @Status) OR (@Status IS NULL) )
-		AND ( (main.Other = @Other) OR (@Other IS NULL) )
-		AND ( (main.[Address] = @Address) OR (@Address IS NULL) )
-		
-	--select @PhoneCallsColumnCount, @LettersColumnCount
-	
-	-- return raw data to front end - main fields
-	SELECT @DynamicSQL = 'SELECT  
-		main.JobNo AS [Job No.]
-		, main.GroupName AS [Group Name]
-		, main.UPRN
-		, main.[Address]
-		, main.Postcode AS [PostCode]
-		, main.Other
-		, main.Contact + '' '' + main.Telephone AS Contact
-		, '''' AS Notes
-		, main.[Status]
-		, main.QuoteDate [Order Received]
-		, main.PhoneCalls [Phone Calls Made]'
-		
-	-- draw a phone call column up to @PhoneCallsColumnCount
-	DECLARE @PhoneCallsColumnCount_Loop INT
-	SET @PhoneCallsColumnCount_Loop = 1
-	WHILE (@PhoneCallsColumnCount_Loop <= @PhoneCallsColumnCount)
-	BEGIN
-		SELECT @DynamicSQL = @DynamicSQL + ', ISNULL(
-												(SELECT x.Text FROM (
-												  SELECT
-												     ROW_NUMBER() OVER (ORDER BY sc.DateCreated ASC) AS RowNumber
-												     , sc.ContactText + '' (Created '' + CONVERT(VARCHAR(10), sc.DateCreated, 103) + '')'' AS Text
-											      FROM
-												     SiteContact sc
-											      WHERE
-											         sc.ContactTypeID = 1
-											         AND sc.DateDeleted IS NULL
-											         AND sc.SiteID = main.SiteID
-											         AND ProjectID = main.ProjectID
-											     ) x
-											     WHERE x.RowNumber = ' + CONVERT(VARCHAR(20), @PhoneCallsColumnCount_Loop) + ' )
-											   , '''') AS [Phone Call #' + CONVERT(VARCHAR(20), @PhoneCallsColumnCount_Loop) + ']'
-		SET @PhoneCallsColumnCount_Loop = @PhoneCallsColumnCount_Loop + 1
-	END
-
-	SELECT @DynamicSQL = @DynamicSQL + ', main.Letters [Letters Sent]'
-	
-	-- draw a letter column up to @PhoneCallsColumnCount
-	DECLARE @LettersColumnCount_Loop INT
-	SET @LettersColumnCount_Loop = 1
-	WHILE (@LettersColumnCount_Loop <= @LettersColumnCount)
-	BEGIN
-		SELECT @DynamicSQL = @DynamicSQL + ', ISNULL(
-												(SELECT x.Text FROM (
-												  SELECT
-												     ROW_NUMBER() OVER (ORDER BY sc.DateCreated ASC) AS RowNumber
-												     , sc.ContactText + '' (Created '' + CONVERT(VARCHAR(10), sc.DateCreated, 103) + '')'' AS Text
-											      FROM
-												     SiteContact sc
-											      WHERE
-											         sc.ContactTypeID = 2
-											         AND sc.DateDeleted IS NULL
-											         AND sc.SiteID = main.SiteID
-											         AND ProjectID = main.ProjectID
-											     ) x
-											     WHERE x.RowNumber = ' + CONVERT(VARCHAR(20), @LettersColumnCount_Loop) + ' )
-											   , '''') AS [Letter #' + CONVERT(VARCHAR(20), @LettersColumnCount_Loop) + ']'
-		SET @LettersColumnCount_Loop = @LettersColumnCount_Loop + 1
-	END
-
-	-- continue with main fields
-	SELECT @DynamicSQL = @DynamicSQL + ', main.NoAccessAttempts AS [No Access]
-		, main.StatusDate AS [Status Changed]
-		, main.ClientOrderNo AS [Client Order No.]
-		, main.SurveyType AS [Survey Type]
-		, main.Surveyor
-		, main.DueDate AS [Due Date]
-		, main.SurveyStart AS [Survey Start]
-		, main.SurveyCompletedRaw AS [Survey Completed]
-		, main.AnalysisCompleted AS [Analysis Completed]
-		, main.ApprovedRaw [Approved]
-		, main.ApprovedBy AS [Approved By]
-		, main.LastNoAccessDate
-		, main.LastJobEmployeeDate
-    FROM 
-		#JobSheetData main	
-		--INNER JOIN ProjectJobSheet pjs 
-		--	ON ISNULL(main.AppointmentID, 0) = ISNULL(pjs.AppointmentID, 0)
-		--	AND ISNULL(main.JobID, 0) = ISNULL(pjs.JobID, 0)
-		--	AND ISNULL(main.SurveyTypeID, 0) = ISNULL(pjs.SurveyTypeID, 0)
-		--	AND ISNULL(main.ClientID, 0) = ISNULL(pjs.ClientID, 0)
-		--	AND ISNULL(main.ProjectID, 0) = ISNULL(pjs.ProjectID, 0)
-		--	AND ISNULL(main.SiteID, 0) = ISNULL(pjs.SiteID, 0)
-		--LEFT JOIN Appointment pjspa ON pjs.AppointmentID = pjspa.AppointmentID
-    WHERE
-		1 = 1'
-	
-	-- add proc filters to dynamic SQL
-	IF @Status IS NOT NULL BEGIN
-		SELECT @DynamicSQL = @DynamicSQL + ' AND main.[Status] = ''' + @Status + ''''  -- status filter
-	END
-	IF @Other IS NOT NULL BEGIN
-		SELECT @DynamicSQL = @DynamicSQL + ' AND main.Other = ''' + @Other + ''''  -- other filter
-	END
-	IF @Address IS NOT NULL BEGIN
-		SELECT @DynamicSQL = @DynamicSQL + ' AND main.[Address] = ''' + @Address + ''''  -- address filter
-	END
-
-	-- add ORDER BY to dynamic SQL
-	--SELECT @DynamicSQL = @DynamicSQL + ' ORDER BY pjs.SortOrder'
-		
-	-- execute the SQL
-	EXECUTE sp_executesql @DynamicSQL
-	
-	-- drop temp tables
-	DROP TABLE #ProjectIDs
-	DROP TABLE #JobSheetData
-    
-    SET ANSI_WARNINGS ON;
-    SET NOCOUNT OFF;
-END
-GO
-
 IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='Config') AND name='b__UseNewEditRegister') < 1
 BEGIN
 	ALTER TABLE [dbo].[Config]
@@ -27580,680 +26859,6 @@ BEGIN
       
       SET NOCOUNT OFF;
 END
-GO
-
-IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'V' AND name = 'ProjectJobSheet')
-BEGIN
-    EXEC('CREATE VIEW[dbo].[ProjectJobSheet] AS SELECT 1 GO')
-END
-GO
-
-ALTER VIEW [dbo].[ProjectJobSheet]
-AS
-
-  Select
-        0 as SortOrder,
-        Min(a.AppointmentId) as AppointmentId,
-        Case
-			WHEN MAX(na.Created) > MAX(a.StartTime) THEN 'No Access'
-			When Max(reg.DateApproved) IS NOT Null Then 'Approved'
-			When j.Approved IS NULL AND sc.SupplementaryChangeId IS NOT NULL THEN 'Site Work Complete*'
-			When reg.Samples > 0 And reg.Samples = reg.SampleResults Then 'Sample Analysis Complete'
-			When reg.Registers >= 1 Then 'Site Work Complete'
-			When workdone.ManuallyMarkWorkDone = 1 THEN 'Marked as Complete'
-			When j.Approved IS NULL AND sc.SupplementaryChangeId IS NOT NULL THEN 'Site Work Complete*'
-		Else
-            'Work Scheduled'
-        End [Status],
-        dbo.FormatTeamsDate(Case
-              When Not reg.DateApproved Is Null Then
-                              reg.DateApproved
-              When reg.Samples > 0 And reg.Samples = reg.SampleResults Then
-                    reg.AnalysisComplete
-              When reg.Registers >= 1 Then
-                    reg.RegisterFinish
-              Else
-                    Min(Cast(a.DateCreated as date))
-        End, 1) [StatusDate],
-        dbo.FormatTeamsReference('J', j.JobNo) as JobNo,
-        s.[Address],
-        s.Postcode,
-        s.Contact,
-        s.Telephone,
-        s.SiteEmail,
-        j.JobId,
-        reg.SurveyTypeId,
-        Min(Cast(a.StartTime as date)) as AppointmentDate,
-        reg.SiteWorkComplete as DateSiteWorkComplete,
-        reg.AnalysisComplete,
-        Count(Distinct(j.JobId)) as TotalJobs,
-        Count(Distinct(j.JobId)) - reg.Registers as WorkScheduled,
-        reg.Registers as SiteWorkComplete,
-        reg.Samples,
-        reg.SampleResults,
-        bsr.FileName as FileName,
-        a.ClientOrderNo,
-        dbo.FormatTeamsDate(Cast(Min(a.DateCreated) as date), 1) as DateReceived,
-        dbo.FormatTeamsDate(Cast(Min(q.Created) as date), 1) as QuoteDate,
-        s.uprn,
-        reg.SurveyType,
-        Surveyors.Surveyor,
-        dbo.FormatTeamsDate(Min(Cast(a.StartTime as date)), 1) as SurveyStart,
-        dbo.FormatTeamsDate(reg.RegisterFinish, 1) as SurveyCompleted,
-        ISNULL(dbo.FormatTeamsDate(iat.AnalysisCompleted, 1), '') as AnalysisCompleted,
-        dbo.FormatTeamsDate(Max(Cast(j.Approved as date)),1) as Approved,
-        Approver.FullName as ApprovedBy,
-        dbo.FormatTeamsDate(Min(Cast(aps.DueDate as date)), 1) DueDate,
-        COUNT(na.NoAccessID) + COUNT(na2.NoAccessID) AS NoAccessAttempts,
-        pc.PhoneCalls,
-        l.Letters,
-        [p].[GroupName],
-        a.ClientId,
-        a.ProjectId,
-        a.SiteId,
-        s.Other,
-        MAX(na.Created) [LastNoAccessDate],
-        MAX(reg.JobEmployeeCreated) [LastJobEmployeeDate],
-        q.QuoteId,
-		dbo.CleanDate(ii.ItemDate) [InvoiceDate]
-  From
-        Appointment a WITH (NOLOCK)
-        Inner Join AppointmentSurvey as aps WITH (NOLOCK) On a.AppointmentID = aps.AppointmentID
-        Inner Join [Site] s WITH (NOLOCK) On a.SiteId = s.SiteId --and s.Deleted Is Null
-        Inner Join Project p WITH (NOLOCK) On p.ProjectId = a.ProjectId
-        Inner Join Quote q WITH (NOLOCK) On q.QuoteId = a.QuoteId
-		LEFT JOIN InvoiceItem ii WITH (NOLOCK) ON q.InvoiceItemID = ii.InvoiceItemID
-		
-        Inner Join Job j WITH (NOLOCK) On q.JobId = j.JobId And j.Cancelled Is Null
-        LEFT JOIN SupplementaryChanges sc WITH (NOLOCK) ON j.JobID = sc.JobId
-        Outer Apply
-        (
-                  Select
-                        je.JobId,
-                        MAX(je.Created) [JobEmployeeCreated],
-                        Count(Distinct(reg.RegisterId)) as Registers,
-                        st.SurveyTypeId,
-                        st.Description as SurveyType,
-                        Max(Cast(reg.RegisterFinish as Date)) as RegisterFinish,
-                        Max(reg.DateApproved) as DateApproved,
-                        Count(s.SampleId) as Samples,
-                        Count(s.SampleResultId) as SampleResults,
-                        Max(Cast(s.DateAnalysed as date)) as AnalysisComplete,
-                        Max(Cast(Survey.SurveyFinish as Date)) as SiteWorkComplete
-                  From
-                        JobEmployee je WITH (NOLOCK)
-                        Inner Join Register reg WITH (NOLOCK) On je.JobEmployeeId = reg.JobEmployeeId
-                        Left Outer Join Floorplan f WITH (NOLOCK) On f.RegisterId = reg.RegisterId
-                        Left Outer Join Room r WITH (NOLOCK) On f.FloorplanId = r. FloorplanId
-                        Left Outer Join Samples s WITH (NOLOCK) On s.RoomId = r.RoomId And Not SampleRef Is Null And AsSample = 0
-                        Left Outer Join Survey WITH (NOLOCK) On reg.SurveyId = Survey.SurveyId
-                        Left Outer Join SurveyType st WITH (NOLOCK) On Survey.SurveyTypeId = st.SurveyTypeId
-                  Where
-                        je.JobId = j.JobId
-                  Group By
-                        je.JobId,
-                        st.SurveyTypeId,
-                        st.Description
-        ) reg
-        Left Outer Join Employee as Approver WITH (NOLOCK) On j.SampleContentEmployeeId = Approver.EmployeeId
-        Outer Apply
-        (
-              Select Top 1
-                    e.FullName as Surveyor
-              From
-                    JobEmployee je2 WITH (NOLOCK)
-                    Inner Join Employee e WITH (NOLOCK) On je2.EmployeeId = e.EmployeeId
-              Where
-                    je2.MainEmployee = 1
-                          And
-                    je2.JobId = j.JobId
-              Order By
-                    ActualStart
-        ) as Surveyors
-        Outer Apply
-        (
-              Select
-                    Max(iat.DateCreated) as AnalysisCompleted
-              From
-                    IntranetAuditTrail iat WITH (NOLOCK)
-              Where
-                    iat.DataId = j.JobID and
-                    iat.DataTable = 'Job' and 
-                    iat.[Message] = 'Verified sample results'
-        ) iat
-        Outer Apply
-        (
-              Select Top 1 FileName From PDF WITH (NOLOCK) Where DateDeleted Is Null and FileName Like '%bsr%' and JobId = j.JobId Order By FileName DESC
-        ) bsr
-        LEFT JOIN NoAccess na WITH (NOLOCK) ON na.JobID = j.JobID AND na.Deleted IS NULL
-        LEFT JOIN NoAccess na2 WITH (NOLOCK) ON na2.SiteID = s.SiteID AND na2.Deleted IS NULL
-        Outer Apply
-        (
-              Select Count(*) as PhoneCalls From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 1 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
-        ) pc
-        Outer Apply
-        (
-              Select Count(*) as Letters From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 2 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
-        ) l
-              OUTER APPLY
-                     (
-                           SELECT TOP 1
-                                  a.ManuallyMarkWorkDone
-                           FROM
-                                  Appointment _a
-                           WHERE  
-                                  a.AppointmentID = _a.AppointmentID
-                                         AND
-                                  _a.ManuallyMarkWorkDone = 1
-                     ) WorkDone
-
-
-  Where
-        a.AppointmentId = (Select Min(AppointmentId) From Appointment WITH (NOLOCK) Where QuoteId = q.QuoteId And DateDeclined Is Null)
-        and a.DateDeclined Is Null
-  Group By
-        j.JobId,
-        j.JobNo,
-        s.SiteId,
-        s.[Address],
-        s.Postcode,
-        j.Approved,
-        s.Contact,
-        s.Telephone,
-        s.SiteEmail,
-        a.ClientOrderNo,
-        s.uprn,
-        Surveyors.Surveyor,
-        Approver.FullName,
-        [p].[GroupName],
-        a.ClientId,
-        a.ProjectId,
-        a.SiteId,
-        reg.SurveyTypeId,
-        reg.SurveyType,
-        reg.AnalysisComplete,
-        reg.Samples,
-        reg.SampleResults,
-        reg.Registers,
-        reg.DateApproved,
-        reg.RegisterFinish,
-        reg.SiteWorkComplete,
-        bsr.FileName,
-        iat.AnalysisCompleted,
-        s.Other,
-        pc.PhoneCalls,
-        l.Letters,
-        q.QuoteId,
-        workdone.ManuallyMarkWorkDone,
-        sc.SupplementaryChangeId,
-		ii.ItemDate
-
-Union
-
-Select
-    1 as SortOrder,
-    Null as AppointmentId, 
-    'Unscheduled' as [Status],
-    Null as [StatusDate],
-    Null as JobNo,
-    s.[Address],
-    s.Postcode,
-    s.Contact,
-    s.Telephone,
-    s.SiteEmail,
-    Null as JobId,
-    Null as SurveyTypeId,
-    Null as AppointmentDate,
-    Null as DateSiteWorkComplete,
-    Null as AnalysisComplete,
-    Null as TotalJobs,
-    Null as WorkScheduled,
-    Null as SiteWorkComplete,
-    Null as Samples,
-    Null as SampleResults,
-    Null as FileName,
-    Null as ClientOrderNo,
-    Null as DateReceived,
-    Case
-        When Not Max(q.Created) Is Null AND s.Deleted IS NULL Then
-            dbo.FormatTeamsDate(Cast(Min(q.Created) as date), 1)
-        Else
-            null
-    End [QuoteDate],
-    s.UPRN,
-    Null as SurveyType,
-    Null as Surveyor,
-    Null as SurveyStart,
-    Null as SurveyCompleted,
-    Null as AnalysisCompleted,
-    Null as Approved,
-    Null as ApprovedBy,
-    Null as DueDate,
-    0 as NoAccessAttempts,
-    pc.PhoneCalls,
-    l.Letters,
-    p.GroupName,
-    c.ClientId,
-    ps.ProjectId,
-    s.SiteId,
-    s.Other,
-    Null [LastNoAccessDate],
-    Null [LastJobEmployeeDate],
-    Case
-        When Not Max(q.QuoteID) Is Null AND s.Deleted IS NULL Then
-            q.QuoteID
-        Else
-            null
-    End [QuoteID],
-	dbo.CleanDate(ii.ItemDate) [InvoiceDate]
-From
-    [Site] s WITH (NOLOCK)
-    Inner Join ClientSite c WITH (NOLOCK) On s.SiteId = c.SiteId AND c.ClientID > 0
-    Inner join ProjectSite ps WITH (NOLOCK) On s.SiteId = ps.SiteId
-    Inner Join Project p WITH (NOLOCK) On ps.ProjectId = p.ProjectId AND p.ClientID = c.ClientID
-    Left Outer Join Appointment a WITH (NOLOCK) On ps.ProjectId = a.ProjectId And s.SiteId = a.SiteId AND a.AppointmentTypeID IN (1,3,9)
-    left outer join Appointment dc WITH (NOLOCK) On dc.DateDeclined IS NULL AND dc.ProjectID = p.ProjectID AND dc.SiteID = s.SiteID AND dc.AppointmentTypeID IN (1,3,9)
-	outer apply
-	(
-		SELECT TOP 1
-			*
-		FROM
-			Quote _q WITH (NOLOCK)
-		WHERE
-			_q.SiteID = ps.SiteID 
-				AND 
-			_q.ProjectID = ps.ProjectID
-				AND
-			_q.Rejected IS NULL
-	) q
-    --left outer join Quote q WITH (NOLOCK) on q.SiteID = ps.SiteID AND q.ProjectID = ps.ProjectID AND q.Rejected IS NULL
-	left join InvoiceItem ii WITH (NOLOCK) ON q.InvoiceItemID = ii.InvoiceItemID
-    Outer Apply
-    (
-        Select Count(*) as PhoneCalls From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 1 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
-    ) pc
-    Outer Apply
-    (
-        Select Count(*) as Letters From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 2 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
-    ) l
-Where
-    s.deleted Is NULL
-		AND
-	(
-		(
-			(a.AppointmentId Is NULL)
-			or
-			(a.AppointmentID is not null and dc.AppointmentID is null)
-		)
-			--OR
-		--s.Deleted IS NOT NULL
-	)
-Group BY 
-    s.[Address],
-    s.Postcode,
-    s.Contact,
-    s.Telephone,
-    s.SiteEmail,
-    s.UPRN,
-    p.GroupName,
-    c.ClientId,
-    ps.ProjectId,
-    s.SiteId,
-    s.Other,
-    pc.PhoneCalls,
-    l.Letters,
-    q.QuoteID,
-    q.Created,
-	ii.ItemDate,
-	s.Deleted
-
-union
---AIR TESTS
-  Select
-        3 as SortOrder,
-        a.AppointmentId as AppointmentId,
-        CASE
-            WHEN atDetails.[firstId] IS NULL THEN 'Airtest Scheduled'
-            WHEN atDetails.[airtestFinish] IS NULL THEN 'Approved'
-            WHEN atDetails.[airtestFinish] IS NOT NULL THEN 'Site Work Complete'
-                     When workdone.ManuallyMarkWorkDone = 1 THEN 'Marked as Complete'
-        End [Status],
-        null [StatusDate],
-        dbo.FormatTeamsReference('J', j.JobNo)  /*+  ISNULL(' - ' + jobAtt.string ,'')*/ AS JobNo,
-        s.[Address],
-        s.Postcode,
-        s.Contact,
-        s.Telephone,
-        s.SiteEmail,
-        j.JobId,
-        [a].[AppointmentID],
-        Cast(a.StartTime as date) AS AppointmentDate,
-        atDetails.[airtestFinish] DateSiteWorkComplete,
-        null AnalysisComplete,
-        0 TotalJobs,
-        0 WorkScheduled,
-        0 SiteWorkComplete,
-        0 Samples,
-        0 SampleResults,
-        null FileName,
-        a.ClientOrderNo,
-        dbo.FormatTeamsDate(Cast(a.DateCreated as date), 1) AS DateReceived,
-        dbo.FormatTeamsDate(Cast(q.Created as date), 1) AS QuoteDate,
-        s.uprn,
-        AirtestTypesList.[string],
-        jobAirTEmpl.[string] Surveyor,
-        dbo.FormatTeamsDate(CAST(atDetails.[airtestStart] as date), 1) AS SurveyStart,
-        dbo.FormatTeamsDate(CAST(atDetails.[airtestFinish] as date) , 1) AS SurveyCompleted,
-        null AnalysisCompleted,
-        dbo.FormatTeamsDate(Cast(j.Approved as date),1) as Approved,
-        NULL ApprovedBy,
-        null DueDate,
-        na.NoAccessAttempts,
-        pc.PhoneCalls,
-        l.Letters,
-        [p].[GroupName],
-        j.ClientId,
-        j.ProjectId,
-        j.SiteId,
-        s.Other,
-        lna.Created [LastNoAccessDate],
-        lje.Created [LastJobEmployeeDate],
-        q.QuoteId,
-		dbo.CleanDate(ii.ItemDate) [InvoiceDate]
-  FROM
-        [dbo].[Job] j WITH (NOLOCK)
-        Inner Join [Site] s WITH (NOLOCK) On j.SiteId = s.SiteId and s.Deleted Is Null
-        INNER JOIN project p WITH (NOLOCK) ON j.[ProjectID] = [p].[ProjectID]
-		LEFT OUTER JOIN [dbo].[Quote] q WITH (NOLOCK) ON j.[JobID] = [q].[JobID] AND j.[Cancelled] IS NULL
-		LEFT JOIN InvoiceItem ii WITH (NOLOCK) ON q.InvoiceItemID = ii.InvoiceItemID
-        /*all the airtest types that have been done and passed back concatenate*/
-        OUTER APPLY
-        (
-            select
-            STUFF(
-                    (
-                        SELECT DISTINCT
-                            ',' + ISNULL([att].[Description],'') [text()]
-                        FROM
-                            [dbo].[JobEmployee] je WITH (NOLOCK)
-                            LEFT OUTER JOIN [dbo].[Employee] emp WITH (NOLOCK) ON je.[EmployeeID] = [emp].[EmployeeID]
-                            LEFT OUTER JOIN [dbo].[AirTest] at WITH (NOLOCK) ON [at].[JobEmployeeID] = [je].[JobEmployeeID]
-                            LEFT OUTER JOIN [dbo].[AirTestType] att WITH (NOLOCK) ON [att].[AirTestTypeID] = [at].[AirTestTypeID]
-                        WHERE 
-                            je.[JobID] = [j].[JobID]
-                        FOR XML PATH('')
-                     ),
-                    1,
-                    1,
-                    ''
-            )
-        )jobAtt(string)
-        /*all the airtest surveyor that have been passed back concatenate*/
-        OUTER APPLY
-        (
-            select
-            STUFF(
-                    (
-                        SELECT DISTINCT
-                            ',' + ISNULL([emp].[FullName],'') [text()]
-                        FROM
-                            [dbo].[JobEmployee] je WITH (NOLOCK)
-                            LEFT OUTER JOIN [dbo].[Employee] emp WITH (NOLOCK) ON je.[EmployeeID] = [emp].[EmployeeID]
-                        WHERE 
-                            je.[JobID] = [j].[JobID]
-                        FOR XML PATH('')
-                     ),
-                    1,
-                    1,
-                    ''
-            )
-        )jobAirTEmpl(string)
-        /*all the airtest details concatenate*/
-        OUTER apply(
-            SELECT
-                MIN([at].[AirTestID]),
-                MIN([at].[AirTestStart]),
-                MAX([at].[AirTestFinish])
-            FROM
-                [dbo].[JobEmployee] je WITH (NOLOCK)
-                LEFT OUTER JOIN [dbo].[Employee] emp WITH (NOLOCK) ON je.[EmployeeID] = [emp].[EmployeeID]
-                LEFT OUTER JOIN [dbo].[AirTest] at WITH (NOLOCK) ON [at].[JobEmployeeID] = [je].[JobEmployeeID]
-                LEFT OUTER JOIN [dbo].[AirTestType] att WITH (NOLOCK) ON [att].[AirTestTypeID] = [at].[AirTestTypeID]
-            WHERE 
-                je.[JobID] = [j].[JobID]
-        )atDetails(firstId,airtestStart,airtestFinish)
-        
-        
-        
-        /*get first appointment record for quote*/
-        outer apply
-        (
-            SELECT TOP 1
-                _a.[AppointmentID],
-                _a.[StartTime],
-                _a.[ProjectID]
-            FROM
-                [dbo].[Appointment] _a WITH (NOLOCK)
-                INNER JOIN Quote _q WITH (NOLOCK) ON _q.QuoteID = _a.QuoteID
-            WHERE
-                _q.JobID = j.JobID
-                AND _a.DateDeclined Is NULL
-            ORDER BY 
-                _a.[StartTime]
-        )firstapp(id,startTime,projectId)
-        LEFT OUTER JOIN Appointment a WITH (NOLOCK) ON a.[AppointmentID]= [firstapp].[id]
-        LEFT OUTER JOIN [dbo].[AppointmentAirMonitoring] as aps WITH (NOLOCK) On a.AppointmentID = aps.AppointmentID
-        
-        /*all the airtest types that were asked for IN THE APPOINTMENT*/
-        OUTER APPLY
-        (
-            SELECT
-                STUFF(
-                        (
-                            SELECT
-                                ','+ ISNULL([att].[Description],'') [text()]
-                            FROM
-                                [dbo].[AppointmentAirMonitoringType] amt WITH (NOLOCK)
-                                INNER JOIN [dbo].[AirTestType] att WITH (NOLOCK) ON [att].[AirTestTypeID] = [amt].[AirTestTypeID]
-                            WHERE 
-                                [amt].[AppointmentAirMonitoringID] =[aps].[AppointmentAirMonitoringID]
-                            FOR XML PATH('')
-                        ),
-                        1,
-                        1,
-                        ''
-                )
-        )AirtestTypesList(string)
-        Outer Apply
-        (
-              Select Count(*) as NoAccessAttempts From NoAccess WITH (NOLOCK) Where JobId = j.jobid Or SiteId = s.SiteId
-        ) na
-        Outer Apply
-        (
-              Select Count(*) as PhoneCalls From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 1 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
-        ) pc
-        Outer Apply
-        (
-              Select Count(*) as Letters From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 2 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
-        ) l
-        Outer Apply
-        (
-            Select top 1 lna.Created From NoAccess lna WITH (NOLOCK) Where lna.jobid = j.jobid order by lna.Created desc
-        ) lna
-        Outer Apply
-        (
-            Select top 1 lje.Created From jobemployee lje WITH (NOLOCK) Where lje.jobid = j.jobid order by lje.Created desc
-        ) lje
-              OUTER APPLY
-                     (
-                           SELECT TOP 1
-                                  a.ManuallyMarkWorkDone
-                           FROM
-                                  Appointment _a
-                           WHERE  
-                                  a.AppointmentID = _a.AppointmentID
-                                         AND
-                                  _a.ManuallyMarkWorkDone = 1
-                     ) WorkDone
-    WHERE [q].[QuoteTypeID] =5
-
-UNION -- Legionella
-
-SELECT
-    4 [SortOrder],
-    a.AppointmentID [AppointmentId],
-    CASE
-        WHEN l.DateApproved IS NOT NULL THEN 'Approved'
-        WHEN l.Registers >= 1 THEN 'Site Work Complete'
-              When workdone.ManuallyMarkWorkDone = 1 THEN 'Marked as Complete'
-        ELSE 'Work Scheduled'
-    END [Status],
-    dbo.FormatTeamsDate(
-        CASE
-            WHEN l.DateApproved IS NOT NULL THEN l.DateApproved
-            WHEN l.Registers >= 1 THEN l.LegionellaFinish
-            ELSE CAST(a.DateCreated AS DATE)
-        END, 1) [StatusDate],
-    dbo.FormatTeamsReference('J', j.JobNo) [JobNo],
-    si.Address,
-    si.Postcode,
-    si.Contact,
-    si.Telephone,
-    si.SiteEmail,
-    j.JobID,
-    legt.LegionellaTypeID [SurveyTypeId],
-    CAST(a.StartTime AS DATE) [AppointmentDate],
-    l.LegionellaFinish [DateSiteWorkComplete],
-    NULL [AnalysisComplete],
-    1 [TotalJobs],
-    1 - l.Registers [WorkScheduled],
-    l.Registers [SiteWorkComplete],
-    NULL [Samples],
-    NULL [SampleResults],
-    NULL [FileName],
-    a.ClientOrderNo,
-    dbo.FormatTeamsDate(CAST(MIN(a.DateCreated) AS DATE), 1) [DateReceived],
-    dbo.FormatTeamsDate(CAST(MIN(q.Created) AS DATE), 1) [QuoteDate],
-    si.UPRN [uprn],
-    legt.Description [SurveyType],
-    sur.Surveyor,
-    dbo.FormatTeamsDate(CAST(MIN(a.StartTime) AS DATE), 1) [SurveyStart],
-    dbo.FormatTeamsDate(l.LegionellaFinish, 1) [SurveyCompleted],
-    NULL [AnalysisCompleted],
-    dbo.FormatTeamsDate(CAST(MAX(j.Approved) AS DATE), 1) [Approved],
-    l.ApprovedBy,
-    dbo.FormatTeamsDate(CAST(MIN(al.DueDate) AS DATE), 1) [DueDate],
-    COUNT(na.NoAccessID) + COUNT(nasi.NoAccessID) [NoAccessAttempts],
-    pc.PhoneCalls,
-    le.Letters,
-    p.GroupName,
-    a.ClientID [ClientId],
-    a.ProjectID [ProjectId],
-    a.SiteID [SiteId],
-    si.Other,
-    MAX(na.Created) [LastNoAccessDate],
-    MAX(l.JobEmployeeCreated) [LastJobEmployeeDate],
-    q.QuoteID [QuoteId],
-	dbo.CleanDate(ii.ItemDate) [InvoiceDate]
-FROM
-    Appointment a WITH (NOLOCK)
-    INNER JOIN AppointmentLegionella al WITH (NOLOCK) ON a.AppointmentID = al.AppointmentID
-    INNER JOIN LegionellaType legt WITH (NOLOCK) ON al.LegionellaTypeID = legt.LegionellaTypeID
-    INNER JOIN Project p WITH (NOLOCK) ON a.ProjectID = p.ProjectID AND p.Deleted IS NULL
-    INNER JOIN Site si WITH (NOLOCK) ON a.SiteID = si.SiteID AND si.Deleted IS NULL
-    INNER JOIN Quote q WITH (NOLOCK) ON a.QuoteID = q.QuoteID AND q.Rejected IS NULL
-	LEFT JOIN InvoiceItem ii WITH (NOLOCK) ON q.InvoiceItemID = ii.InvoiceItemID
-	INNER JOIN Job j WITH (NOLOCK) ON q.JobID = j.JobID AND j.Cancelled IS NULL
-    OUTER APPLY
-    (
-        SELECT
-            je.JobID,
-            MAX(je.Created) [JobEmployeeCreated],
-            COUNT(DISTINCT(l.LegionellaID)) [Registers],
-            MAX(l.DateApproved) [DateApproved],
-            MAX(CAST(l.LegionellaFinish AS DATE)) [LegionellaFinish],
-            MAX(ae.FullName) [ApprovedBy]
-        FROM
-            JobEmployee je WITH (NOLOCK)
-            INNER JOIN Legionella l WITH (NOLOCK) ON je.JobEmployeeID = l.JobEmployeeID
-            LEFT JOIN Employee ae WITH (NOLOCK) ON l.EmployeeID = ae.EmployeeID
-        WHERE
-            je.JobId = j.JobId
-        GROUP BY
-            je.JobID
-    ) l
-    OUTER APPLY
-    (
-        SELECT TOP 1
-            e.FullName [Surveyor]
-        FROM
-            JobEmployee je WITH (NOLOCK)
-            INNER JOIN Employee e WITH (NOLOCK) ON je.EmployeeID = e.EmployeeID
-        WHERE
-            je.JobID = j.JobID
-                AND
-            je.MainEmployee = 1
-        ORDER BY
-            je.ActualStart
-    ) sur -- Surveyors
-    LEFT JOIN NoAccess na WITH (NOLOCK) ON j.JobID = na.JobID
-    LEFT JOIN NoAccess nasi WITH (NOLOCK) ON si.SiteID = nasi.SiteID
-    OUTER APPLY
-    (
-        SELECT COUNT(*) [PhoneCalls] FROM SiteContact WITH (NOLOCK) WHERE ProjectID = p.ProjectID AND SiteID = si.SiteID AND DateDeleted IS NULL AND ContactTypeID = 1
-    ) pc -- Phone Calls
-    OUTER APPLY
-    (
-        SELECT COUNT(*) [Letters] FROM SiteContact WITH (NOLOCK) WHERE ProjectID = p.ProjectID AND SiteID = si.SiteID AND DateDeleted IS NULL AND ContactTypeID = 2
-    ) le -- Letters
-       OUTER APPLY
-                     (
-                           SELECT TOP 1
-                                  a.ManuallyMarkWorkDone
-                           FROM
-                                  Appointment _a
-                           WHERE  
-                                  a.AppointmentID = _a.AppointmentID
-                                         AND
-                                  _a.ManuallyMarkWorkDone = 1
-                     ) WorkDone
-WHERE
-    a.AppointmentID = (SELECT MIN(AppointmentID) FROM Appointment WITH (NOLOCK) WHERE QuoteID = q.QuoteID AND DateDeclined IS NULL)
-GROUP BY
-    q.QuoteID,
-    a.AppointmentID,
-    a.ClientID,
-    a.ProjectID,
-    a.SiteID,
-    a.StartTime,
-    a.ClientOrderNo,
-    a.DateCreated,
-    legt.LegionellaTypeID,
-    legt.Description,
-    p.Project,
-    p.GroupName,
-    si.SiteID,
-    si.Address,
-    si.Postcode,
-    si.UPRN,
-    si.Contact,
-    si.Telephone,
-    si.SiteEmail,
-    si.Other,
-    j.JobID,
-    j.JobNo,
-    j.Approved,
-    l.JobEmployeeCreated,
-    l.Registers,
-    l.DateApproved,
-    l.LegionellaFinish,
-    l.ApprovedBy,
-    sur.Surveyor,
-    pc.PhoneCalls,
-    le.Letters,
-    workdone.ManuallyMarkWorkDone,
-	ii.ItemDate
-
 GO
 
 
@@ -51378,10 +49983,1535 @@ END
 
 GO
 
+
+
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'V' AND name = 'ProjectJobSheet')
+BEGIN
+    EXEC('CREATE VIEW [dbo].[ProjectJobSheet] AS SELECT 1 GO')
+END
+GO
+
+
+ALTER VIEW[dbo].[ProjectJobSheet]
+AS
+
+  Select
+        0 as SortOrder,
+        Min(a.AppointmentId) as AppointmentId,
+        Case
+                     When Max(reg.DateApproved) IS NOT Null Then 'Approved'
+                     When j.Approved IS NULL AND sc.SupplementaryChangeId IS NOT NULL THEN 'Site Work Complete*'
+                     When reg.Samples > 0 And reg.Samples = reg.SampleResults Then 'Sample Analysis Complete'
+                     When reg.Registers >= 1 Then 'Site Work Complete'
+                     When workdone.ManuallyMarkWorkDone = 1 THEN 'Marked as Complete'
+                     When j.Approved IS NULL AND sc.SupplementaryChangeId IS NOT NULL THEN 'Site Work Complete*'
+              Else
+            'Work Scheduled'
+        End [Status],
+        dbo.FormatTeamsDate(Case
+              When Not reg.DateApproved Is Null Then
+                              reg.DateApproved
+              When reg.Samples > 0 And reg.Samples = reg.SampleResults Then
+                    reg.AnalysisComplete
+              When reg.Registers >= 1 Then
+                    reg.RegisterFinish
+              Else
+                    Min(Cast(a.DateCreated as date))
+        End, 1) [StatusDate],
+        dbo.FormatTeamsReference('J', j.JobNo) as JobNo,
+        s.[Address],
+        s.Postcode,
+        s.Contact,
+        s.Telephone,
+        s.SiteEmail,
+        j.JobId,
+        reg.SurveyTypeId,
+        Min(Cast(a.StartTime as date)) as AppointmentDate,
+        reg.SiteWorkComplete as DateSiteWorkComplete,
+        reg.AnalysisComplete,
+        Count(Distinct(j.JobId)) as TotalJobs,
+        Count(Distinct(j.JobId)) - reg.Registers as WorkScheduled,
+        reg.Registers as SiteWorkComplete,
+        reg.Samples,
+        reg.SampleResults,
+        bsr.FileName as FileName,
+        a.ClientOrderNo,
+        dbo.FormatTeamsDate(Cast(Min(a.DateCreated) as date), 1) as DateReceived,
+        dbo.FormatTeamsDate(Cast(Min(q.Created) as date), 1) as QuoteDate,
+        s.uprn,
+        reg.SurveyType,
+        Surveyors.Surveyor,
+        dbo.FormatTeamsDate(Min(Cast(a.StartTime as date)), 1) as SurveyStart,
+        dbo.FormatTeamsDate(reg.RegisterFinish, 1) as SurveyCompleted,
+        ISNULL(dbo.FormatTeamsDate(iat.AnalysisCompleted, 1), '') as AnalysisCompleted,
+        dbo.FormatTeamsDate(Max(Cast(j.Approved as date)),1) as Approved,
+        Approver.FullName as ApprovedBy,
+        dbo.FormatTeamsDate(Min(Cast(aps.DueDate as date)), 1) DueDate,
+        COUNT(na.NoAccessID) + COUNT(na2.NoAccessID) AS NoAccessAttempts,
+        pc.PhoneCalls,
+        l.Letters,
+        [p].[GroupName],
+        a.ClientId,
+        a.ProjectId,
+        a.SiteId,
+        s.Other,
+        MAX(na.Created) [LastNoAccessDate],
+        MAX(reg.JobEmployeeCreated) [LastJobEmployeeDate],
+        q.QuoteId,
+		dbo.CleanDate(ii.ItemDate) [InvoiceDate],
+		reg.RegisterFinish,
+		reg.RegisterFinishDateTime,
+		Min(a.StartTime) as AppointmentDateTime
+  From
+        Appointment a WITH (NOLOCK)
+        Inner Join AppointmentSurvey as aps WITH (NOLOCK) On a.AppointmentID = aps.AppointmentID
+        Inner Join [Site] s WITH (NOLOCK) On a.SiteId = s.SiteId --and s.Deleted Is Null
+        Inner Join Project p WITH (NOLOCK) On p.ProjectId = a.ProjectId
+        Inner Join Quote q WITH (NOLOCK) On q.QuoteId = a.QuoteId
+		LEFT JOIN InvoiceItem ii WITH (NOLOCK) ON q.InvoiceItemID = ii.InvoiceItemID
+		
+        Inner Join Job j WITH (NOLOCK) On q.JobId = j.JobId And j.Cancelled Is Null
+        LEFT JOIN SupplementaryChanges sc WITH (NOLOCK) ON j.JobID = sc.JobId
+        Outer Apply
+        (
+                  Select
+                        je.JobId,
+                        MAX(je.Created) [JobEmployeeCreated],
+                        Count(Distinct(reg.RegisterId)) as Registers,
+                        st.SurveyTypeId,
+                        st.Description as SurveyType,
+                        Max(Cast(reg.RegisterFinish as Date)) as RegisterFinish,
+                        Max(reg.DateApproved) as DateApproved,
+                        Count(s.SampleId) as Samples,
+                        Count(s.SampleResultId) as SampleResults,
+                        Max(Cast(s.DateAnalysed as date)) as AnalysisComplete,
+                        Max(Cast(Survey.SurveyFinish as Date)) as SiteWorkComplete,
+						Max(reg.RegisterFinish) as RegisterFinishDateTime
+                  From
+                        JobEmployee je WITH (NOLOCK)
+                        Inner Join Register reg WITH (NOLOCK) On je.JobEmployeeId = reg.JobEmployeeId
+                        Left Outer Join Floorplan f WITH (NOLOCK) On f.RegisterId = reg.RegisterId
+                        Left Outer Join Room r WITH (NOLOCK) On f.FloorplanId = r. FloorplanId
+                        Left Outer Join Samples s WITH (NOLOCK) On s.RoomId = r.RoomId And Not SampleRef Is Null And AsSample = 0
+                        Left Outer Join Survey WITH (NOLOCK) On reg.SurveyId = Survey.SurveyId
+                        Left Outer Join SurveyType st WITH (NOLOCK) On Survey.SurveyTypeId = st.SurveyTypeId
+                  Where
+                        je.JobId = j.JobId
+                  Group By
+                        je.JobId,
+                        st.SurveyTypeId,
+                        st.Description
+        ) reg
+        Left Outer Join Employee as Approver WITH (NOLOCK) On j.SampleContentEmployeeId = Approver.EmployeeId
+        Outer Apply
+        (
+              Select Top 1
+                    e.FullName as Surveyor
+              From
+                    JobEmployee je2 WITH (NOLOCK)
+                    Inner Join Employee e WITH (NOLOCK) On je2.EmployeeId = e.EmployeeId
+              Where
+                    je2.MainEmployee = 1
+                          And
+                    je2.JobId = j.JobId
+              Order By
+                    ActualStart
+        ) as Surveyors
+        Outer Apply
+        (
+              Select
+                    Max(iat.DateCreated) as AnalysisCompleted
+              From
+                    IntranetAuditTrail iat WITH (NOLOCK)
+              Where
+                    iat.DataId = j.JobID and
+                    iat.DataTable = 'Job' and 
+                    iat.[Message] = 'Verified sample results'
+        ) iat
+        Outer Apply
+        (
+              Select Top 1 FileName From PDF WITH (NOLOCK) Where DateDeleted Is Null and FileName Like '%bsr%' and JobId = j.JobId Order By FileName DESC
+        ) bsr
+        LEFT JOIN NoAccess na WITH (NOLOCK) ON na.JobID = j.JobID AND na.Deleted IS NULL
+        LEFT JOIN NoAccess na2 WITH (NOLOCK) ON na2.SiteID = s.SiteID AND na2.Deleted IS NULL
+        Outer Apply
+        (
+              Select Count(*) as PhoneCalls From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 1 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
+        ) pc
+        Outer Apply
+        (
+              Select Count(*) as Letters From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 2 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
+        ) l
+              OUTER APPLY
+                     (
+                           SELECT TOP 1
+                                  a.ManuallyMarkWorkDone
+                           FROM
+                                  Appointment _a
+                           WHERE  
+                                  a.AppointmentID = _a.AppointmentID
+                                         AND
+                                  _a.ManuallyMarkWorkDone = 1
+                     ) WorkDone
+
+
+  Where
+        a.AppointmentId = (Select Min(AppointmentId) From Appointment WITH (NOLOCK) Where QuoteId = q.QuoteId And DateDeclined Is Null)
+        and a.DateDeclined Is Null
+  Group By
+        j.JobId,
+        j.JobNo,
+        s.SiteId,
+        s.[Address],
+        s.Postcode,
+        j.Approved,
+        s.Contact,
+        s.Telephone,
+        s.SiteEmail,
+        a.ClientOrderNo,
+        s.uprn,
+        Surveyors.Surveyor,
+        Approver.FullName,
+        [p].[GroupName],
+        a.ClientId,
+        a.ProjectId,
+        a.SiteId,
+        reg.SurveyTypeId,
+        reg.SurveyType,
+        reg.AnalysisComplete,
+        reg.Samples,
+        reg.SampleResults,
+        reg.Registers,
+        reg.DateApproved,
+        reg.RegisterFinish,
+		reg.RegisterFinishDateTime,
+        reg.SiteWorkComplete,
+        bsr.FileName,
+        iat.AnalysisCompleted,
+        s.Other,
+        pc.PhoneCalls,
+        l.Letters,
+        q.QuoteId,
+        workdone.ManuallyMarkWorkDone,
+        sc.SupplementaryChangeId,
+		ii.ItemDate
+
+Union
+
+Select
+    1 as SortOrder,
+    Null as AppointmentId, 
+    'Unscheduled' as [Status],
+    Null as [StatusDate],
+    Null as JobNo,
+    s.[Address],
+    s.Postcode,
+    s.Contact,
+    s.Telephone,
+    s.SiteEmail,
+    Null as JobId,
+    Null as SurveyTypeId,
+    Null as AppointmentDate,
+    Null as DateSiteWorkComplete,
+    Null as AnalysisComplete,
+    Null as TotalJobs,
+    Null as WorkScheduled,
+    Null as SiteWorkComplete,
+    Null as Samples,
+    Null as SampleResults,
+    Null as FileName,
+    Null as ClientOrderNo,
+    Null as DateReceived,
+    Case
+        When Not Max(q.Created) Is Null AND s.Deleted IS NULL Then
+            dbo.FormatTeamsDate(Cast(Min(q.Created) as date), 1)
+        Else
+            null
+    End [QuoteDate],
+    s.UPRN,
+    Null as SurveyType,
+    Null as Surveyor,
+    Null as SurveyStart,
+    Null as SurveyCompleted,
+    Null as AnalysisCompleted,
+    Null as Approved,
+    Null as ApprovedBy,
+    Null as DueDate,
+    0 as NoAccessAttempts,
+    pc.PhoneCalls,
+    l.Letters,
+    p.GroupName,
+    c.ClientId,
+    ps.ProjectId,
+    s.SiteId,
+    s.Other,
+    Null [LastNoAccessDate],
+    Null [LastJobEmployeeDate],
+    Case
+        When Not Max(q.QuoteID) Is Null AND s.Deleted IS NULL Then
+            q.QuoteID
+        Else
+            null
+    End [QuoteID],
+	dbo.CleanDate(ii.ItemDate) [InvoiceDate],
+	null RegisterFinish,
+	null RegisterFinishDateTime,
+	Min(a.StartTime) as AppointmentDateTime
+From
+    [Site] s WITH (NOLOCK)
+    Inner Join ClientSite c WITH (NOLOCK) On s.SiteId = c.SiteId AND c.ClientID > 0
+    Inner join ProjectSite ps WITH (NOLOCK) On s.SiteId = ps.SiteId
+    Inner Join Project p WITH (NOLOCK) On ps.ProjectId = p.ProjectId AND p.ClientID = c.ClientID
+    Left Outer Join Appointment a WITH (NOLOCK) On ps.ProjectId = a.ProjectId And s.SiteId = a.SiteId AND a.AppointmentTypeID IN (1,3,9)
+    left outer join Appointment dc WITH (NOLOCK) On dc.DateDeclined IS NULL AND dc.ProjectID = p.ProjectID AND dc.SiteID = s.SiteID AND dc.AppointmentTypeID IN (1,3,9)
+	outer apply
+	(
+		SELECT TOP 1
+			*
+		FROM
+			Quote _q WITH (NOLOCK)
+		WHERE
+			_q.SiteID = ps.SiteID 
+				AND 
+			_q.ProjectID = ps.ProjectID
+				AND
+			_q.Rejected IS NULL
+	) q
+    --left outer join Quote q WITH (NOLOCK) on q.SiteID = ps.SiteID AND q.ProjectID = ps.ProjectID AND q.Rejected IS NULL
+	left join InvoiceItem ii WITH (NOLOCK) ON q.InvoiceItemID = ii.InvoiceItemID
+    Outer Apply
+    (
+        Select Count(*) as PhoneCalls From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 1 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
+    ) pc
+    Outer Apply
+    (
+        Select Count(*) as Letters From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 2 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
+    ) l
+Where
+    s.deleted Is NULL
+		AND
+	(
+		(
+			(a.AppointmentId Is NULL)
+			or
+			(a.AppointmentID is not null and dc.AppointmentID is null)
+		)
+			--OR
+		--s.Deleted IS NOT NULL
+	)
+Group BY 
+    s.[Address],
+    s.Postcode,
+    s.Contact,
+    s.Telephone,
+    s.SiteEmail,
+    s.UPRN,
+    p.GroupName,
+    c.ClientId,
+    ps.ProjectId,
+    s.SiteId,
+    s.Other,
+    pc.PhoneCalls,
+    l.Letters,
+    q.QuoteID,
+    q.Created,
+	ii.ItemDate,
+	s.Deleted
+
+union
+--AIR TESTS
+  Select
+        3 as SortOrder,
+        a.AppointmentId as AppointmentId,
+        CASE
+            WHEN atDetails.[firstId] IS NULL THEN 'Airtest Scheduled'
+            WHEN atDetails.[airtestFinish] IS NULL THEN 'Approved'
+            WHEN atDetails.[airtestFinish] IS NOT NULL THEN 'Site Work Complete'
+                     When workdone.ManuallyMarkWorkDone = 1 THEN 'Marked as Complete'
+        End [Status],
+        null [StatusDate],
+        dbo.FormatTeamsReference('J', j.JobNo)  /*+  ISNULL(' - ' + jobAtt.string ,'')*/ AS JobNo,
+        s.[Address],
+        s.Postcode,
+        s.Contact,
+        s.Telephone,
+        s.SiteEmail,
+        j.JobId,
+        [a].[AppointmentID],
+        Cast(a.StartTime as date) AS AppointmentDate,
+        atDetails.[airtestFinish] DateSiteWorkComplete,
+        null AnalysisComplete,
+        0 TotalJobs,
+        0 WorkScheduled,
+        0 SiteWorkComplete,
+        0 Samples,
+        0 SampleResults,
+        null FileName,
+        a.ClientOrderNo,
+        dbo.FormatTeamsDate(Cast(a.DateCreated as date), 1) AS DateReceived,
+        dbo.FormatTeamsDate(Cast(q.Created as date), 1) AS QuoteDate,
+        s.uprn,
+        AirtestTypesList.[string],
+        jobAirTEmpl.[string] Surveyor,
+        dbo.FormatTeamsDate(CAST(atDetails.[airtestStart] as date), 1) AS SurveyStart,
+        dbo.FormatTeamsDate(CAST(atDetails.[airtestFinish] as date) , 1) AS SurveyCompleted,
+        null AnalysisCompleted,
+        dbo.FormatTeamsDate(Cast(j.Approved as date),1) as Approved,
+        NULL ApprovedBy,
+        null DueDate,
+        na.NoAccessAttempts,
+        pc.PhoneCalls,
+        l.Letters,
+        [p].[GroupName],
+        j.ClientId,
+        j.ProjectId,
+        j.SiteId,
+        s.Other,
+        lna.Created [LastNoAccessDate],
+        lje.Created [LastJobEmployeeDate],
+        q.QuoteId,
+		dbo.CleanDate(ii.ItemDate) [InvoiceDate],
+		null RegisterFinish,
+		null RegisterFinishDateTime,
+		a.StartTime as AppointmentDateTime
+  FROM
+        [dbo].[Job] j WITH (NOLOCK)
+        Inner Join [Site] s WITH (NOLOCK) On j.SiteId = s.SiteId and s.Deleted Is Null
+        INNER JOIN project p WITH (NOLOCK) ON j.[ProjectID] = [p].[ProjectID]
+		LEFT OUTER JOIN [dbo].[Quote] q WITH (NOLOCK) ON j.[JobID] = [q].[JobID] AND j.[Cancelled] IS NULL
+		LEFT JOIN InvoiceItem ii WITH (NOLOCK) ON q.InvoiceItemID = ii.InvoiceItemID
+        /*all the airtest types that have been done and passed back concatenate*/
+        OUTER APPLY
+        (
+            select
+            STUFF(
+                    (
+                        SELECT DISTINCT
+                            ',' + ISNULL([att].[Description],'') [text()]
+                        FROM
+                            [dbo].[JobEmployee] je WITH (NOLOCK)
+                            LEFT OUTER JOIN [dbo].[Employee] emp WITH (NOLOCK) ON je.[EmployeeID] = [emp].[EmployeeID]
+                            LEFT OUTER JOIN [dbo].[AirTest] at WITH (NOLOCK) ON [at].[JobEmployeeID] = [je].[JobEmployeeID]
+                            LEFT OUTER JOIN [dbo].[AirTestType] att WITH (NOLOCK) ON [att].[AirTestTypeID] = [at].[AirTestTypeID]
+                        WHERE 
+                            je.[JobID] = [j].[JobID]
+                        FOR XML PATH('')
+                     ),
+                    1,
+                    1,
+                    ''
+            )
+        )jobAtt(string)
+        /*all the airtest surveyor that have been passed back concatenate*/
+        OUTER APPLY
+        (
+            select
+            STUFF(
+                    (
+                        SELECT DISTINCT
+                            ',' + ISNULL([emp].[FullName],'') [text()]
+                        FROM
+                            [dbo].[JobEmployee] je WITH (NOLOCK)
+                            LEFT OUTER JOIN [dbo].[Employee] emp WITH (NOLOCK) ON je.[EmployeeID] = [emp].[EmployeeID]
+                        WHERE 
+                            je.[JobID] = [j].[JobID]
+                        FOR XML PATH('')
+                     ),
+                    1,
+                    1,
+                    ''
+            )
+        )jobAirTEmpl(string)
+        /*all the airtest details concatenate*/
+        OUTER apply(
+            SELECT
+                MIN([at].[AirTestID]),
+                MIN([at].[AirTestStart]),
+                MAX([at].[AirTestFinish])
+            FROM
+                [dbo].[JobEmployee] je WITH (NOLOCK)
+                LEFT OUTER JOIN [dbo].[Employee] emp WITH (NOLOCK) ON je.[EmployeeID] = [emp].[EmployeeID]
+                LEFT OUTER JOIN [dbo].[AirTest] at WITH (NOLOCK) ON [at].[JobEmployeeID] = [je].[JobEmployeeID]
+                LEFT OUTER JOIN [dbo].[AirTestType] att WITH (NOLOCK) ON [att].[AirTestTypeID] = [at].[AirTestTypeID]
+            WHERE 
+                je.[JobID] = [j].[JobID]
+        )atDetails(firstId,airtestStart,airtestFinish)
+        
+        
+        
+        /*get first appointment record for quote*/
+        outer apply
+        (
+            SELECT TOP 1
+                _a.[AppointmentID],
+                _a.[StartTime],
+                _a.[ProjectID]
+            FROM
+                [dbo].[Appointment] _a WITH (NOLOCK)
+                INNER JOIN Quote _q WITH (NOLOCK) ON _q.QuoteID = _a.QuoteID
+            WHERE
+                _q.JobID = j.JobID
+                AND _a.DateDeclined Is NULL
+            ORDER BY 
+                _a.[StartTime]
+        )firstapp(id,startTime,projectId)
+        LEFT OUTER JOIN Appointment a WITH (NOLOCK) ON a.[AppointmentID]= [firstapp].[id]
+        LEFT OUTER JOIN [dbo].[AppointmentAirMonitoring] as aps WITH (NOLOCK) On a.AppointmentID = aps.AppointmentID
+        
+        /*all the airtest types that were asked for IN THE APPOINTMENT*/
+        OUTER APPLY
+        (
+            SELECT
+                STUFF(
+                        (
+                            SELECT
+                                ','+ ISNULL([att].[Description],'') [text()]
+                            FROM
+                                [dbo].[AppointmentAirMonitoringType] amt WITH (NOLOCK)
+                                INNER JOIN [dbo].[AirTestType] att WITH (NOLOCK) ON [att].[AirTestTypeID] = [amt].[AirTestTypeID]
+                            WHERE 
+                                [amt].[AppointmentAirMonitoringID] =[aps].[AppointmentAirMonitoringID]
+                            FOR XML PATH('')
+                        ),
+                        1,
+                        1,
+                        ''
+                )
+        )AirtestTypesList(string)
+        Outer Apply
+        (
+              Select Count(*) as NoAccessAttempts From NoAccess WITH (NOLOCK) Where JobId = j.jobid Or SiteId = s.SiteId
+        ) na
+        Outer Apply
+        (
+              Select Count(*) as PhoneCalls From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 1 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
+        ) pc
+        Outer Apply
+        (
+              Select Count(*) as Letters From SiteContact WITH (NOLOCK) Where SiteID = s.SiteID AND ContactTypeID = 2 AND Datedeleted IS NULL AND ProjectID = p.ProjectID
+        ) l
+        Outer Apply
+        (
+            Select top 1 lna.Created From NoAccess lna WITH (NOLOCK) Where lna.jobid = j.jobid order by lna.Created desc
+        ) lna
+        Outer Apply
+        (
+            Select top 1 lje.Created From jobemployee lje WITH (NOLOCK) Where lje.jobid = j.jobid order by lje.Created desc
+        ) lje
+              OUTER APPLY
+                     (
+                           SELECT TOP 1
+                                  a.ManuallyMarkWorkDone
+                           FROM
+                                  Appointment _a
+                           WHERE  
+                                  a.AppointmentID = _a.AppointmentID
+                                         AND
+                                  _a.ManuallyMarkWorkDone = 1
+                     ) WorkDone
+    WHERE [q].[QuoteTypeID] =5
+
+UNION -- Legionella
+
+SELECT
+    4 [SortOrder],
+    a.AppointmentID [AppointmentId],
+    CASE
+        WHEN l.DateApproved IS NOT NULL THEN 'Approved'
+        WHEN l.Registers >= 1 THEN 'Site Work Complete'
+              When workdone.ManuallyMarkWorkDone = 1 THEN 'Marked as Complete'
+        ELSE 'Work Scheduled'
+    END [Status],
+    dbo.FormatTeamsDate(
+        CASE
+            WHEN l.DateApproved IS NOT NULL THEN l.DateApproved
+            WHEN l.Registers >= 1 THEN l.LegionellaFinish
+            ELSE CAST(a.DateCreated AS DATE)
+        END, 1) [StatusDate],
+    dbo.FormatTeamsReference('J', j.JobNo) [JobNo],
+    si.Address,
+    si.Postcode,
+    si.Contact,
+    si.Telephone,
+    si.SiteEmail,
+    j.JobID,
+    legt.LegionellaTypeID [SurveyTypeId],
+    CAST(a.StartTime AS DATE) [AppointmentDate],
+    l.LegionellaFinish [DateSiteWorkComplete],
+    NULL [AnalysisComplete],
+    1 [TotalJobs],
+    1 - l.Registers [WorkScheduled],
+    l.Registers [SiteWorkComplete],
+    NULL [Samples],
+    NULL [SampleResults],
+    NULL [FileName],
+    a.ClientOrderNo,
+    dbo.FormatTeamsDate(CAST(MIN(a.DateCreated) AS DATE), 1) [DateReceived],
+    dbo.FormatTeamsDate(CAST(MIN(q.Created) AS DATE), 1) [QuoteDate],
+    si.UPRN [uprn],
+    legt.Description [SurveyType],
+    sur.Surveyor,
+    dbo.FormatTeamsDate(CAST(MIN(a.StartTime) AS DATE), 1) [SurveyStart],
+    dbo.FormatTeamsDate(l.LegionellaFinish, 1) [SurveyCompleted],
+    NULL [AnalysisCompleted],
+    dbo.FormatTeamsDate(CAST(MAX(j.Approved) AS DATE), 1) [Approved],
+    l.ApprovedBy,
+    dbo.FormatTeamsDate(CAST(MIN(al.DueDate) AS DATE), 1) [DueDate],
+    COUNT(na.NoAccessID) + COUNT(nasi.NoAccessID) [NoAccessAttempts],
+    pc.PhoneCalls,
+    le.Letters,
+    p.GroupName,
+    a.ClientID [ClientId],
+    a.ProjectID [ProjectId],
+    a.SiteID [SiteId],
+    si.Other,
+    MAX(na.Created) [LastNoAccessDate],
+    MAX(l.JobEmployeeCreated) [LastJobEmployeeDate],
+    q.QuoteID [QuoteId],
+	dbo.CleanDate(ii.ItemDate) [InvoiceDate],
+	null RegisterFinish,
+	null RegisterFinishDateTime,
+	Min(a.StartTime) as AppointmentDateTime
+FROM
+    Appointment a WITH (NOLOCK)
+    INNER JOIN AppointmentLegionella al WITH (NOLOCK) ON a.AppointmentID = al.AppointmentID
+    INNER JOIN LegionellaType legt WITH (NOLOCK) ON al.LegionellaTypeID = legt.LegionellaTypeID
+    INNER JOIN Project p WITH (NOLOCK) ON a.ProjectID = p.ProjectID AND p.Deleted IS NULL
+    INNER JOIN Site si WITH (NOLOCK) ON a.SiteID = si.SiteID AND si.Deleted IS NULL
+    INNER JOIN Quote q WITH (NOLOCK) ON a.QuoteID = q.QuoteID AND q.Rejected IS NULL
+	LEFT JOIN InvoiceItem ii WITH (NOLOCK) ON q.InvoiceItemID = ii.InvoiceItemID
+	INNER JOIN Job j WITH (NOLOCK) ON q.JobID = j.JobID AND j.Cancelled IS NULL
+    OUTER APPLY
+    (
+        SELECT
+            je.JobID,
+            MAX(je.Created) [JobEmployeeCreated],
+            COUNT(DISTINCT(l.LegionellaID)) [Registers],
+            MAX(l.DateApproved) [DateApproved],
+            MAX(CAST(l.LegionellaFinish AS DATE)) [LegionellaFinish],
+            MAX(ae.FullName) [ApprovedBy]
+        FROM
+            JobEmployee je WITH (NOLOCK)
+            INNER JOIN Legionella l WITH (NOLOCK) ON je.JobEmployeeID = l.JobEmployeeID
+            LEFT JOIN Employee ae WITH (NOLOCK) ON l.EmployeeID = ae.EmployeeID
+        WHERE
+            je.JobId = j.JobId
+        GROUP BY
+            je.JobID
+    ) l
+    OUTER APPLY
+    (
+        SELECT TOP 1
+            e.FullName [Surveyor]
+        FROM
+            JobEmployee je WITH (NOLOCK)
+            INNER JOIN Employee e WITH (NOLOCK) ON je.EmployeeID = e.EmployeeID
+        WHERE
+            je.JobID = j.JobID
+                AND
+            je.MainEmployee = 1
+        ORDER BY
+            je.ActualStart
+    ) sur -- Surveyors
+    LEFT JOIN NoAccess na WITH (NOLOCK) ON j.JobID = na.JobID
+    LEFT JOIN NoAccess nasi WITH (NOLOCK) ON si.SiteID = nasi.SiteID
+    OUTER APPLY
+    (
+        SELECT COUNT(*) [PhoneCalls] FROM SiteContact WITH (NOLOCK) WHERE ProjectID = p.ProjectID AND SiteID = si.SiteID AND DateDeleted IS NULL AND ContactTypeID = 1
+    ) pc -- Phone Calls
+    OUTER APPLY
+    (
+        SELECT COUNT(*) [Letters] FROM SiteContact WITH (NOLOCK) WHERE ProjectID = p.ProjectID AND SiteID = si.SiteID AND DateDeleted IS NULL AND ContactTypeID = 2
+    ) le -- Letters
+       OUTER APPLY
+                     (
+                           SELECT TOP 1
+                                  a.ManuallyMarkWorkDone
+                           FROM
+                                  Appointment _a
+                           WHERE  
+                                  a.AppointmentID = _a.AppointmentID
+                                         AND
+                                  _a.ManuallyMarkWorkDone = 1
+                     ) WorkDone
+WHERE
+    a.AppointmentID = (SELECT MIN(AppointmentID) FROM Appointment WITH (NOLOCK) WHERE QuoteID = q.QuoteID AND DateDeclined IS NULL)
+GROUP BY
+    q.QuoteID,
+    a.AppointmentID,
+    a.ClientID,
+    a.ProjectID,
+    a.SiteID,
+    a.StartTime,
+    a.ClientOrderNo,
+    a.DateCreated,
+    legt.LegionellaTypeID,
+    legt.Description,
+    p.Project,
+    p.GroupName,
+    si.SiteID,
+    si.Address,
+    si.Postcode,
+    si.UPRN,
+    si.Contact,
+    si.Telephone,
+    si.SiteEmail,
+    si.Other,
+    j.JobID,
+    j.JobNo,
+    j.Approved,
+    l.JobEmployeeCreated,
+    l.Registers,
+    l.DateApproved,
+    l.LegionellaFinish,
+    l.ApprovedBy,
+    sur.Surveyor,
+    pc.PhoneCalls,
+    le.Letters,
+    workdone.ManuallyMarkWorkDone,
+	ii.ItemDate
+
+
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'FN' AND name = 'JobSheetStatusDate')
+BEGIN
+    EXEC('CREATE FUNCTION [dbo].[JobSheetStatusDate]() RETURNS varchar(50) BEGIN RETURN '''' END;')
+END
+GO
+
+ALTER FUNCTION [dbo].[JobSheetStatusDate]
+(
+	@LastNoAccessDate as DateTime,
+	@LastJobEmployeeDate as DateTime,
+	@RegisterFinishDate as DateTime,
+	@AppointmentDate as DateTime,
+	@StatusDate as DateTime
+)
+RETURNS varchar(50)
+AS
+BEGIN
+	-- Declare the return variable here
+	DECLARE @returnDate as varchar(50)
+
+	select @returnDate = case 
+			when ((@LastNoAccessDate is not null and @LastJobEmployeeDate is null) or (@LastNoAccessDate > @LastJobEmployeeDate))
+			then 
+			     case when (Isnull(@RegisterFinishDate,@AppointmentDate) > @LastNoAccessDate or @AppointmentDate > @LastNoAccessDate) then
+					dbo.FormatTeamsDate(@StatusDate,1) 
+				 else
+					 dbo.FormatTeamsDate(@LastNoAccessDate,1) + ' (No access)'
+				 end
+			else 
+				 dbo.FormatTeamsDate(@StatusDate,1)
+		end
+
+
+	RETURN @returnDate
+
+END
+
+
+
+
+
+
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE type = 'FN' AND name = 'IsJobSheetStatusNoAccess')
+BEGIN
+    EXEC('CREATE FUNCTION [dbo].[IsJobSheetStatusNoAccess]() RETURNS varchar(50) BEGIN RETURN '''' END;')
+END
+GO
+
+ALTER FUNCTION [dbo].[IsJobSheetStatusNoAccess]
+(
+	@LastNoAccessDate as DateTime,
+	@LastJobEmployeeDate as DateTime,
+	@RegisterFinishDate as DateTime,
+	@AppointmentDate as DateTime,
+	@StatusDate as DateTime
+)
+RETURNS bit
+AS
+BEGIN
+	-- Declare the return variable here
+	DECLARE @IsNoAccess as bit = 0
+
+	select @IsNoAccess = case 
+			when ((@LastNoAccessDate is not null and @LastJobEmployeeDate is null) or (@LastNoAccessDate > @LastJobEmployeeDate))
+			then 
+			     case when (Isnull(@RegisterFinishDate,@AppointmentDate) > @LastNoAccessDate or @AppointmentDate > @LastNoAccessDate) then
+					0
+				 else
+					 1
+				 end
+			else 
+				 0
+		end
+
+
+	RETURN @IsNoAccess
+
+END
+
+
+
+GO
+
+
+Go
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_ProjectJobSheet') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[Paged_ProjectJobSheet] AS BEGIN SET NOCOUNT ON; END')
+End
+
+GO
+
+
+
+ALTER PROCEDURE [dbo].[Paged_ProjectJobSheet]
+	@PerPage INT = 15
+	, @CurrentPage INT = 1
+	, @ClientID INT = NULL
+	, @ProjectGroupID INT = NULL
+	, @ProjectID INT = NULL
+	, @SiteID INT = NULL
+	, @Status VARCHAR(24) = ''
+	, @Other VARCHAR(MAX) = ''
+	, @Address VARCHAR(200) = ''
+	, @PhoneCalls INT = NULL
+	, @Letters INT = NULL,
+	@NoAccessAttempts INT = NULL
+/**********************************************************************
+** Overview: Get data for the View Project JobSheet tab - procedurised
+**		to improve performance over previous code + add paging capability
+**
+** PLEASE NOTE: The Change Log has now been removed as this has been added to SQL SVN instead.
+** Please use the latest version from SVN before making changes. Commit the changes when done.
+**********************************************************************/
+AS
+SET ANSI_WARNINGS OFF
+BEGIN
+    SET NOCOUNT ON;
+    
+	-- tidy input variables
+	SELECT @ClientID = NULLIF(@ClientID, 0)
+	SELECT @ProjectGroupID = NULLIF(@ProjectGroupID, 0)
+	SELECT @ProjectID = NULLIF(@ProjectID, 0)
+	SELECT @SiteID = NULLIF(@SiteID, 0)
+	SELECT @Status = NULLIF(@Status, '')
+	SELECT @Other = NULLIF(@Other, '')
+	SELECT @Address = NULLIF(@Address, '')
+	SELECT @PhoneCalls = NULLIF(@PhoneCalls, 0)
+	SELECT @Letters = NULLIF(@Letters, 0)
+	SELECT @NoAccessAttempts = NULLIF(@NoAccessAttempts, 0)
+
+	-- ensure we have at least 1 filter ID (don't want to kill the server!)
+	IF (@ClientID IS NULL) AND (@ProjectGroupID IS NULL) AND (@ProjectID IS NULL) AND (@SiteID IS NULL) BEGIN
+		RAISERROR('No ID values passed to GetProjectJobSheet', 16, 1)
+		RETURN
+	END
+	
+	-- get ProjectIDs into a table to join to, based on @ProjectGroupID AND @ProjectID inputs
+	CREATE TABLE #ProjectIDs (ProjectID INT)
+	IF @ProjectID IS NOT NULL BEGIN
+	
+		INSERT
+			#ProjectIDs
+		SELECT
+			@ProjectID
+			
+	END ELSE BEGIN
+		
+		INSERT
+			#ProjectIDs
+		SELECT
+			ProjectID
+		FROM
+			Project
+		WHERE
+			ProjectGroupId = @ProjectGroupID
+	END
+	
+	-- change #ProjectIDs into a comma separated string of IDs 
+	DECLARE @ProjectIDsString VARCHAR(MAX)
+	SELECT @ProjectIDsString = STUFF 
+	((
+		SELECT ',' + CONVERT(VARCHAR(20), ProjectID)
+		FROM #ProjectIDs
+		FOR XML PATH('')
+	), 1, 1, '')
+	
+	-- select from existing ProjectJobSheet view into a temp table
+	CREATE TABLE #JobSheetData (
+		JobSheetDataID INT IDENTITY (1,1) NOT NULL
+		, AppointmentID INT NULL
+		, JobId INT NULL
+		, SurveyTypeId INT NULL
+		, ClientId INT NULL
+		, ProjectId INT NULL
+		, SiteId INT NULL
+		, SurveyCompleted INT NULL
+		, SurveyStillDue INT NULL
+		, Approved INT NULL
+		, SurveyOnTime INT NULL
+		, SurveyOverTime INT NULL
+		, Unscheduled INT NULL
+		, SurveyCompletedRaw NVARCHAR(40) NULL
+		, DueDateRaw NVARCHAR(40) NULL
+		, ApprovedRaw NVARCHAR(40) NULL
+		, SortOrder INT NOT NULL
+		, Samples INT NULL
+		, SampleResults INT NULL
+		, [Status] VARCHAR(24)
+		, Other VARCHAR(MAX)
+		, [Address] VARCHAR(200)
+		, PhoneCalls INT NULL
+		, Letters INT NULL
+		, NoAccessAttempts INT NULL
+		, StatusFilterTypeID INT NULL
+		, StatusFilterType VARCHAR(MAX) NULL			
+	)
+	
+	/**************************************************************************************************************************************
+	-- NOTE - We are using dynamic SQL because the WHERE filters are still evaluated even if the parameter to be filtered on IS NULL, which
+	--   causes a hit on performance.  NOT ideal, but performance is more important than tidy code here!
+	**************************************************************************************************************************************/
+	DECLARE @DynamicSQL NVARCHAR(MAX)
+	SELECT @DynamicSQL = 'INSERT
+		#JobSheetData
+	SELECT
+		pjs.AppointmentID
+		, pjs.JobId
+		, pjs.SurveyTypeId
+		, pjs.ClientId
+		, pjs.ProjectId
+		, pjs.SiteId
+		, CASE WHEN NOT SurveyCompleted IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyCompleted
+		, CASE WHEN pjs.[Status] = ''Unscheduled'' OR SortOrder = 3 THEN 0 ELSE 1 END AS SurveyStillDue
+		, CASE WHEN NOT Approved IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS Approved
+		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) <= 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOnTime
+		, CASE WHEN DATEDIFF(dd, DueDate, SurveyCompleted) > 0 AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOverTime
+		, CASE WHEN pjs.[Status] = ''Unscheduled'' AND SortOrder <> 3 THEN 1 ELSE 0 END AS Unscheduled
+		, SurveyCompleted
+		, DueDate
+		, Approved
+		, SortOrder
+		, Samples
+		, SampleResults
+		, pjs.[Status]
+		, pjs.Other
+		, pjs.[Address]
+		, [PhoneCalls]
+		, [Letters]
+		, pjs.NoAccessAttempts
+		, s.StatusFilterTypeID
+		, sft.[Status] As StatusFilterType		
+	FROM
+		ProjectJobSheet pjs
+		LEFT JOIN Site s ON pjs.SiteId = s.SiteID
+		LEFT JOIN StatusFilterType sft ON s.StatusFilterTypeID = sft.StatusFilterTypeID
+	WHERE
+		pjs.ProjectID IN (' + @ProjectIDsString + ') '
+
+	-- add default order by
+	SELECT @DynamicSQL = @DynamicSQL + ' ORDER BY SortOrder, JobNo, Address'
+
+	-- execute the SQL
+	EXECUTE sp_executesql @DynamicSQL
+	
+	-- ClientID filter (not applied to view above as extra view filters slow performance)
+	IF @ClientID IS NOT NULL BEGIN
+		DELETE FROM #JobSheetData WHERE ClientID <> @ClientID
+	END
+	
+	-- SiteID filter (not applied to view above as extra view filters slow performance)
+	IF @SiteID IS NOT NULL BEGIN
+		DELETE FROM #JobSheetData WHERE SiteID <> @SiteID
+	END
+
+	-- @PhoneCalls filter (not applied to view above as extra view filters slow performance)
+	IF @PhoneCalls IS NOT NULL BEGIN
+		
+		IF @PhoneCalls > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE PhoneCalls < 4
+		END
+
+		IF @PhoneCalls < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE PhoneCalls <> @PhoneCalls
+		END
+	END
+
+	-- @Letters filter (not applied to view above as extra view filters slow performance)
+	IF @Letters IS NOT NULL BEGIN
+
+		IF @Letters > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE Letters < 4
+		END
+
+		IF @Letters < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE Letters <> @Letters
+		END
+	END
+	
+	-- @NoAccessAttempts filter (not applied to view above as extra view filters slow performance)
+	IF @NoAccessAttempts IS NOT NULL BEGIN
+
+		IF @NoAccessAttempts > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE NoAccessAttempts < 4
+		END
+
+		IF @NoAccessAttempts < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE NoAccessAttempts <> @NoAccessAttempts
+		END
+	END
+
+	-- calculate useful totals
+    DECLARE @SurveysCompleted INT
+    DECLARE @SurveysStillDue INT
+    DECLARE @Approved INT
+    DECLARE @SurveysOnTime INT
+    DECLARE @SurveysOverTime INT
+    DECLARE @UnScheduled INT
+    DECLARE @KPI DECIMAL(12,2)
+    DECLARE @TotalJobs_HasSampleResults INT
+    DECLARE @Approved_HasSampleResults INT
+    DECLARE @TotalRows INT
+    
+	SELECT
+		@SurveysCompleted = ISNULL(SUM(SurveyCompleted), 0)
+		, @SurveysStillDue = ISNULL(SUM(SurveyStillDue), 0) - ISNULL(SUM(SurveyCompleted), 0)
+		, @Approved = ISNULL(SUM(Approved), 0)
+		, @SurveysOnTime = ISNULL(SUM(SurveyOnTime), 0)
+		, @SurveysOverTime = ISNULL(SUM(SurveyOverTime), 0)
+		, @UnScheduled = ISNULL(SUM(UnScheduled), 0)
+		, @KPI = ISNULL(CASE WHEN COUNT(SurveyCompletedRaw) = 0 THEN 0 ELSE ROUND(SUM(CASE WHEN DueDateRaw > SurveyCompletedRaw AND SortOrder <> 3 THEN 1 ELSE 0 END)
+					/ CONVERT(FLOAT,COUNT(SurveyCompletedRaw)), 3) * 100 END, 0)
+		, @TotalRows = COUNT(1)
+	FROM 
+		#JobSheetData
+		
+	SELECT
+		@TotalJobs_HasSampleResults = ISNULL(SUM(CASE WHEN [Status] = 'Unscheduled' OR SortOrder = 3 THEN 0 ELSE 1 END), 0) 
+		, @Approved_HasSampleResults = ISNULL(SUM(CASE WHEN NOT ApprovedRaw IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END), 0)
+	FROM 
+		#JobSheetData
+	WHERE
+		Samples > 0
+		AND Samples = SampleResults
+	
+	-- return paged raw data to front end
+	-- NOTE - @Status, @Other and @Address filters only filter this data, not the count data
+	;WITH Paging AS 
+    ( 
+       SELECT 
+           CAST(CEILING(COUNT(*) OVER(PARTITION BY '') * 1.00 / @PerPage) AS INT) AS Pages
+           , ((ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) - 1) / @PerPage) + 1 AS Page
+           , ROW_NUMBER() OVER(ORDER BY a.JobSheetDataID ASC) AS Row_Num
+           , *
+       FROM 
+       (
+			SELECT * FROM #JobSheetData jsd
+			WHERE
+				( (jsd.[Status] = @Status) OR (jsd.[StatusFilterType] = @Status) OR (@Status IS NULL) )
+				AND ( (jsd.Other = @Other) OR (@Other IS NULL) )
+				AND ( (jsd.[Address] = @Address) OR (@Address IS NULL) )
+	   ) a
+    )	
+	SELECT  
+		main.Pages
+		, main.Page
+		, main.Row_Num
+		, pjs.SortOrder
+		, pjs.AppointmentID	
+		,case when dbo.IsJobSheetStatusNoAccess(nullif(pjs.LastNoAccessDate,''),nullif(LastJobEmployeeDate,''),nullif(pjs.RegisterFinishDateTime,''),nullif(pjs.AppointmentDateTime,''),nullif(pjs.StatusDate,'')) =1  then 'No Access' else pjs.[Status] end [Status]
+		,dbo.JobSheetStatusDate(nullif(pjs.LastNoAccessDate,''),nullif(LastJobEmployeeDate,''),nullif(pjs.RegisterFinishDateTime,''),nullif(pjs.AppointmentDateTime,''),nullif(pjs.StatusDate,'')) as StatusDate
+		, pjs.JobNo
+		, pjs.[Address]
+		, pjs.Postcode
+		, pjs.Contact
+		, pjs.Telephone
+		, pjs.SiteEmail
+		, pjs.JobId
+		, pjs.SurveyTypeId
+		, pjs.AppointmentDate
+		, pjs.DateSiteWorkComplete
+		, pjs.AnalysisComplete
+		, pjs.TotalJobs
+		, pjs.WorkScheduled
+		, pjs.SiteWorkComplete
+		, pjs.Samples
+		, pjs.SampleResults
+		, pjs.[FileName]
+		, pjs.ClientOrderNo
+		, pjs.DateReceived
+		, pjs.UPRN
+		, pjs.SurveyType
+		, pjs.Surveyor
+		, pjs.SurveyStart
+		, pjs.SurveyCompleted
+		, pjs.AnalysisCompleted
+		, pjs.Approved
+		, pjs.ApprovedBy
+		, pjs.DueDate
+		, pjs.NoAccessAttempts
+		, pjs.PhoneCalls
+		, pjs.Letters
+		, (SELECT STUFF(
+			(
+				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
+				FROM SiteContact sc2
+				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 1
+				FOR XML PATH('')
+			), 1, 1, '')) AS PhoneCallSiteContactIDs
+		, (SELECT STUFF(
+			(
+				SELECT ',' + CONVERT(VARCHAR(10), sc2.SiteContactID)
+				FROM SiteContact sc2
+				WHERE sc2.SiteID = pjs.SiteId AND sc2.ProjectID = pjs.ProjectId AND sc2.Datedeleted IS NULL AND sc2.ContactTypeID = 2
+				FOR XML PATH('')
+			), 1, 1, '')) AS LetterSiteContactIDs
+		, pjs.GroupName
+		, pjs.ClientId
+		, pjs.ProjectId
+		, pjs.SiteId
+		, pjs.Other
+		, pjspa.ProjectAppointmentID
+		, pjs.LastNoAccessDate
+		, pjs.LastJobEmployeeDate
+		, pjs.QuoteId
+		, pjs.QuoteDate
+		, pjs.InvoiceDate
+		, main.StatusFilterTypeID
+		, main.StatusFilterType
+		, pjs.RegisterFinish		
+		, dbo.IsJobSheetStatusNoAccess(pjs.LastNoAccessDate,pjs.LastJobEmployeeDate,pjs.RegisterFinishDateTime,pjs.AppointmentDateTime,pjs.StatusDate) as IsNoAccess
+    FROM 
+		Paging main
+		INNER JOIN ProjectJobSheet pjs 
+			ON ISNULL(main.AppointmentID, 0) = ISNULL(pjs.AppointmentID, 0)
+			AND ISNULL(main.JobID, 0) = ISNULL(pjs.JobID, 0)
+			AND ISNULL(main.SurveyTypeID, 0) = ISNULL(pjs.SurveyTypeID, 0)
+			AND ISNULL(main.ClientID, 0) = ISNULL(pjs.ClientID, 0)
+			AND ISNULL(main.ProjectID, 0) = ISNULL(pjs.ProjectID, 0)
+			AND ISNULL(main.SiteID, 0) = ISNULL(pjs.SiteID, 0)
+		LEFT JOIN Appointment pjspa ON pjs.AppointmentID = pjspa.AppointmentID
+    WHERE 
+		main.Row_Num BETWEEN (@CurrentPage - 1) * @PerPage + 1 AND @CurrentPage * @PerPage
+	ORDER BY
+		main.Row_Num
+	
+	-- drop temp tables
+	DROP TABLE #ProjectIDs
+	DROP TABLE #JobSheetData
+	
+	-- return useful counts to front end
+	SELECT
+		@SurveysStillDue AS WorkScheduled
+		, @SurveysStillDue AS SurveysStillDue
+		, @Approved AS Approved
+		, @SurveysOnTime AS SurveysOnTime
+		, @SurveysOverTime AS SurveysOverTime
+		, @UnScheduled AS UnScheduled
+		, @KPI AS KPI
+		, @TotalJobs_HasSampleResults - @Approved_HasSampleResults AS SampleAnalysisComplete
+		--, @SurveysCompleted - @TotalJobs_HasSampleResults - @Approved AS SiteWorkComplete
+		, @TotalRows - @UnScheduled - @SurveysStillDue - @TotalJobs_HasSampleResults + @Approved_HasSampleResults - @Approved AS SiteWorkComplete
+    
+    
+    SET NOCOUNT OFF;
+END
+
+
+
+Go
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Export_ProjectJobSheet') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[Export_ProjectJobSheet] AS BEGIN SET NOCOUNT ON; END')
+End
+
+GO
+
+
+ALTER PROCEDURE [dbo].[Export_ProjectJobSheet]
+    @ClientID INT = NULL,
+    @ProjectGroupID INT = NULL,
+    @ProjectID INT = NULL,
+    @SiteID INT = NULL,
+    @Status VARCHAR(24) = '',
+    @Other VARCHAR(MAX) = '',
+    @Address VARCHAR(200) = '',
+    @PhoneCalls INT = NULL,
+    @Letters INT = NULL,
+    @NoAccessAttempts INT = NULL
+/**********************************************************************
+** Overview: As Paged_projectJobSheet but for exporting, so :-
+**   a) removed paging code, i.e. returns all matches
+**   b) phone calls and letters one column each (via dynamic SQL)
+** 
+** PLEASE NOTE: The Change Log has now been removed as this has been added to SQL SVN instead.
+** Please use the latest version from SVN before making changes. Commit the changes when done.
+**********************************************************************/
+
+AS
+BEGIN
+	SET ANSI_WARNINGS OFF
+	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+    SET NOCOUNT ON;
+    
+    
+	-- tidy input variables
+	SELECT @ClientID = NULLIF(@ClientID, 0)
+	SELECT @ProjectGroupID = NULLIF(@ProjectGroupID, 0)
+	SELECT @ProjectID = NULLIF(@ProjectID, 0)
+	SELECT @SiteID = NULLIF(@SiteID, 0)
+	SELECT @Status = NULLIF(@Status, '')
+	SELECT @Other = NULLIF(@Other, '')
+	SELECT @Address = NULLIF(@Address, '')
+	SELECT @PhoneCalls = NULLIF(@PhoneCalls, 0)
+	SELECT @Letters = NULLIF(@Letters, 0)
+	SELECT @NoAccessAttempts = NULLIF(@NoAccessAttempts, 0)
+	
+	-- ensure we have at least 1 filter ID (don't want to kill the server!)
+	IF (@ClientID IS NULL) AND (@ProjectGroupID IS NULL) AND (@ProjectID IS NULL) AND (@SiteID IS NULL) BEGIN
+		RAISERROR('No ID values passed to GetProjectJobSheet', 16, 1)
+		RETURN
+	END
+	
+	-- get ProjectIDs into a table to join to, based on @ProjectGroupID AND @ProjectID inputs
+	CREATE TABLE #ProjectIDs (ProjectID INT)
+	IF @ProjectID IS NOT NULL BEGIN
+	
+		INSERT
+			#ProjectIDs
+		SELECT
+			@ProjectID
+			
+	END ELSE BEGIN
+		
+		INSERT
+			#ProjectIDs
+		SELECT
+			ProjectID
+		FROM
+			Project
+		WHERE
+			ProjectGroupId = @ProjectGroupID
+		
+	END
+	
+	-- change #ProjectIDs into a comma separated string of IDs 
+	DECLARE @ProjectIDsString VARCHAR(MAX)
+	SELECT @ProjectIDsString = STUFF 
+	((
+		SELECT ',' + CONVERT(VARCHAR(20), ProjectID)
+		FROM #ProjectIDs
+		FOR XML PATH('')
+	), 1, 1, '')
+	
+	-- select from existing ProjectJobSheet view into a temp table
+	CREATE TABLE #JobSheetData (
+		JobSheetDataID INT IDENTITY (1,1) NOT NULL
+		, AppointmentID INT NULL
+		, JobId INT NULL
+		, SurveyTypeId INT NULL
+		, ClientId INT NULL
+		, ProjectId INT NULL
+		, SiteId INT NULL
+		, SurveyCompleted INT NULL
+		, SurveyStillDue INT NULL
+		, Approved INT NULL
+		, SurveyOnTime INT NULL
+		, SurveyOverTime INT NULL
+		, Unscheduled INT NULL
+		, SurveyCompletedRaw NVARCHAR(40) NULL
+		, DueDateRaw NVARCHAR(40) NULL
+		, ApprovedRaw NVARCHAR(40) NULL
+		, SortOrder INT NOT NULL
+		, Samples INT NULL
+		, SampleResults INT NULL
+		, [Status] VARCHAR(24)
+		, Other VARCHAR(MAX)
+		, [Address] VARCHAR(200)
+		, PhoneCalls INT
+		, Letters INT,
+		NoAccessAttempts INT,
+		JobNo VARCHAR(MAX),
+		GroupName VARCHAR(MAX),
+		UPRN VARCHAR(MAX),
+		Postcode VARCHAR(MAX),
+		Contact VARCHAR(MAX),
+		Telephone VARCHAR(MAX),
+		QuoteDate VARCHAR(50),
+		ClientOrderNo VARCHAR(MAX),
+		SurveyType VARCHAR(MAX),
+		Surveyor VARCHAR(MAX),
+		DueDate VARCHAR(50),
+		SurveyStart VARCHAR(50),
+		AnalysisCompleted VARCHAR(50),
+		ApprovedBy VARCHAR(MAX),
+		LastNoAccessDate DATETIME,
+		LastJobEmployeeDate DATETIME,
+		StatusDate VARCHAR(50),
+		IsNoAccess bit not null
+	)
+	
+	/**************************************************************************************************************************************
+	-- NOTE - We are using dynamic SQL because the WHERE filters are still evaluated even if the parameter to be filtered on IS NULL, which
+	--   causes a hit on performance.  NOT ideal, but performance is more important than tidy code here!
+	**************************************************************************************************************************************/
+	DECLARE @DynamicSQL NVARCHAR(MAX)
+	SELECT @DynamicSQL = 'INSERT
+		#JobSheetData
+	SELECT
+		pjs.AppointmentID
+		, pjs.JobId
+		, pjs.SurveyTypeId
+		, pjs.ClientId
+		, pjs.ProjectId
+		, pjs.SiteId
+		, CASE WHEN NOT SurveyCompleted IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyCompleted
+		, CASE WHEN ISNULL(sft.Status, pjs.[Status]) = ''Unscheduled'' OR SortOrder = 3 THEN 0 ELSE 1 END AS SurveyStillDue
+		, CASE WHEN NOT Approved IS NULL AND SortOrder <> 3 THEN 1 ELSE 0 END AS Approved
+		, CASE WHEN DueDate > SurveyCompleted AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOnTime
+		, CASE WHEN DueDate < SurveyCompleted AND SortOrder <> 3 THEN 1 ELSE 0 END AS SurveyOverTime
+		, CASE WHEN ISNULL(sft.Status, pjs.[Status]) = ''Unscheduled'' AND SortOrder <> 3 THEN 1 ELSE 0 END AS Unscheduled
+		, SurveyCompleted
+		, DueDate
+		, Approved
+		, SortOrder
+		, Samples
+		, SampleResults
+		, CASE WHEN dbo.IsJobSheetStatusNoAccess(nullif(pjs.LastNoAccessDate,''''),nullif(LastJobEmployeeDate,''''),nullif(RegisterFinishDateTime,''''),nullif(AppointmentDateTime,''''),nullif(StatusDate,'''')) = 1 
+		  THEN ''No Access''
+		  ELSE
+			CASE 
+				WHEN SurveyCompleted IS NOT NULL THEN pjs.Status
+				ELSE ISNULL(sft.Status, pjs.[Status])
+			END
+		  END [Status]
+		, pjs.Other
+		, pjs.[Address]
+		, PhoneCalls
+		, Letters,
+		pjs.NoAccessAttempts,
+		pjs.JobNo,
+		pjs.GroupName,
+		pjs.UPRN,
+		pjs.Postcode,
+		pjs.Contact,
+		pjs.Telephone,
+		pjs.QuoteDate,
+		pjs.ClientOrderNo,
+		pjs.SurveyType,
+		pjs.Surveyor,
+		pjs.DueDate,
+		pjs.SurveyStart,
+		pjs.AnalysisCompleted,
+		pjs.ApprovedBy,
+		pjs.LastNoAccessdate,
+		pjs.LastJobEmployeeDate,
+		dbo.JobSheetStatusDate(pjs.LastNoAccessDate,pjs.LastJobEmployeeDate,pjs.RegisterFinishDateTime,pjs.AppointmentDateTime,pjs.StatusDate) as StatusDate,
+		dbo.IsJobSheetStatusNoAccess(nullif(pjs.LastNoAccessDate,''''),nullif(LastJobEmployeeDate,''''),nullif(RegisterFinishDateTime,''''),nullif(AppointmentDateTime,''''),nullif(StatusDate,'''')) as IsNoAccess
+	FROM
+		ProjectJobSheet pjs
+		LEFT JOIN Site si ON pjs.SiteID = si.SiteID
+		LEFT JOIN StatusFilterType sft ON si.StatusFilterTypeID = sft.StatusFilterTypeID
+	WHERE
+		pjs.ProjectID IN (' + @ProjectIDsString + ') '
+
+	-- add default order by
+	SELECT @DynamicSQL = @DynamicSQL + ' ORDER BY SortOrder, JobNo, Address'
+
+	-- execute the SQL
+	EXECUTE sp_executesql @DynamicSQL
+	
+	-- ClientID filter (not applied to view above as extra view filters slow performance)
+	IF @ClientID IS NOT NULL BEGIN
+		DELETE FROM #JobSheetData WHERE ClientID <> @ClientID
+	END
+	
+	-- SiteID filter (not applied to view above as extra view filters slow performance)
+	IF @SiteID IS NOT NULL BEGIN
+		DELETE FROM #JobSheetData WHERE SiteID <> @SiteID
+	END
+	
+	-- @PhoneCalls filter (not applied to view above as extra view filters slow performance)
+	IF @PhoneCalls IS NOT NULL BEGIN
+		
+		IF @PhoneCalls > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE PhoneCalls < 4
+		END
+
+		IF @PhoneCalls < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE PhoneCalls <> @PhoneCalls
+		END
+	END
+
+	-- @Letters filter (not applied to view above as extra view filters slow performance)
+	IF @Letters IS NOT NULL BEGIN
+
+		IF @Letters > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE Letters < 4
+		END
+
+		IF @Letters < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE Letters <> @Letters
+		END
+	END
+	
+	-- @NoAccessAttempts filter (not applied to view above as extra view filters slow performance)
+	IF @NoAccessAttempts IS NOT NULL BEGIN
+
+		IF @NoAccessAttempts > 3 BEGIN
+			DELETE FROM #JobSheetData WHERE NoAccessAttempts < 4
+		END
+
+		IF @NoAccessAttempts < 4 BEGIN
+			DELETE FROM #JobSheetData WHERE NoAccessAttempts <> @NoAccessAttempts
+		END
+	END
+
+	-- work out max number of phone calls and letters columns required
+	DECLARE @PhoneCallsColumnCount INT
+	DECLARE @LettersColumnCount INT
+	SELECT
+		@PhoneCallsColumnCount = MAX(main.PhoneCalls)
+		, @LettersColumnCount = MAX(main.Letters)
+	FROM 
+		#JobSheetData main	
+    WHERE 
+		( (main.[Status] = @Status) OR (@Status IS NULL) )
+		AND ( (main.Other = @Other) OR (@Other IS NULL) )
+		AND ( (main.[Address] = @Address) OR (@Address IS NULL) )
+		
+	--select @PhoneCallsColumnCount, @LettersColumnCount
+	
+	-- return raw data to front end - main fields
+	SELECT @DynamicSQL = 'SELECT  
+		main.JobNo AS [Job No.]
+		, main.GroupName AS [Group Name]
+		, main.UPRN
+		, main.[Address]
+		, main.Postcode AS [PostCode]
+		, main.Other
+		, main.Contact + '' '' + main.Telephone AS Contact
+		, '''' AS Notes
+		, main.[Status]
+		, main.QuoteDate [Order Received]
+		, main.PhoneCalls [Phone Calls Made]'
+		
+	-- draw a phone call column up to @PhoneCallsColumnCount
+	DECLARE @PhoneCallsColumnCount_Loop INT
+	SET @PhoneCallsColumnCount_Loop = 1
+	WHILE (@PhoneCallsColumnCount_Loop <= @PhoneCallsColumnCount)
+	BEGIN
+		SELECT @DynamicSQL = @DynamicSQL + ', ISNULL(
+												(SELECT x.Text FROM (
+												  SELECT
+												     ROW_NUMBER() OVER (ORDER BY sc.DateCreated ASC) AS RowNumber
+												     , sc.ContactText + '' (Created '' + CONVERT(VARCHAR(10), sc.DateCreated, 103) + '')'' AS Text
+											      FROM
+												     SiteContact sc
+											      WHERE
+											         sc.ContactTypeID = 1
+											         AND sc.DateDeleted IS NULL
+											         AND sc.SiteID = main.SiteID
+											         AND ProjectID = main.ProjectID
+											     ) x
+											     WHERE x.RowNumber = ' + CONVERT(VARCHAR(20), @PhoneCallsColumnCount_Loop) + ' )
+											   , '''') AS [Phone Call #' + CONVERT(VARCHAR(20), @PhoneCallsColumnCount_Loop) + ']'
+		SET @PhoneCallsColumnCount_Loop = @PhoneCallsColumnCount_Loop + 1
+	END
+
+	SELECT @DynamicSQL = @DynamicSQL + ', main.Letters [Letters Sent]'
+	
+	-- draw a letter column up to @PhoneCallsColumnCount
+	DECLARE @LettersColumnCount_Loop INT
+	SET @LettersColumnCount_Loop = 1
+	WHILE (@LettersColumnCount_Loop <= @LettersColumnCount)
+	BEGIN
+		SELECT @DynamicSQL = @DynamicSQL + ', ISNULL(
+												(SELECT x.Text FROM (
+												  SELECT
+												     ROW_NUMBER() OVER (ORDER BY sc.DateCreated ASC) AS RowNumber
+												     , sc.ContactText + '' (Created '' + CONVERT(VARCHAR(10), sc.DateCreated, 103) + '')'' AS Text
+											      FROM
+												     SiteContact sc
+											      WHERE
+											         sc.ContactTypeID = 2
+											         AND sc.DateDeleted IS NULL
+											         AND sc.SiteID = main.SiteID
+											         AND ProjectID = main.ProjectID
+											     ) x
+											     WHERE x.RowNumber = ' + CONVERT(VARCHAR(20), @LettersColumnCount_Loop) + ' )
+											   , '''') AS [Letter #' + CONVERT(VARCHAR(20), @LettersColumnCount_Loop) + ']'
+		SET @LettersColumnCount_Loop = @LettersColumnCount_Loop + 1
+	END
+
+	-- continue with main fields
+	SELECT @DynamicSQL = @DynamicSQL + ', main.NoAccessAttempts AS [No Access]
+		, main.StatusDate AS [Status Changed]
+		, main.ClientOrderNo AS [Client Order No.]
+		, main.SurveyType AS [Survey Type]
+		, main.Surveyor
+		, main.DueDate AS [Due Date]
+		, main.SurveyStart AS [Survey Start]
+		, main.SurveyCompletedRaw AS [Survey Completed]
+		, main.AnalysisCompleted AS [Analysis Completed]
+		, main.ApprovedRaw [Approved]
+		, main.ApprovedBy AS [Approved By]
+		, main.LastNoAccessDate
+		, main.LastJobEmployeeDate
+    FROM 
+		#JobSheetData main	
+		--INNER JOIN ProjectJobSheet pjs 
+		--	ON ISNULL(main.AppointmentID, 0) = ISNULL(pjs.AppointmentID, 0)
+		--	AND ISNULL(main.JobID, 0) = ISNULL(pjs.JobID, 0)
+		--	AND ISNULL(main.SurveyTypeID, 0) = ISNULL(pjs.SurveyTypeID, 0)
+		--	AND ISNULL(main.ClientID, 0) = ISNULL(pjs.ClientID, 0)
+		--	AND ISNULL(main.ProjectID, 0) = ISNULL(pjs.ProjectID, 0)
+		--	AND ISNULL(main.SiteID, 0) = ISNULL(pjs.SiteID, 0)
+		--LEFT JOIN Appointment pjspa ON pjs.AppointmentID = pjspa.AppointmentID
+    WHERE
+		1 = 1'
+	
+	-- add proc filters to dynamic SQL
+	IF @Status IS NOT NULL BEGIN
+		SELECT @DynamicSQL = @DynamicSQL + ' AND main.[Status] = ''' + @Status + ''''  -- status filter
+	END
+	IF @Other IS NOT NULL BEGIN
+		SELECT @DynamicSQL = @DynamicSQL + ' AND main.Other = ''' + @Other + ''''  -- other filter
+	END
+	IF @Address IS NOT NULL BEGIN
+		SELECT @DynamicSQL = @DynamicSQL + ' AND main.[Address] = ''' + @Address + ''''  -- address filter
+	END
+
+	-- add ORDER BY to dynamic SQL
+	--SELECT @DynamicSQL = @DynamicSQL + ' ORDER BY pjs.SortOrder'
+		
+	-- execute the SQL
+	EXECUTE sp_executesql @DynamicSQL
+	
+	-- drop temp tables
+	DROP TABLE #ProjectIDs
+	DROP TABLE #JobSheetData
+    
+    SET ANSI_WARNINGS ON;
+    SET NOCOUNT OFF;
+END
+
+
+GO
+
+
 If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'Paged_ProjectJobSheetv2') < 1 BEGIN
 	EXEC('CREATE PROCEDURE [dbo].[Paged_ProjectJobSheetv2] AS BEGIN SET NOCOUNT ON; END')
 End
+
 GO
+
 
 ALTER PROCEDURE [dbo].[Paged_ProjectJobSheetv2]
 		
@@ -51491,19 +51621,13 @@ BEGIN
 		SELECT @internalClientID = (SELECT TOP 1 p.ClientID FROM #ProjectIDs pids INNER JOIN Project p ON pids.ProjectID = p.ProjectID)
 	END
 	
-	create TABLE #ProjectJobSheet (pk int not null identity(1,1) PRIMARY KEY,[SortOrder] INT, [AppointmentId] INT, [Status] VARCHAR(MAX), [StatusDate] VARCHAR(MAX), [JobNo] VARCHAR(MAX), [Address] VARCHAR(MAX), [Postcode] VARCHAR(MAX), [Contact] VARCHAR(MAX), [Telephone] VARCHAR(MAX), [SiteEmail] VARCHAR(MAX), [JobId] INT, [SurveyTypeId] INT, [AppointmentDate] DATE, [DateSiteWorkComplete] DATETIME, [AnalysisComplete] DATE, [TotalJobs] INT, [WorkScheduled] INT, [SiteWorkComplete] INT, [Samples] INT, [SampleResults] INT, [FileName] VARCHAR(MAX), [ClientOrderNo] VARCHAR(MAX), [DateReceived] VARCHAR(MAX), [QuoteDate] VARCHAR(MAX), [uprn] VARCHAR(MAX), [SurveyType] VARCHAR(MAX), [Surveyor] VARCHAR(MAX), [SurveyStart] VARCHAR(MAX), [SurveyCompleted] VARCHAR(MAX), [AnalysisCompleted] VARCHAR(MAX), [Approved] VARCHAR(MAX), [ApprovedBy] VARCHAR(MAX), [DueDate] VARCHAR(MAX), [NoAccessAttempts] INT, [PhoneCalls] INT, [Letters] INT, [GroupName] VARCHAR(MAX), [ClientId] INT, [ProjectId] INT, [SiteId] INT, [Other] VARCHAR(MAX), [LastNoAccessDate] DATETIME, [LastJobEmployeeDate] DATETIME, [QuoteId] INT, [InvoiceDate] VARCHAR(MAX))	
+	create TABLE #ProjectJobSheet (pk int not null identity(1,1) PRIMARY KEY,[SortOrder] INT, [AppointmentId] INT, [Status] VARCHAR(MAX), [StatusDate] VARCHAR(MAX), [JobNo] VARCHAR(MAX), [Address] VARCHAR(MAX), [Postcode] VARCHAR(MAX), [Contact] VARCHAR(MAX), [Telephone] VARCHAR(MAX), [SiteEmail] VARCHAR(MAX), [JobId] INT, [SurveyTypeId] INT, [AppointmentDate] DATE, [DateSiteWorkComplete] DATETIME, [AnalysisComplete] DATE, [TotalJobs] INT, [WorkScheduled] INT, [SiteWorkComplete] INT, [Samples] INT, [SampleResults] INT, [FileName] VARCHAR(MAX), [ClientOrderNo] VARCHAR(MAX), [DateReceived] VARCHAR(MAX), [QuoteDate] VARCHAR(MAX), [uprn] VARCHAR(MAX), [SurveyType] VARCHAR(MAX), [Surveyor] VARCHAR(MAX), [SurveyStart] VARCHAR(MAX), [SurveyCompleted] VARCHAR(MAX), [AnalysisCompleted] VARCHAR(MAX), [Approved] VARCHAR(MAX), [ApprovedBy] VARCHAR(MAX), [DueDate] VARCHAR(MAX), [NoAccessAttempts] INT, [PhoneCalls] INT, [Letters] INT, [GroupName] VARCHAR(MAX), [ClientId] INT, [ProjectId] INT, [SiteId] INT, [Other] VARCHAR(MAX), [LastNoAccessDate] DATETIME, [LastJobEmployeeDate] DATETIME, [QuoteId] INT, [InvoiceDate] VARCHAR(MAX), RegisterFinish DateTime)	
 	INSERT INTO #ProjectJobSheet
 	SELECT 
 		[SortOrder], 
 		[AppointmentId], 
-		[Status], 
-		case 
-			when ((LastNoAccessDate is not null and LastJobEmployeeDate is null) or (LastNoAccessDate > LastJobEmployeeDate))
-			then 
-				 dbo.FormatTeamsDate(LastNoAccessDate,1) + ' (No access)'
-			else 
-				 dbo.FormatTeamsDate([StatusDate],1)
-		end  as [StatusDate],
+		case when dbo.IsJobSheetStatusNoAccess(nullif(pjs.LastNoAccessDate,''),nullif(LastJobEmployeeDate,''),nullif(pjs.RegisterFinishDateTime,''),nullif(pjs.AppointmentDateTime,''),nullif(StatusDate,'')) =1  then 'No Access' else [Status] end [Status], 		
+		dbo.JobSheetStatusDate(nullif(pjs.LastNoAccessDate,''),nullif(LastJobEmployeeDate,''),nullif(pjs.RegisterFinishDateTime,''),nullif(pjs.AppointmentDateTime,''),nullif(StatusDate,'')) as StatusDate,		
 		[JobNo], 
 		[Address],
 		[Postcode],
@@ -51544,7 +51668,8 @@ BEGIN
 		[LastNoAccessDate],
 		[LastJobEmployeeDate],
 		[QuoteId], 
-		[InvoiceDate]  
+		[InvoiceDate],
+		[RegisterFinish]
 	FROM 
 		ProjectJobSheet pjs
 		inner join #ProjectIDs p on p.ProjectID = pjs.ProjectId
@@ -51580,6 +51705,7 @@ BEGIN
 		, NoAccessAttempts INT NULL
 		, StatusFilterTypeID INT NULL
 		, StatusFilterType VARCHAR(MAX) NULL
+		, NoAccess INT NULL
 	)
 	
 	/**************************************************************************************************************************************
@@ -51617,6 +51743,7 @@ BEGIN
 		, pjs.NoAccessAttempts
 		, s.StatusFilterTypeID
 		, sft.[Status] As StatusFilterType
+		, case when pjs.Status = ''No Access'' then 1 else 0 end
 	FROM
 		#ProjectJobSheet pjs
 		LEFT JOIN Site s ON pjs.SiteId = s.SiteID
@@ -51690,6 +51817,7 @@ BEGIN
     DECLARE @KPI DECIMAL(12,2)
     DECLARE @TotalJobs_HasSampleResults INT
     DECLARE @Approved_HasSampleResults INT
+	DECLARE @NoAccess INT
     DECLARE @TotalRows INT
     
 	SELECT
@@ -51701,7 +51829,9 @@ BEGIN
 		, @UnScheduled = ISNULL(SUM(UnScheduled), 0)
 		, @KPI = ISNULL(CASE WHEN COUNT(SurveyCompletedRaw) = 0 THEN 0 ELSE ROUND(SUM(CASE WHEN DueDateRaw > SurveyCompletedRaw AND SortOrder <> 3 THEN 1 ELSE 0 END)
 					/ CONVERT(FLOAT,COUNT(SurveyCompletedRaw)), 3) * 100 END, 0)
+		
 		, @TotalRows = COUNT(1)
+		, @NoAccess = SUM(NoAccess)
 	FROM 
 		#JobSheetData
 		
@@ -51798,7 +51928,7 @@ BEGIN
 		, pjs.QuoteDate
 		, pjs.InvoiceDate
 		, main.StatusFilterTypeID
-		, main.StatusFilterType
+		, main.StatusFilterType		
     FROM 
 		Paging main
 		INNER JOIN #ProjectJobSheet pjs 
@@ -51830,11 +51960,32 @@ BEGIN
 		, @TotalJobs_HasSampleResults - @Approved_HasSampleResults AS SampleAnalysisComplete
 		--, @SurveysCompleted - @TotalJobs_HasSampleResults - @Approved AS SiteWorkComplete
 		, @TotalRows - @UnScheduled - @SurveysStillDue - @TotalJobs_HasSampleResults + @Approved_HasSampleResults - @Approved AS SiteWorkComplete
+		, @NoAccess as NoAccess
     
     
     SET NOCOUNT OFF;
 END
+
+
+
 GO
 
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 481,'Quote - Legionella - Healthcare Risk Assessment',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=481)=0
+INSERT  INTO AppointmentCategory (Description, Sort_Order, HTML_Colour) Select 'Legionella - Healthcare Risk Assessment',100,'#000055' WHERE (SELECT COUNT(*) FROM AppointmentCategory WHERE Description='Legionella - Healthcare Risk Assessment')=0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 312,481,'Legionella - Healthcare Risk Assessment','Legionella - Healthcare Risk Assessment',GETDATE(),5,7 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=312)=0
+GO
 
+IF (not EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='ConfigInvoiceExport'))
+BEGIN
+	CREATE TABLE [dbo].[ConfigInvoiceExport](
+		[ConfigInvoiceExportId] [int] IDENTITY(1,1) NOT NULL,
+		[ConfigName] [varchar] (100) NOT NULL,
+		[ConfigValue] [varchar] (MAX) NOT NULL,
+
+		CONSTRAINT [PK_ConfigInvoiceExport] PRIMARY KEY CLUSTERED 
+		(
+			[ConfigInvoiceExportId] ASC
+		)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+	) ON [PRIMARY]
+END 
 

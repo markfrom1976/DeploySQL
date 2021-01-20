@@ -6016,8 +6016,13 @@ BEGIN
     -- Get all Survey Types up front to reduce table scans on the SurveyType table and only get the ones needed.
     CREATE TABLE #SurveyTypeIdData (SurveyTypeID INT PRIMARY KEY)
     INSERT INTO #SurveyTypeIdData (SurveyTypeID)
-    SELECT s
-    FROM dbo.SplitString(@SurveyTypeIDs, ',')
+    SELECT
+        s
+    FROM 
+		dbo.SplitString(@SurveyTypeIDs, ',') s
+		LEFT JOIN ReinspectionDateConfigExclusion rdce ON s.s = rdce.SurveyTypeID
+	WHERE
+		rdce.ReinspectionDateConfigExclusionID IS NULL
 
     -- Get the assigned Client and Site data up front to reduce table scans on the Client/Site table.
     DECLARE @ClientSiteData TABLE (ClientID INT, SiteID INT, UseRiskColours BIT)
