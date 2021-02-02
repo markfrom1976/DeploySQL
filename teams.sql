@@ -51988,4 +51988,36 @@ BEGIN
 		)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
 	) ON [PRIMARY]
 END 
+GO
 
+IF (Select COUNT(*) FROM sys.[all_columns] Where object_id IN (Select object_id FROM sys.tables Where name='Employee') AND name='LicenseNumber') < 1
+BEGIN
+    ALTER TABLE [dbo].[Employee]
+        ADD [LicenseNumber] [varchar] (100) NULL;
+END
+GO
+
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 74,'Balance',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=74)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 75,'Biostage Pump Kit',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=75)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 76,'Digital Sound Level Metre',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=76)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 77,'Drying Oven',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=77)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 78,'Electric Bunsen',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=78)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 79,'Fume Cabinet',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=79)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 80,'Isolate measurement slide',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=80)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 81,'Magnehelic',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=81)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 82,'Manometer',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=82)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 83,'Masses',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=83)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 84,'McCrones Asbestos Set',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=84)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 85,'Micropipette',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=85)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 86,'Particle Generator',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=86)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 87,'PortaCount',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=87)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 88,'Pump stand/tripod',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=88)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 89,'Sieve',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=89)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 90,'Slide Warmer',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=90)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 91,'Soap Flow Meter',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=91)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 92,'Static Eliminator',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=92)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 93,'Vernier Caliper',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=93)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 94,'XRD ',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=94)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 95,'XRF Analyser',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=95)=0
+
+GO

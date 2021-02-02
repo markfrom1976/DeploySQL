@@ -3374,9 +3374,9 @@ BEGIN
         l.LegionellaID
 
     -- Get the Log Book Task data.
-    DECLARE @LogBookTasksData TABLE (IndexID INT IDENTITY(1,1), LegionellaTaskID INT NOT NULL, RowType INT NOT NULL, SystemRef VARCHAR(MAX), Location VARCHAR(MAX), Action VARCHAR(MAX), FrequencyCategory VARCHAR(MAX), FrequencyCategorySortOrder INT NOT NULL, RiskColour VARCHAR(MAX), EventRowNo INT NOT NULL, Recorded DATETIME, Comments VARCHAR(MAX), PerformedBy VARCHAR(MAX))
+    DECLARE @LogBookTasksData TABLE (IndexID INT IDENTITY(1,1), LegionellaTaskID INT NOT NULL, RowType INT NOT NULL, SystemRef VARCHAR(MAX), Location VARCHAR(MAX), Action VARCHAR(MAX), FrequencyCategory VARCHAR(MAX), FrequencyCategorySortOrder INT NOT NULL, RiskColour VARCHAR(MAX), EventRowNo INT NOT NULL, Recorded DATETIME, Comments VARCHAR(MAX), PerformedBy VARCHAR(MAX), DueDate DATETIME)
 
-    INSERT INTO @LogBookTasksData (LegionellaTaskID, RowType, SystemRef, Location, Action, FrequencyCategory, FrequencyCategorySortOrder, RiskColour, EventRowNo, Recorded, Comments, PerformedBy)
+    INSERT INTO @LogBookTasksData (LegionellaTaskID, RowType, SystemRef, Location, Action, FrequencyCategory, FrequencyCategorySortOrder, RiskColour, EventRowNo, Recorded, Comments, PerformedBy, DueDate)
     SELECT
         lt.LegionellaTaskID,
         lao.RowType,
@@ -3389,7 +3389,8 @@ BEGIN
         ROW_NUMBER() OVER (PARTITION BY lt.LegionellaTaskID ORDER BY lte.Recorded DESC) [EventRowNo], -- The latest Event for the current Task will be first.
         lte.Recorded,
         lte.Comments,
-        ISNULL(e.FullName, ISNULL(pu.FullName, lte.PerformedByThirdParty)) [PerformedBy]
+        ISNULL(e.FullName, ISNULL(pu.FullName, lte.PerformedByThirdParty)) [PerformedBy],
+        lt.DueDate
     FROM
         @LegionellaIDs leg
         INNER JOIN (
@@ -3503,7 +3504,8 @@ BEGIN
         lbt.EventRowNo,
         lbt.Recorded,
         lbt.Comments,
-        lbt.PerformedBy
+        lbt.PerformedBy,
+        lbt.DueDate
     FROM
         @LogBookTasksData lbt
     WHERE
