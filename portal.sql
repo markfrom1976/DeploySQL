@@ -6022,9 +6022,9 @@ BEGIN
         s
     FROM 
 		dbo.SplitString(@SurveyTypeIDs, ',') s
-		LEFT JOIN ReinspectionDateConfigExclusion rdce ON s.s = rdce.SurveyTypeID
-	WHERE
-		rdce.ReinspectionDateConfigExclusionID IS NULL
+		--LEFT JOIN ReinspectionDateConfigExclusion rdce ON s.s = rdce.SurveyTypeID
+	--WHERE
+		--rdce.ReinspectionDateConfigExclusionID IS NULL
 
     -- Get the assigned Client and Site data up front to reduce table scans on the Client/Site table.
     DECLARE @ClientSiteData TABLE (ClientID INT, SiteID INT, UseRiskColours BIT)
@@ -15458,4 +15458,114 @@ BEGIN
 END
 GO
 
+IF (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'GetPortalSchedulerTask') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[GetPortalSchedulerTask] AS BEGIN SET NOCOUNT ON; END')
+END
+GO
 
+ALTER PROCEDURE [dbo].[GetPortalSchedulerTask]
+    @TaskId INT,
+	@TaskEventId INT = NULL
+AS
+BEGIN
+	SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+    SET NOCOUNT ON;
+
+	DECLARE @InternalTaskId INT = @TaskId
+
+	DECLARE @TaskEvent TABLE (Performed DATETIME, PerformedBy VARCHAR(MAX))
+	INSERT INTO @TaskEvent
+	SELECT 
+		lte.Recorded,
+		COALESCE(lte.PerformedByThirdParty, pu.FullName, e.Fullname)
+	FROM 
+		LegionellaTaskEvent lte
+		LEFT JOIN Employee e ON lte.PerformedByEmployeeID = e.EmployeeID
+		LEFT JOIN PortalUser pu ON lte.PerformedByPortalUserID = pu.PortalUserId 
+	WHERE 
+		LegionellaTaskEventID = @TaskEventId
+
+	DECLARE
+		@PerformedBy VARCHAR(MAX),
+		@Performed DATETIME
+
+	IF (SELECT COUNT(*) FROM @TaskEvent) > 0
+	BEGIN
+		SET @PerformedBy = (SELECT PerformedBy FROM @TaskEvent)
+		SET @Performed = (SELECT Performed FROM @TaskEvent)
+	END
+
+	SELECT
+		ld.JobId,
+		lt.LegionellaTaskId,
+		ld.Location,
+		ld.SystemRef,
+		ld.PhotoId,
+		lt.RiskDescription,
+		lt.Action,
+		@PerformedBy [PerformedBy],
+		@Performed [PerformedDate]
+	FROM
+		LegionellaTask lt
+		INNER JOIN (
+			SELECT
+				_je.JobID,
+				task.LegionellaTaskID,
+				_la.Location,
+				_la.SystemRef,
+				_la.PhotoId
+			FROM
+				LegionellaTask task
+				INNER JOIN LegionellaAsset _la ON task.LegionellaAssetID = _la.LegionellaAssetID
+				INNER JOIN Legionella _l ON _la.LegionellaID = _l.LegionellaID
+				INNER JOIN JobEmployee _je ON _l.JobEmployeeID = _je.JobEmployeeID
+
+				UNION
+
+			SELECT
+				_je.JobID,
+				task.LegionellaTaskID,
+				_ll.Location,
+				NULL,
+				NULL
+			FROM
+				LegionellaTask task
+				INNER JOIN LegionellaLocation _ll ON task.LegionellaLocationID = _ll.LegionellaLocationID
+				INNER JOIN Legionella _l ON _ll.LegionellaID = _l.LegionellaID
+				INNER JOIN JobEmployee _je ON _l.JobEmployeeID = _je.JobEmployeeID
+
+				UNION
+
+			SELECT
+				_je.JobID,
+				task.LegionellaTaskID,
+				_ll.Location,
+				_lo.SystemRef,
+				_lo.PhotoID
+			FROM
+				LegionellaTask task
+				INNER JOIN LegionellaOutlet _lo ON task.LegionellaOutletId = _lo.LegionellaOutletId
+				INNER JOIN LegionellaLocation _ll ON _lo.LegionellaLocationID = _ll.LegionellaLocationID
+				INNER JOIN Legionella _l ON _ll.LegionellaID = _l.LegionellaID
+				INNER JOIN JobEmployee _je ON _l.JobEmployeeID = _je.JobEmployeeID
+
+				UNION
+
+			SELECT
+				_je.JobID,
+				task.LegionellaTaskID,
+				'Site',
+				NULL,
+				_l.PhotoID
+			FROM
+				LegionellaTask task
+				INNER JOIN Legionella _l On task.LegionellaID = _l.LegionellaID
+				INNER JOIN JobEmployee _je ON _l.JobEmployeeID = _je.JobEmployeeID
+
+		) ld ON lt.LegionellaTaskId = ld.LegionellaTaskId
+	WHERE
+		lt.LegionellaTaskID = @InternalTaskId
+
+    SET NOCOUNT OFF;
+END
+GO

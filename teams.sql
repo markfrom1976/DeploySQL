@@ -52019,5 +52019,272 @@ INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTes
 INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 93,'Vernier Caliper',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=93)=0
 INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 94,'XRD ',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=94)=0
 INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 95,'XRF Analyser',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=95)=0
+INSERT INTO EquipmentCategory (EquipmentCategoryID,Description,SurveyType,AirTestType,RemovalType,SampleType,AirSampleType,NoEquipmentAllowed,LabType,LegionellaType,Deleted) SELECT 96,'Furnace',0,0,0,0,0,0,0,0,GETDATE() WHERE (SELECT COUNT(*) FROM EquipmentCategory WHERE EquipmentCategoryID=96)=0
+
+GO
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 482,'Invoice - VAT Reverse Charge',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=482)=0
+
+GO
+
+
+-- Options from Calculated field script
+SET ARITHABORT ON
+SET CONCAT_NULL_YIELDS_NULL ON
+SET QUOTED_IDENTIFIER ON
+SET ANSI_NULLS ON
+SET ANSI_PADDING ON
+SET ANSI_WARNINGS ON
+SET NUMERIC_ROUNDABORT OFF
+GO
+
+IF NOT EXISTS(SELECT 1 FROM sys.tables 
+          WHERE Object_ID = Object_ID(N'dbo.AnalysisTestOptionType'))
+BEGIN 
+	CREATE TABLE [dbo].[AnalysisTestOptionType](
+		[AnalysisTestOptionTypeId] [int] NOT NULL,
+		[TestOptionType] [varchar](50) NOT NULL,
+	 CONSTRAINT [PK_AnalysisTestOptionType] PRIMARY KEY CLUSTERED 
+	(
+		[AnalysisTestOptionTypeId] ASC
+	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+	) ON [PRIMARY]
+
+	insert into AnalysisTestOptionType (AnalysisTestOptionTypeId,TestOptionType) values (1, 'Selection')
+	insert into AnalysisTestOptionType (AnalysisTestOptionTypeId,TestOptionType) values (2, 'Text')
+	insert into AnalysisTestOptionType (AnalysisTestOptionTypeId,TestOptionType) values (3, 'Colour')
+
+END 
+
+go 
+
+IF NOT EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'AnalysisTestOptionTypeId' AND Object_ID = Object_ID(N'dbo.AnalysisTestOption'))
+begin
+	alter table [dbo].AnalysisTestOption add [AnalysisTestOptionTypeId] [int] NOT NULL Default(1)
+end
+GO
+
+IF NOT EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SampleId' AND Object_ID = Object_ID(N'dbo.SampleTestCollection'))
+BEGIN
+	Alter table SampleTestCollection add [SampleId]  AS (CONVERT([int],[_sampleId],0)) PERSISTED  
+END
+
+go
+if not exists(SELECT * FROM sys.indexes WHERE name='IDX_M1_SampleTestCollection_SampleId' AND object_id = OBJECT_ID('dbo.SampleTestCollection'))
+begin
+	CREATE NONCLUSTERED INDEX [IDX_M1_SampleTestCollection_SampleId] ON [dbo].[SampleTestCollection] ([SampleId]) ON [PRIMARY];
+	Print 'Created dbo.SampleTestCollection.IDX_M1_SampleTestCollection_SampleId';
+end
+
+GO
+IF NOT EXISTS(SELECT * from AnalysisSection where AnalysisSectionId = 1)
+begin
+	set identity_insert AnalysisSection on	
+	insert into AnalysisSection (AnalysisSectionId,Section,SortOrder) values (1,'Sample Preparation', 1)
+	set identity_insert AnalysisSection off
+end 
+go
+
+IF NOT EXISTS(SELECT * from AnalysisSection where AnalysisSectionId = 2)
+begin
+	set identity_insert AnalysisSection on	
+	insert into AnalysisSection (AnalysisSectionId,Section,SortOrder) values (2,'Fibre Observation', 2)
+	set identity_insert AnalysisSection off
+end 
+
+go
+
+IF NOT EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'SectionCode' AND Object_ID = Object_ID(N'dbo.AnalysisSection'))
+BEGIN	
+	alter table AnalysisSection add SectionCode varchar(50) not null default('')	
+END
+
+go
+if exists(select 1 from AnalysisSection where isnull(SectionCode,'') = '' and AnalysisSectionID = 1)
+begin
+	update AnalysisSection set SectionCode = 'ANALYSISTESTPREP' where AnalysisSectionID = 1
+end
+go
+if exists(select 1 from AnalysisSection where isnull(SectionCode,'') = '' and AnalysisSectionID = 2)
+begin	
+	update AnalysisSection set SectionCode = 'AnalysisTest' where AnalysisSectionID = 2
+end
+
+GO
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'SampleAnalysisHistory') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[SampleAnalysisHistory] AS BEGIN SET NOCOUNT ON; END')
+End
+
+go
+ALTER procedure [dbo].[SampleAnalysisHistory](@SampleId as int)
+as
+set nocount on 
+
+select
+	st.sampleTestCollectionID as SampleTestCollectionId,
+	st.SampleTestId as SampleTestId,	
+	sts.sampleTestStepID as SampleTestStepId,
+	stso.sampleTestStepOptionID as SampleTestStepOptionId,
+	st._isCancelled as IsCancelled,
+	case 
+		when st._name = 'ANALYSISTESTPREP' Then 'Sample Preparation'
+		when st._name = 'AnalysisTest' Then 'Fibre Observation'
+		when st._name = 'QCTESTPREP' Then 'QC Preparation'
+		when st._name = 'AnalysisQC' Then 'QC Observation'
+	end
+	as [Section],
+	cast(Isnull(st._Id,'0') as int) as SectionId,
+	st._isMinimized as IsSectionMinimized,	
+	st._testCreatedOn as TestCreated,	
+	te.FullName as UserName,
+	sts._stepName as StepName,	
+	stso._name as ValueName,
+	stso._selected as Selected,
+	case 
+		when stso._colourPicker = 1 then 'colour'
+		when stso._customTextEdit = 1 then 'text'
+		else 'selection'		
+	end as DataType,
+	stso._customTextEditValue as CustomTextValue,
+	stso._selectedColour as ColourValue,
+	isnull(st._suggestedAsbestosType,'') as Result,
+	cast(0 as Bit ) as IsCurrentAnalysis,
+	cast('' as Varchar(max)) as ResultsCSV,
+	Max(cast(st._id as int)) Over(partition by st.sampleTestCollectionID) as LastSectionNumber,
+	sr.SampleResult as OverallResult,
+	sr.SampleResultId as OverallResultId,
+	stc._sampleInternalNote as InternalNotes
+into
+	#Analyses
+from
+	 [Sample] s 
+	 left outer join SampleResult sr on sr.SampleResultID = s.SampleResultID
+	 left outer join SampleTestCollection stc on s.SampleId = stc.SampleId
+	 left outer join SampleTest st on st.sampleTestCollectionID = stc.sampleTestCollectionID 
+	 --left outer join SampleTestCollectionSession stcs on stcs.sampleTestCollectionID = stc.sampleTestCollectionID	 
+	 left outer join SampleTestStep sts on st.sampleTestID = sts.sampleTestID
+     left outer join SampleTestStepOption stso on stso.sampleTestStepID = sts.sampleTestStepID	 
+	 left outer join Employee te on te.EmployeeID = st._employeeID	 	 
+where 
+	  stc.SampleId = @SampleId
+	  and st.sampleTestCollectionID is not null
+order by
+	sampleTestCollectionID,	
+	st.SampleTestId,	
+	st._id
+	
+ 
+ --Get the id of the most current analysis that is not cancelled
+select top 1
+       row_number() over(order by TestCreated desc) as RowNum,
+	   TestCreated,
+	   SampleTestID
+into 
+	#Latest
+from 
+	#Analyses a
+where
+	a.IsCancelled = 0	
+
+declare @ResultCSV as varchar(max) = ''
+select 
+@ResultCSV = @ResultCSV + UPPER(Result)+','
+from
+(
+select distinct 
+	Result	
+from 
+	#Analyses a
+where 
+	a.IsCancelled = 0
+	and a.Section not like '%Preparation%'
+) as x
+
+declare @resultLen as int = 0
+set @resultLen = len(@ResultCSV)
+
+if @resultLen > 0
+begin
+	set @ResultCSV = LEFT(@ResultCSV, @resultLen - 1)
+end
+
+Update #Analyses set IsCurrentAnalysis = 1 where #Analyses.SampleTestId = (select SampleTestId from #Latest)
+Update #Analyses set ResultsCSV = @ResultCSV
+
+select * from #Analyses 
+go
+
+If (SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name = 'AutoLookupClientSite') < 1 BEGIN
+	EXEC('CREATE PROCEDURE [dbo].[AutoLookupClientSite] AS BEGIN SET NOCOUNT ON; END')
+End
+
+go
+alter procedure AutoLookupClientSite(@ClientId as int,@SearchValue as varchar(1000),@MinLength as int = 0)
+as
+begin	
+set @searchValue = @SearchValue +'%'
+if len(@SearchValue) < @Minlength
+begin
+	select top 0 
+		SiteId,
+		[Address]
+	from 
+		[Site]
+end
+else
+begin
+	if @SearchValue like 'P!%'
+	begin
+		set @SearchValue = substring(@SearchValue,3,Len(@SearchValue) -2)		
+		select 
+			0 as SortOrder,
+			-1 as SiteID,
+			cast('Please Select' as varchar(200)) as [Address]
+		union
+		SELECT top 1000
+			 1 as SortOrder,
+			 s.SiteID,
+			[Address] +isnull(', ' +[PostCode],'') as [Address]
+		FROM
+			ClientSite cs 
+			inner join [Site] s on s.SiteId = cs.SiteID and cs.ClientID = @ClientId
+			and [Postcode] like @SearchValue		
+		WHERE 
+			s.Deleted IS NULL
+		ORDER BY 
+		SortOrder,
+		Address
+	end
+	else
+	begin	
+		select 
+			0 as SortOrder,
+			-1 as SiteID,
+			cast('Please Select' as varchar(200)) as [Address]
+		union
+		SELECT top 150
+			1 as SortOrder,
+			 s.SiteID,
+			[Address] +isnull(', ' +[PostCode],'') as [Address]
+		FROM
+			ClientSite cs 
+			inner join [Site] s on s.SiteId = cs.SiteID and cs.ClientID = @ClientId
+			and [Address] like @SearchValue		
+		WHERE 
+			s.Deleted IS NULL
+		ORDER BY 
+			SortOrder,
+			Address
+	end
+end
+
+end	
+
+GO
+
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 483,'Quote - Dip Sampling',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Quote%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=483)=0
+Insert into QuoteType (QuoteTypeID,TemplateTypeID,QuoteType,InvoiceQuoteType,Deleted,AppointmentTypeId,QuoteVisitTypeID) Select 313,483,'Dip Sampling','Dip Sampling',GETDATE(),9,4 WHERE (SELECT COUNT(*) FROM QuoteType WHERE QuoteTypeID=313)=0
+Insert into TemplateType (TemplateTypeID,TemplateType,ReportFooterID,Deleted) Select 484,'Report - Dip Sampling',(Select top 1 reportFooter.ReportFooterID FROM (Select ReportFooterID,COUNT(*) [Ordering] FROM TemplateType Where TemplateType LIKE '%Quote%' GROUP BY ReportFooterID) reportFooter Order by reportFooter.Ordering DESC),GETDATE() WHERE (SELECT COUNT(*) FROM TemplateType WHERE TemplateTypeID=484)=0
+Insert into LegionellaType (LegionellaTypeID,Description,TemplateTypeID,LegionellaFrequencyCategoryID,LegionellaAssetCategoryID,LegionellaMonitoring,Deleted) Select 34,'Dip Sampling',484,1,NULL,1,GETDATE() WHERE (SELECT COUNT(*) FROM LegionellaType WHERE LegionellaTypeID=34)=0
 
 GO
